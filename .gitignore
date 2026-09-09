@@ -1,0 +1,62 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+/artifacts/
+/Artifacts/
+[Tt]est[Rr]esults/
+[Pp]ublish/
+*.nupkg
+*.snupkg
+coverage/
+coverage.*
+
+# IDE and editor state
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Avalonia tooling
+.avalonia/
+
+# Local application state and databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+/data/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.local.json
+secrets.json
+
+# Android signing and generated packages
+*.apk
+*.aab
+*.apks
+*.jks
+*.keystore
+*.p12
+*.pfx
+local.properties
+
+# OS metadata and temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
