@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>snookd</AssemblyName>
+    <RootNamespace>Snook.Daemon</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Snook.Application/Snook.Application.csproj" />
+    <ProjectReference Include="../Snook.Contracts/Snook.Contracts.csproj" />
+    <ProjectReference Include="../Snook.Domain/Snook.Domain.csproj" />
+    <ProjectReference Include="../Snook.Persistence.Sqlite/Snook.Persistence.Sqlite.csproj" />
+  </ItemGroup>
+</Project>

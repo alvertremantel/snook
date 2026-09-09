@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <ProjectReference Include="../../src/Snook.Application/Snook.Application.csproj" />
+    <ProjectReference Include="../../src/Snook.Daemon/Snook.Daemon.csproj" />
+    <ProjectReference Include="../../src/Snook.Persistence.Sqlite/Snook.Persistence.Sqlite.csproj" />
+  </ItemGroup>
+</Project>

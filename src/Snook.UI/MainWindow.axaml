@@ -1,0 +1,654 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Snook.UI.MainWindow"
+        x:CompileBindings="False"
+        Title="Snook"
+        Width="1280"
+        Height="820"
+        MinWidth="980"
+        MinHeight="640">
+  <Grid ColumnDefinitions="232,*">
+    <Border Grid.Column="0" Background="#20263D" Padding="22,26">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Spacing="7">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Border Background="#6767F2" CornerRadius="9" Width="34" Height="34">
+              <TextBlock Text="S" Foreground="White" FontSize="21" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <TextBlock Text="snook" Foreground="White" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </StackPanel>
+          <TextBlock Text="A quiet place for doing" Foreground="#8D99B8" FontSize="12" Margin="2,0,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,54,0,0" Spacing="4">
+          <TextBlock Text="WORKSPACE" Classes="eyebrow" Foreground="#66708A" Margin="14,0,0,10" />
+          <Button Classes="nav" Content="⌂   Today" Command="{Binding SelectSectionCommand}" CommandParameter="Today" />
+          <Button Classes="nav" Content="▣   Tasks" Command="{Binding SelectSectionCommand}" CommandParameter="Tasks" />
+          <Button Classes="nav" Content="◷   Time" Command="{Binding SelectSectionCommand}" CommandParameter="Today" />
+          <Button Classes="nav" Content="□   Calendar" Command="{Binding SelectSectionCommand}" CommandParameter="Calendar" />
+          <Button Classes="nav" Content="▤   History" Command="{Binding SelectSectionCommand}" CommandParameter="History" />
+          <Button Classes="nav" Content="⌁   Summary" Command="{Binding SelectSectionCommand}" CommandParameter="Summary" />
+          <TextBlock Text="MANAGE" Classes="eyebrow" Foreground="#66708A" Margin="14,28,0,10" />
+          <Button Classes="nav" Content="⚙   Settings" Command="{Binding SelectSectionCommand}" CommandParameter="Settings" />
+        </StackPanel>
+
+        <Border Grid.Row="2" Background="#292F4A" CornerRadius="12" Padding="12">
+          <StackPanel Spacing="6">
+            <TextBlock Text="LOCAL WORKSPACE" Classes="eyebrow" Foreground="#8994AF" />
+            <TextBlock Text="No cloud. No noise." Foreground="#D9DDF0" FontSize="12" />
+            <TextBlock Text="Everything is saved on this device." Foreground="#8994AF" FontSize="11" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
+              <Button Classes="ghost" Foreground="#D9DDF0" Content="Backup" Command="{Binding BackupCommand}" />
+              <Button Classes="ghost" Foreground="#D9DDF0" Content="Export" Command="{Binding ExportCommand}" />
+              <Button Classes="ghost" Foreground="#D9DDF0" Content="CSV" Command="{Binding ExportCsvCommand}" />
+              <Button Classes="ghost" Foreground="#D9DDF0" Content="Restore" Command="{Binding RestoreCommand}" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1" RowDefinitions="Auto,*" Margin="44,28,44,32">
+      <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,28">
+        <StackPanel Spacing="7">
+          <TextBlock Text="{Binding CurrentSection}" Classes="eyebrow" />
+          <TextBlock Text="{Binding SectionTitle}" Classes="title" />
+          <TextBlock Text="{Binding SectionSubtitle}" Classes="muted" FontSize="14" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <Border Background="#FFFFFF" BorderBrush="#E7EAF0" BorderThickness="1" CornerRadius="10" Padding="10,4">
+            <TextBox Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="⌕  Search tasks" BorderThickness="0" Background="Transparent" Width="190" />
+          </Border>
+          <Border Background="#5B5BEF" CornerRadius="10" Width="38" Height="38">
+            <TextBlock Text="JD" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+        </StackPanel>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="22">
+        <StackPanel Spacing="22" IsVisible="{Binding IsTodayVisible}">
+          <Grid ColumnDefinitions="*,*,*" ColumnSpacing="16">
+            <Border Classes="card">
+              <StackPanel Spacing="5">
+                <TextBlock Text="TRACKED TODAY" Classes="eyebrow" />
+                <TextBlock Text="{Binding TrackedToday}" FontSize="27" FontWeight="SemiBold" Foreground="#20263D" />
+                <TextBlock Text="Across all activities" Classes="muted" FontSize="12" />
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Classes="card">
+              <StackPanel Spacing="5">
+                <TextBlock Text="OPEN TASKS" Classes="eyebrow" />
+                <TextBlock Text="{Binding OpenTaskCount}" FontSize="27" FontWeight="SemiBold" Foreground="#20263D" />
+                <TextBlock Text="Keep the next step clear" Classes="muted" FontSize="12" />
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Classes="card" Background="#ECECFF">
+              <StackPanel Spacing="5">
+                <TextBlock Text="FOCUS MODE" Classes="eyebrow" Foreground="#6A6ADA" />
+                <TextBlock Text="Quiet and local" FontSize="21" FontWeight="SemiBold" Foreground="#39398C" />
+                <TextBlock Text="Your data never leaves this device" Foreground="#6A6ADA" FontSize="12" />
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <Border Classes="card" Background="#FFF7E8" IsVisible="{Binding HasRecoverySessions}">
+            <StackPanel Spacing="10">
+              <StackPanel Spacing="4">
+                <TextBlock Text="RECOVERY NEEDED" Classes="eyebrow" Foreground="#A86B18" />
+                <TextBlock Text="A timer boundary needs your decision." Foreground="#5C431F" FontSize="16" FontWeight="SemiBold" />
+                <TextBlock Text="Snook did not invent uncertain time. Choose how to resolve each item." Foreground="#8B6A38" FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
+              <ItemsControl ItemsSource="{Binding RecoverySessions}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="#FFF0CF" CornerRadius="10" Padding="12" Margin="0,2,0,0">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="3">
+                          <TextBlock Text="{Binding ReasonLabel}" Foreground="#5C431F" FontWeight="SemiBold" />
+                          <TextBlock Text="Session identity and previous intervals are preserved." Foreground="#8B6A38" FontSize="11" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                          <Button Classes="ghost" Content="Last known" Command="{Binding StopAtLastKnownCommand}" />
+                          <Button Classes="ghost" Content="Stop now" Command="{Binding StopNowCommand}" />
+                          <Button Classes="primary" Content="Continue" Command="{Binding ContinueCommand}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <Grid ColumnDefinitions="1.15*,*" ColumnSpacing="22">
+            <Border Classes="card">
+              <StackPanel Spacing="16">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="CURRENTLY TRACKING" Classes="eyebrow" />
+                    <TextBlock Text="Keep your attention where it matters." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <Button Classes="ghost" Content="Add 30m" Command="{Binding ManualTimeCommand}" />
+                    <Button Classes="primary" Content="＋  Start focus" Command="{Binding StartFocusCommand}" />
+                  </StackPanel>
+                </Grid>
+                <ItemsControl ItemsSource="{Binding ActiveSessions}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Background="#F6F6FF" CornerRadius="12" Padding="14" Margin="0,0,0,8">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                          <Border Background="#DCDCFF" CornerRadius="9" Width="36" Height="36">
+                            <TextBlock Text="◷" Foreground="#5B5BEF" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                          </Border>
+                          <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Foreground="#292E49" />
+                            <TextBlock Text="{Binding LaneLabel}  ·  {Binding StateLabel}" Classes="muted" FontSize="11" />
+                          </StackPanel>
+                          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding ElapsedLabel}" FontFamily="monospace" FontSize="16" FontWeight="SemiBold" Foreground="#292E49" VerticalAlignment="Center" />
+                            <Button Classes="ghost" Content="{Binding ToggleLabel}" Command="{Binding ToggleCommand}" />
+                            <Button Classes="icon" Content="■" Command="{Binding StopCommand}" ToolTip.Tip="Stop" />
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border Background="#FAFAFC" CornerRadius="10" Padding="12" IsVisible="{Binding HasNoActiveSessions}">
+                  <TextBlock Text="No active timers. Start a focus timer and the clock will keep moving without database polling." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="1" Classes="card">
+              <StackPanel Spacing="14">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="QUICK CAPTURE" Classes="eyebrow" />
+                    <TextBlock Text="Put it somewhere useful." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                  </StackPanel>
+                  <TextBlock Text="⌘ N" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+                </Grid>
+                <TextBox Text="{Binding TaskTitle, Mode=TwoWay}" PlaceholderText="What needs doing?" CornerRadius="9" Padding="12" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <ComboBox ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" PlaceholderText="Choose a project" Padding="10" />
+                  <Button Grid.Column="1" Classes="primary" Content="Add task" Command="{Binding CreateTaskCommand}" />
+                </Grid>
+                <TextBlock Text="Tasks are saved with a stable identity, so renaming never loses their history." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="YOUR NEXT TASKS" Classes="eyebrow" />
+                  <TextBlock Text="A small, honest list for today." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <Button Grid.Column="1" Classes="ghost" Content="View all  →" Command="{Binding SelectSectionCommand}" CommandParameter="Tasks" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding Tasks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border BorderBrush="#EEF0F4" BorderThickness="0,0,0,1" Padding="0,10">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="13">
+                        <Border Background="#F0F1F6" CornerRadius="6" Width="22" Height="22" VerticalAlignment="Center">
+                          <TextBlock Text="○" Foreground="#8A94A7" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                          <TextBlock Text="{Binding Title}" Foreground="#252A42" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding ProjectName}  ·  {Binding DueLabel}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding PriorityLabel}" Foreground="#7D899E" FontSize="11" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="5">
+                          <Button Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
+                          <Button Classes="ghost" Content="{Binding ActionLabel}" Command="{Binding CompleteCommand}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="{Binding StatusMessage}" Classes="muted" FontSize="11" Margin="0,4,0,0" />
+            </StackPanel>
+          </Border>
+
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="22">
+            <Border Classes="card">
+              <StackPanel Spacing="10">
+                <TextBlock Text="RECENTLY TRACKED" Classes="eyebrow" />
+                <ItemsControl ItemsSource="{Binding TodayRecentRows}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <StackPanel Spacing="2" Margin="0,3">
+                        <TextBlock Text="{Binding Label}" Foreground="#252A42" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11" />
+                      </StackPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="No recent tracked work." Classes="muted" IsVisible="{Binding HasNoTodayRecentRows}" />
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Classes="card">
+              <StackPanel Spacing="10">
+                <TextBlock Text="UP NEXT" Classes="eyebrow" />
+                <ItemsControl ItemsSource="{Binding TodayUpcomingRows}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <StackPanel Spacing="2" Margin="0,3">
+                        <TextBlock Text="{Binding Label}" Foreground="#252A42" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11" />
+                      </StackPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="No upcoming deadlines or schedule." Classes="muted" IsVisible="{Binding HasNoTodayUpcomingRows}" />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </StackPanel>
+
+        <StackPanel Spacing="22" IsVisible="{Binding IsTasksVisible}">
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="TASK LIST" Classes="eyebrow" />
+                  <TextBlock Text="Plan outcomes, then start focus from the task itself." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                  <Button Classes="ghost" Content="List" Command="{Binding SelectTaskViewCommand}" CommandParameter="List" />
+                  <Button Classes="ghost" Content="Board" Command="{Binding SelectTaskViewCommand}" CommandParameter="Board" />
+                  <ComboBox ItemsSource="{Binding TaskSortOptions}" SelectedValue="{Binding TaskSortMode, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" Width="130" PlaceholderText="Sort" />
+                  <CheckBox Content="Show completed" IsChecked="{Binding ShowCompleted, Mode=TwoWay}" />
+                  <CheckBox Content="Show archived" IsChecked="{Binding ShowArchived, Mode=TwoWay}" />
+                </StackPanel>
+              </Grid>
+              <Border Classes="card" Background="#FAFAFC" IsVisible="{Binding HasSelectedTaskDetails}" Padding="14">
+                <StackPanel Spacing="8" DataContext="{Binding SelectedTaskDetails}">
+                  <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+                    <TextBlock Text="{Binding Task.Title}" Foreground="#252A42" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="1" Text="Tracked: {Binding TrackedMilliseconds}" Classes="muted" />
+                    <TextBlock Grid.Column="2" Text="Active: {Binding ActiveMilliseconds}" Classes="muted" />
+                  </Grid>
+                  <TextBlock Text="Tags" Classes="eyebrow" />
+                  <ItemsControl ItemsSource="{Binding Tags}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate><TextBlock Text="{Binding DisplayName}" Classes="muted" /></DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Text="References" Classes="eyebrow" />
+                  <ItemsControl ItemsSource="{Binding Links}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate><TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Uri}" Classes="muted" /></DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Text="Prerequisites: {Binding PrerequisiteTaskIds.Count}" Classes="muted" />
+                </StackPanel>
+              </Border>
+              <ItemsControl ItemsSource="{Binding Tasks}" IsVisible="{Binding IsTaskListVisible}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border BorderBrush="#EEF0F4" BorderThickness="0,0,0,1" Padding="0,10">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="13">
+                        <Border Background="#F0F1F6" CornerRadius="6" Width="22" Height="22" VerticalAlignment="Center">
+                          <TextBlock Text="○" Foreground="#8A94A7" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                          <TextBlock Text="{Binding Title}" Foreground="#252A42" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding ProjectName}  ·  {Binding DueLabel}  ·  {Binding TrackedLabel}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding PriorityLabel}" Foreground="#7D899E" FontSize="11" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="5">
+                          <Button Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
+                          <Button Classes="ghost" Content="{Binding ActionLabel}" Command="{Binding CompleteCommand}" />
+                          <TextBox Text="{Binding DraftTitle, Mode=TwoWay}" Width="150" Padding="7" />
+                          <ComboBox ItemsSource="{Binding PriorityOptions}" SelectedValue="{Binding DraftPriority, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" Width="110" ToolTip.Tip="Priority" />
+                          <TextBox Text="{Binding DueDateText, Mode=TwoWay}" Width="105" Padding="7" PlaceholderText="yyyy-MM-dd" ToolTip.Tip="Deadline" />
+                          <ComboBox ItemsSource="{Binding ActivityOptions}" SelectedValue="{Binding DraftActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" Width="130" PlaceholderText="Default activity" />
+                          <CheckBox IsChecked="{Binding DraftStarred, Mode=TwoWay}" Content="★" ToolTip.Tip="Starred" VerticalAlignment="Center" />
+                          <Button Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                          <TextBox Text="{Binding TagText, Mode=TwoWay}" Width="105" Padding="7" PlaceholderText="Add tag" />
+                          <Button Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" />
+                          <ComboBox ItemsSource="{Binding PrerequisiteOptions}" SelectedValue="{Binding PrerequisiteTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" Width="150" PlaceholderText="Prerequisite" />
+                          <Button Classes="ghost" Content="Depends on" Command="{Binding AddDependencyCommand}" />
+                          <TextBox Text="{Binding LinkLabelText, Mode=TwoWay}" Width="90" Padding="7" PlaceholderText="Ref label" />
+                          <TextBox Text="{Binding LinkUriText, Mode=TwoWay}" Width="180" Padding="7" PlaceholderText="https:// or file://" />
+                          <Button Classes="ghost" Content="Add ref" Command="{Binding AddLinkCommand}" />
+                          <Button Classes="ghost" Content="Details" Command="{Binding ShowDetailsCommand}" />
+                          <ComboBox ItemsSource="{Binding ProjectOptions}" SelectedValue="{Binding TargetProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" Width="130" />
+                          <Button Classes="ghost" Content="Move" Command="{Binding MoveCommand}" />
+                          <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ArchiveCommand}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <ItemsControl ItemsSource="{Binding TaskGroups}" IsVisible="{Binding IsTaskBoardVisible}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="#F8F8FE" CornerRadius="11" Padding="12" Margin="0,0,0,10">
+                      <StackPanel Spacing="8">
+                        <TextBlock Text="{Binding ProjectName}" Foreground="#39398C" FontWeight="SemiBold" />
+                        <ItemsControl ItemsSource="{Binding Tasks}">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                                <StackPanel Spacing="2">
+                                  <TextBlock Text="{Binding Title}" Foreground="#252A42" FontWeight="SemiBold" />
+                                  <TextBlock Text="{Binding DueLabel}  ·  {Binding TrackedLabel}" Classes="muted" FontSize="11" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
+                                <Button Grid.Column="2" Classes="ghost" Content="Done" Command="{Binding CompleteCommand}" />
+                              </Grid>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="No tasks match this view." Classes="muted" IsVisible="{Binding HasNoTasks}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Spacing="22" IsVisible="{Binding IsHistoryVisible}">
+          <Border Classes="card">
+            <StackPanel Spacing="16">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="RECENTLY TRACKED" Classes="eyebrow" />
+                  <TextBlock Text="Every session keeps its identity and interval history." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <TextBlock Text="Last 30 days" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding HistoryItems}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border BorderBrush="#EEF0F4" BorderThickness="0,0,0,1" Padding="0,12">
+                      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="18" RowSpacing="9">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding Title}" Foreground="#252A42" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Context}  ·  {Binding DateLabel}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding LaneLabel}" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2" Text="{Binding TimeLabel}" FontFamily="monospace" Foreground="#252A42" FontSize="12" VerticalAlignment="Center" />
+                        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="7">
+                          <ComboBox ItemsSource="{Binding TaskOptions}" SelectedValue="{Binding SelectedTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" PlaceholderText="Task" Width="150" />
+                          <ComboBox ItemsSource="{Binding ActivityOptions}" SelectedValue="{Binding SelectedActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" PlaceholderText="Activity" Width="130" />
+                          <TextBox Text="{Binding NotesEditor, Mode=TwoWay}" PlaceholderText="Notes" Width="180" />
+                          <TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" Width="190" />
+                          <TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="End (UTC)" Width="190" />
+                          <TextBox Text="{Binding ReasonText, Mode=TwoWay}" PlaceholderText="Reason" Width="150" />
+                          <Button Classes="ghost" Content="Save correction" Command="{Binding CorrectCommand}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Button Classes="ghost" Content="Load more history" HorizontalAlignment="Left" IsVisible="{Binding HistoryHasMore}" Command="{Binding LoadMoreHistoryCommand}" />
+              <TextBlock Text="No tracked work in this range yet." Classes="muted" IsVisible="{Binding HasNoHistory}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Spacing="22" IsVisible="{Binding IsSummaryVisible}">
+          <Border Classes="card">
+            <StackPanel Spacing="16">
+              <StackPanel Spacing="4">
+                <TextBlock Text="TIME SUMMARY" Classes="eyebrow" />
+                <TextBlock Text="Tags show attribution; coverage shows wall-clock occupancy." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <WrapPanel Orientation="Horizontal" ItemHeight="30" ItemWidth="92">
+                <Button Classes="ghost" Content="Day" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Day" />
+                <Button Classes="ghost" Content="Task" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Task" />
+                <Button Classes="ghost" Content="Project" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Project" />
+                <Button Classes="ghost" Content="Activity" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Activity" />
+                <Button Classes="ghost" Content="Activity group" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="ActivityGroup" />
+                <Button Classes="ghost" Content="Tag" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Tag" />
+                <Button Classes="ghost" Content="Lane" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Lane" />
+              </WrapPanel>
+              <ItemsControl ItemsSource="{Binding SummaryItems}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="18" Margin="0,6">
+                      <TextBlock Text="{Binding Label}" Foreground="#252A42" FontWeight="SemiBold" />
+                      <TextBlock Grid.Column="1" Text="{Binding DurationLabel}" Classes="muted" FontFamily="monospace" />
+                      <TextBlock Grid.Column="2" Text="{Binding CoverageLabel}" Foreground="#5B5BEF" FontFamily="monospace" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="No tracked time in this range yet." Classes="muted" IsVisible="{Binding HasNoSummary}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Spacing="22" IsVisible="{Binding IsCalendarVisible}">
+          <Border Classes="card">
+            <StackPanel Spacing="16">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="UPCOMING BLOCKS" Classes="eyebrow" />
+                  <TextBlock Text="Planned time is not the same thing as a deadline." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                  <Button Classes="ghost" Content="Day" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Day" />
+                  <Button Classes="ghost" Content="Week" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Week" />
+                  <Button Classes="ghost" Content="Month" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Month" />
+                  <Button Classes="ghost" Content="Agenda" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Agenda" />
+                  <Button Classes="primary" Content="Plan next task" Command="{Binding PlanNextTaskCommand}" />
+                </StackPanel>
+              </Grid>
+              <Border Background="#F8F8FE" CornerRadius="11" Padding="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="ADD EVENT" Classes="eyebrow" />
+                  <Grid RowDefinitions="Auto,Auto" RowSpacing="7">
+                    <Grid ColumnDefinitions="*,200,200,Auto" ColumnSpacing="7">
+                      <TextBox Text="{Binding NewEventTitle, Mode=TwoWay}" PlaceholderText="Event title" />
+                      <TextBox Grid.Column="1" Text="{Binding NewEventStart, Mode=TwoWay}" PlaceholderText="Start (UTC)" />
+                      <TextBox Grid.Column="2" Text="{Binding NewEventEnd, Mode=TwoWay}" PlaceholderText="End (UTC)" />
+                      <Button Grid.Column="3" Classes="primary" Content="Add event" Command="{Binding CreateCalendarEventCommand}" />
+                    </Grid>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,*,140,140,Auto" ColumnSpacing="7">
+                      <TextBox Text="{Binding NewEventDescription, Mode=TwoWay}" PlaceholderText="Description" />
+                      <TextBox Grid.Column="1" Text="{Binding NewEventLocation, Mode=TwoWay}" PlaceholderText="Location" />
+                      <TextBox Grid.Column="2" Text="{Binding NewEventColor, Mode=TwoWay}" PlaceholderText="#6767F2" />
+                      <TextBox Grid.Column="3" Text="{Binding NewEventRecurrence, Mode=TwoWay}" PlaceholderText="FREQ=DAILY;COUNT=5" />
+                      <CheckBox Grid.Column="4" Content="All day" IsChecked="{Binding NewEventAllDay, Mode=TwoWay}" VerticalAlignment="Center" />
+                    </Grid>
+                  </Grid>
+                  <TextBox Text="{Binding NewEventRecurrenceEnd, Mode=TwoWay}" PlaceholderText="Recurrence end (UTC, optional)" />
+                </StackPanel>
+              </Border>
+              <ItemsControl ItemsSource="{Binding CalendarBlocks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="#F6F6FF" CornerRadius="11" Padding="14" Margin="0,0,0,8">
+                      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14" RowSpacing="9">
+                        <Border Background="#DCDCFF" CornerRadius="8" Padding="9,7">
+                          <TextBlock Text="◫" Foreground="#5B5BEF" FontSize="16" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                          <TextBlock Text="{Binding Label}" Foreground="#252A42" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding DayLabel}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="4" HorizontalAlignment="Right">
+                          <TextBlock Text="{Binding TimeLabel}" Foreground="#252A42" FontSize="12" />
+                          <TextBlock Text="{Binding DurationLabel}" Classes="muted" FontSize="11" HorizontalAlignment="Right" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="7">
+                          <TextBox Text="{Binding TitleEditor, Mode=TwoWay}" PlaceholderText="Title" Width="180" />
+                          <TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" Width="190" />
+                          <TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="End (UTC)" Width="190" />
+                          <Button Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
+                          <Button Classes="ghost" Content="Save block" Command="{Binding UpdateCommand}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="EVENTS" Classes="eyebrow" />
+              <ItemsControl ItemsSource="{Binding CalendarEvents}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="#FFF8ED" CornerRadius="11" Padding="14" Margin="0,0,0,8">
+                      <StackPanel Spacing="4">
+                        <TextBlock Text="{Binding Label}" Foreground="#3B2E1F" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding DetailLabel}" Foreground="#806A49" FontSize="12" />
+                        <TextBlock Text="{Binding LocationLabel}" Foreground="#806A49" FontSize="12" />
+                        <TextBlock Text="{Binding DescriptionLabel}" Foreground="#806A49" FontSize="12" TextWrapping="Wrap" />
+                        <Button Classes="ghost" Content="Delete event" HorizontalAlignment="Left" Command="{Binding DeleteCommand}" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="No schedule blocks in the next 7 days." Classes="muted" IsVisible="{Binding HasNoCalendarBlocks}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Spacing="22" IsVisible="{Binding IsSettingsVisible}">
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <StackPanel Spacing="4">
+                <TextBlock Text="BOARDS" Classes="eyebrow" />
+                <TextBlock Text="Organize projects into durable workspaces." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding NewBoardName, Mode=TwoWay}" PlaceholderText="New board name" Padding="9" />
+                <Button Grid.Column="1" Classes="primary" Content="Create board" Command="{Binding CreateBoardCommand}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding BoardAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
+                      <Button Grid.Column="1" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
+                      <Button Grid.Column="2" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
+                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                      <Button Grid.Column="4" Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <StackPanel Spacing="4">
+                <TextBlock Text="PROJECTS" Classes="eyebrow" />
+                <TextBlock Text="Create focused places for work, then move tasks between them." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <Grid ColumnDefinitions="*,220,Auto" ColumnSpacing="8">
+                <ComboBox ItemsSource="{Binding Boards}" SelectedValue="{Binding SelectedBoardId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" PlaceholderText="Board" Padding="9" />
+                <TextBox Grid.Column="1" Text="{Binding NewProjectName, Mode=TwoWay}" PlaceholderText="New project name" Width="220" Padding="9" />
+                <Button Grid.Column="2" Classes="primary" Content="Create project" Command="{Binding CreateProjectCommand}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding ProjectAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,150,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
+                      <TextBox Grid.Column="1" Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Add tag" Padding="8" />
+                      <Button Grid.Column="2" Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" />
+                      <Button Grid.Column="3" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
+                      <Button Grid.Column="4" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
+                      <Button Grid.Column="5" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                      <Button Grid.Column="6" Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <StackPanel Spacing="4">
+                <TextBlock Text="ACTIVITIES" Classes="eyebrow" />
+                <TextBlock Text="Name the kinds of work you want to track." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding NewActivityGroupName, Mode=TwoWay}" PlaceholderText="New activity group" Padding="9" />
+                <Button Grid.Column="1" Classes="ghost" Content="Create group" Command="{Binding CreateActivityGroupCommand}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding ActivityGroupAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
+                      <Button Grid.Column="1" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
+                      <Button Grid.Column="2" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
+                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding NewActivityName, Mode=TwoWay}" PlaceholderText="New activity name" Padding="9" />
+                <Button Grid.Column="1" Classes="primary" Content="Create activity" Command="{Binding CreateActivityCommand}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding ActivityAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,170,140,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding GroupOptions}" SelectedValue="{Binding GroupId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity group" Padding="8" />
+                      <TextBox Grid.Column="2" Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Add tag" Padding="8" />
+                      <Button Grid.Column="3" Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" />
+                      <Button Grid.Column="4" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                      <Button Grid.Column="5" Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="CALENDARS" Classes="eyebrow" />
+              <TextBlock Text="Keep planned blocks and user events in named, color-coded calendars." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,140,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding NewCalendarName, Mode=TwoWay}" PlaceholderText="New calendar name" />
+                <TextBox Grid.Column="1" Text="{Binding NewCalendarColor, Mode=TwoWay}" PlaceholderText="#6767F2" />
+                <Button Grid.Column="2" Classes="primary" Content="Create" Command="{Binding CreateCalendarCommand}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding CalendarAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,140,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
+                      <TextBox Grid.Column="1" Text="{Binding DraftColor, Mode=TwoWay}" Padding="8" />
+                      <CheckBox Grid.Column="2" Content="Visible" IsChecked="{Binding IsVisible, Mode=TwoWay}" VerticalAlignment="Center" />
+                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="TIMER BEHAVIOR" Classes="eyebrow" />
+              <TextBlock Text="Choose whether starting a focus timer may leave another focus timer running." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <CheckBox Content="Allow concurrent foreground timers" IsChecked="{Binding AllowConcurrentForeground, Mode=TwoWay}" />
+              <Button Classes="primary" Content="Save timer setting" HorizontalAlignment="Left" Command="{Binding SaveSettingsCommand}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+    </Grid>
+  </Grid>
+</Window>

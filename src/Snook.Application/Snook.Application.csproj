@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Snook.Application</AssemblyName>
+    <RootNamespace>Snook.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Snook.Contracts/Snook.Contracts.csproj" />
+    <ProjectReference Include="../Snook.Domain/Snook.Domain.csproj" />
+    <ProjectReference Include="../Snook.Persistence.Sqlite/Snook.Persistence.Sqlite.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,22 @@
+[Unit]
+Description=Snook local workspace daemon
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=snook
+Environment=SNOOK_DATA_DIR=/var/lib/snook
+ExecStart=/usr/bin/snookd
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/snook
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

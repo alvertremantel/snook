@@ -1,0 +1,1839 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Windows.Input;
+using Avalonia.Threading;
+using Snook.Contracts;
+using Snook.Domain;
+using DomainCalendar = Snook.Domain.Calendar;
+
+namespace Snook.UI;
+
+public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsyncDisposable
+{
+    private readonly IBackendClient _backend;
+    private readonly Timer _displayTimer;
+    private bool _initialized;
+    private string _taskTitle = string.Empty;
+    private string _searchText = string.Empty;
+    private string _statusMessage = "Ready. Your workspace is stored locally.";
+    private string _workspaceName = "Snook";
+    private string _trackedToday = "0m";
+    private string _currentSection = "Today";
+    private string _sectionTitle = "Good morning";
+    private string _sectionSubtitle = "A little progress, thoughtfully recorded.";
+    private bool _hasNoHistory = true;
+    private bool _historyHasMore;
+    private string? _historyContinuation;
+    private bool _hasNoSummary = true;
+    private bool _hasNoCalendarBlocks = true;
+    private bool _showCompleted;
+    private bool _showArchived;
+    private bool _hasNoTasks = true;
+    private Guid _selectedCalendarId;
+    private string _calendarView = "Week";
+    private string _taskViewMode = "List";
+    private string _taskSortMode = "Priority";
+    private string _summaryGrouping = "Tag";
+    private int _openTaskCount;
+    private bool _hasNoActiveSessions = true;
+    private bool _hasNoTodayRecentRows = true;
+    private bool _hasNoTodayUpcomingRows = true;
+    private Guid _selectedProjectId;
+    private Guid _selectedBoardId;
+    private string _newProjectName = string.Empty;
+    private string _newBoardName = string.Empty;
+    private string _newActivityName = string.Empty;
+    private string _newEventTitle = string.Empty;
+    private string _newEventDescription = string.Empty;
+    private string _newEventLocation = string.Empty;
+    private string _newEventColor = "#6767F2";
+    private string _newEventRecurrence = string.Empty;
+    private string _newEventRecurrenceEnd = string.Empty;
+    private bool _newEventAllDay;
+    private string _newEventStart = string.Empty;
+    private string _newEventEnd = string.Empty;
+    private string _newCalendarName = string.Empty;
+    private string _newCalendarColor = "#6767F2";
+    private string _newActivityGroupName = string.Empty;
+    private bool _allowConcurrentForeground;
+    private long _settingsRevision = 1;
+    private long _todayMilliseconds;
+    private TaskDetails? _selectedTaskDetails;
+
+    public MainWindowViewModel(IBackendClient backend)
+    {
+        _backend = backend;
+        _backend.Changed += OnBackendChanged;
+        RefreshCommand = new AsyncCommand(_ => RefreshAsync());
+        CreateTaskCommand = new AsyncCommand(_ => CreateTaskAsync(), _ => !string.IsNullOrWhiteSpace(TaskTitle) && SelectedProjectId != Guid.Empty);
+        StartFocusCommand = new AsyncCommand(_ => StartFocusAsync());
+        SelectSectionCommand = new AsyncCommand(section => SelectSectionAsync(section as string ?? "Today"));
+        PlanNextTaskCommand = new AsyncCommand(_ => PlanNextTaskAsync());
+        BackupCommand = new AsyncCommand(_ => CreateBackupAsync());
+        ExportCommand = new AsyncCommand(_ => ExportAsync());
+        ExportCsvCommand = new AsyncCommand(_ => ExportCsvAsync());
+        RestoreCommand = new AsyncCommand(_ => RestoreLatestBackupAsync());
+        LoadMoreHistoryCommand = new AsyncCommand(_ => LoadMoreHistoryAsync(), _ => HistoryHasMore);
+        ShowTaskDetailsCommand = new AsyncCommand(row => row is TaskRowViewModel taskRow ? ShowTaskDetailsAsync(taskRow) : Task.CompletedTask);
+        ManualTimeCommand = new AsyncCommand(_ => AddManualTimeAsync());
+        SelectCalendarViewCommand = new AsyncCommand(view => SelectCalendarViewAsync(view as string ?? "Week"));
+        SelectTaskViewCommand = new AsyncCommand(view => SelectTaskViewAsync(view as string ?? "List"));
+        SelectSummaryGroupingCommand = new AsyncCommand(grouping => SelectSummaryGroupingAsync(grouping as string ?? "Tag"));
+        CreateProjectCommand = new AsyncCommand(_ => CreateProjectAsync(), _ => !string.IsNullOrWhiteSpace(NewProjectName) && SelectedBoardId != Guid.Empty);
+        CreateBoardCommand = new AsyncCommand(_ => CreateBoardAsync(), _ => !string.IsNullOrWhiteSpace(NewBoardName));
+        CreateActivityCommand = new AsyncCommand(_ => CreateActivityAsync(), _ => !string.IsNullOrWhiteSpace(NewActivityName));
+        CreateActivityGroupCommand = new AsyncCommand(_ => CreateActivityGroupAsync(), _ => !string.IsNullOrWhiteSpace(NewActivityGroupName));
+        CreateCalendarEventCommand = new AsyncCommand(_ => CreateCalendarEventAsync(), _ => !string.IsNullOrWhiteSpace(NewEventTitle) && _selectedCalendarId != Guid.Empty);
+        CreateCalendarCommand = new AsyncCommand(_ => CreateCalendarAsync(), _ => !string.IsNullOrWhiteSpace(NewCalendarName));
+        SaveSettingsCommand = new AsyncCommand(_ => SaveSettingsAsync());
+        _displayTimer = new Timer(_ => Dispatcher.UIThread.Post(UpdateDisplayTimes), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
+    public ObservableCollection<ProjectTaskGroupViewModel> TaskGroups { get; } = [];
+    public ObservableCollection<ActiveSessionRowViewModel> ActiveSessions { get; } = [];
+    public ObservableCollection<ProjectOption> Projects { get; } = [];
+    public ObservableCollection<BoardOption> Boards { get; } = [];
+    public ObservableCollection<ActivityOption> Activities { get; } = [];
+    public ObservableCollection<ActivityGroupOption> ActivityGroups { get; } = [];
+    public ObservableCollection<ProjectAdminRowViewModel> ProjectAdminRows { get; } = [];
+    public ObservableCollection<BoardAdminRowViewModel> BoardAdminRows { get; } = [];
+    public ObservableCollection<ActivityAdminRowViewModel> ActivityAdminRows { get; } = [];
+    public ObservableCollection<ActivityGroupAdminRowViewModel> ActivityGroupAdminRows { get; } = [];
+    public ObservableCollection<HistoryRowViewModel> HistoryItems { get; } = [];
+    public ObservableCollection<SummaryRowViewModel> SummaryItems { get; } = [];
+    public ObservableCollection<CalendarBlockRowViewModel> CalendarBlocks { get; } = [];
+    public ObservableCollection<CalendarEventRowViewModel> CalendarEvents { get; } = [];
+    public ObservableCollection<CalendarAdminRowViewModel> CalendarAdminRows { get; } = [];
+    public ObservableCollection<RecoverySessionRowViewModel> RecoverySessions { get; } = [];
+    public ObservableCollection<ReviewRowViewModel> TodayRecentRows { get; } = [];
+    public ObservableCollection<ReviewRowViewModel> TodayUpcomingRows { get; } = [];
+
+    public ICommand RefreshCommand { get; }
+    public ICommand CreateTaskCommand { get; }
+    public ICommand StartFocusCommand { get; }
+    public ICommand SelectSectionCommand { get; }
+    public ICommand PlanNextTaskCommand { get; }
+    public ICommand BackupCommand { get; }
+    public ICommand ExportCommand { get; }
+    public ICommand ExportCsvCommand { get; }
+    public ICommand RestoreCommand { get; }
+    public ICommand LoadMoreHistoryCommand { get; }
+    public ICommand ShowTaskDetailsCommand { get; }
+    public ICommand ManualTimeCommand { get; }
+    public ICommand SelectCalendarViewCommand { get; }
+    public ICommand SelectTaskViewCommand { get; }
+    public ICommand SelectSummaryGroupingCommand { get; }
+    public ICommand CreateProjectCommand { get; }
+    public ICommand CreateBoardCommand { get; }
+    public ICommand CreateActivityCommand { get; }
+    public ICommand CreateActivityGroupCommand { get; }
+    public ICommand CreateCalendarEventCommand { get; }
+    public ICommand CreateCalendarCommand { get; }
+    public ICommand SaveSettingsCommand { get; }
+
+    public string WorkspaceName { get => _workspaceName; private set => SetField(ref _workspaceName, value); }
+    public string CurrentSection { get => _currentSection; private set => SetField(ref _currentSection, value); }
+    public string SectionTitle { get => _sectionTitle; private set => SetField(ref _sectionTitle, value); }
+    public string SectionSubtitle { get => _sectionSubtitle; private set => SetField(ref _sectionSubtitle, value); }
+    public bool IsTodayVisible => CurrentSection == "Today";
+    public bool IsTasksVisible => CurrentSection == "Tasks";
+    public bool IsTaskListVisible => IsTasksVisible && TaskViewMode == "List";
+    public bool IsTaskBoardVisible => IsTasksVisible && TaskViewMode == "Board";
+    public bool IsHistoryVisible => CurrentSection == "History";
+    public bool IsSummaryVisible => CurrentSection == "Summary";
+    public bool IsCalendarVisible => CurrentSection == "Calendar";
+    public bool IsSettingsVisible => CurrentSection == "Settings";
+    public string CalendarView { get => _calendarView; private set => SetField(ref _calendarView, value); }
+    public string SummaryGrouping { get => _summaryGrouping; private set => SetField(ref _summaryGrouping, value); }
+    public string TaskViewMode { get => _taskViewMode; private set { if (SetField(ref _taskViewMode, value)) { RaisePropertyChanged(nameof(IsTaskListVisible)); RaisePropertyChanged(nameof(IsTaskBoardVisible)); } } }
+    public string TaskSortMode { get => _taskSortMode; set { if (SetField(ref _taskSortMode, value)) _ = LoadTasksAsync(); } }
+    public IReadOnlyList<TaskSortOption> TaskSortOptions { get; } =
+    [
+        new("Priority", "Priority"),
+        new("DueDate", "Deadline"),
+        new("Tracked", "Tracked time"),
+        new("Title", "Title")
+    ];
+    public bool HasNoHistory { get => _hasNoHistory; private set => SetField(ref _hasNoHistory, value); }
+    public bool HistoryHasMore { get => _historyHasMore; private set { if (SetField(ref _historyHasMore, value)) ((AsyncCommand)LoadMoreHistoryCommand).RaiseCanExecuteChanged(); } }
+    public TaskDetails? SelectedTaskDetails { get => _selectedTaskDetails; private set { if (SetField(ref _selectedTaskDetails, value)) RaisePropertyChanged(nameof(HasSelectedTaskDetails)); } }
+    public bool HasSelectedTaskDetails => SelectedTaskDetails is not null;
+    public bool HasNoSummary { get => _hasNoSummary; private set => SetField(ref _hasNoSummary, value); }
+    public bool HasNoCalendarBlocks { get => _hasNoCalendarBlocks; private set => SetField(ref _hasNoCalendarBlocks, value); }
+    public bool ShowCompleted { get => _showCompleted; set { if (SetField(ref _showCompleted, value)) _ = LoadTasksAsync(); } }
+    public bool ShowArchived { get => _showArchived; set { if (SetField(ref _showArchived, value)) _ = LoadTasksAsync(); } }
+    public bool HasNoTasks { get => _hasNoTasks; private set => SetField(ref _hasNoTasks, value); }
+    public string TaskTitle { get => _taskTitle; set { if (SetField(ref _taskTitle, value)) ((AsyncCommand)CreateTaskCommand).RaiseCanExecuteChanged(); } }
+    public string SearchText { get => _searchText; set { if (SetField(ref _searchText, value)) _ = RefreshAsync(); } }
+    public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
+    public string TrackedToday { get => _trackedToday; private set => SetField(ref _trackedToday, value); }
+    public int OpenTaskCount { get => _openTaskCount; private set => SetField(ref _openTaskCount, value); }
+    public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
+    public bool HasNoTodayRecentRows { get => _hasNoTodayRecentRows; private set => SetField(ref _hasNoTodayRecentRows, value); }
+    public bool HasNoTodayUpcomingRows { get => _hasNoTodayUpcomingRows; private set => SetField(ref _hasNoTodayUpcomingRows, value); }
+    public bool HasRecoverySessions => RecoverySessions.Count > 0;
+    public Guid SelectedProjectId { get => _selectedProjectId; set { if (SetField(ref _selectedProjectId, value)) ((AsyncCommand)CreateTaskCommand).RaiseCanExecuteChanged(); } }
+    public Guid SelectedBoardId { get => _selectedBoardId; set { if (SetField(ref _selectedBoardId, value)) ((AsyncCommand)CreateProjectCommand).RaiseCanExecuteChanged(); } }
+    public string NewProjectName { get => _newProjectName; set { if (SetField(ref _newProjectName, value)) ((AsyncCommand)CreateProjectCommand).RaiseCanExecuteChanged(); } }
+    public string NewBoardName { get => _newBoardName; set { if (SetField(ref _newBoardName, value)) ((AsyncCommand)CreateBoardCommand).RaiseCanExecuteChanged(); } }
+    public string NewActivityName { get => _newActivityName; set { if (SetField(ref _newActivityName, value)) ((AsyncCommand)CreateActivityCommand).RaiseCanExecuteChanged(); } }
+    public string NewActivityGroupName { get => _newActivityGroupName; set { if (SetField(ref _newActivityGroupName, value)) ((AsyncCommand)CreateActivityGroupCommand).RaiseCanExecuteChanged(); } }
+    public string NewEventTitle { get => _newEventTitle; set { if (SetField(ref _newEventTitle, value)) ((AsyncCommand)CreateCalendarEventCommand).RaiseCanExecuteChanged(); } }
+    public string NewEventDescription { get => _newEventDescription; set => SetField(ref _newEventDescription, value); }
+    public string NewEventLocation { get => _newEventLocation; set => SetField(ref _newEventLocation, value); }
+    public string NewEventColor { get => _newEventColor; set => SetField(ref _newEventColor, value); }
+    public string NewEventRecurrence { get => _newEventRecurrence; set => SetField(ref _newEventRecurrence, value); }
+    public string NewEventRecurrenceEnd { get => _newEventRecurrenceEnd; set => SetField(ref _newEventRecurrenceEnd, value); }
+    public bool NewEventAllDay { get => _newEventAllDay; set => SetField(ref _newEventAllDay, value); }
+    public string NewEventStart { get => _newEventStart; set => SetField(ref _newEventStart, value); }
+    public string NewEventEnd { get => _newEventEnd; set => SetField(ref _newEventEnd, value); }
+    public string NewCalendarName { get => _newCalendarName; set { if (SetField(ref _newCalendarName, value)) ((AsyncCommand)CreateCalendarCommand).RaiseCanExecuteChanged(); } }
+    public string NewCalendarColor { get => _newCalendarColor; set => SetField(ref _newCalendarColor, value); }
+    public bool AllowConcurrentForeground { get => _allowConcurrentForeground; set => SetField(ref _allowConcurrentForeground, value); }
+
+    public async Task InitializeAsync()
+    {
+        if (_initialized)
+        {
+            return;
+        }
+
+        _initialized = true;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            var bootstrap = await _backend.GetBootstrapAsync();
+            WorkspaceName = bootstrap.Workspace.Name;
+            if (bootstrap.Settings is not null)
+            {
+                AllowConcurrentForeground = bootstrap.Settings.AllowConcurrentForeground;
+                _settingsRevision = bootstrap.Settings.Revision;
+            }
+            _todayMilliseconds = bootstrap.Today.TrackedTodayMilliseconds;
+            TrackedToday = FormatDuration(_todayMilliseconds);
+            OpenTaskCount = bootstrap.Today.OpenTaskCount;
+
+            Projects.Clear();
+            Boards.Clear();
+            foreach (var board in bootstrap.Boards.Where(item => item.ArchivedAtUtc is null))
+            {
+                Boards.Add(new BoardOption(board.Id, board.Name));
+            }
+
+            foreach (var project in bootstrap.Projects.Where(item => item.ArchivedAtUtc is null))
+            {
+                Projects.Add(new ProjectOption(project.Id, project.Name));
+            }
+
+            if (!Boards.Any(board => board.Id == SelectedBoardId))
+            {
+                SelectedBoardId = Boards.Count == 0 ? Guid.Empty : Boards[0].Id;
+            }
+
+            Activities.Clear();
+            foreach (var activity in bootstrap.Activities)
+            {
+                Activities.Add(new ActivityOption(activity.Id, activity.Name));
+            }
+
+            ActivityGroups.Clear();
+            foreach (var group in bootstrap.ActivityGroups ?? [])
+            {
+                ActivityGroups.Add(new ActivityGroupOption(group.Id, group.Name));
+            }
+
+            ActivityGroupAdminRows.Clear();
+            foreach (var group in bootstrap.ActivityGroups ?? [])
+            {
+                ActivityGroupAdminRows.Add(new ActivityGroupAdminRowViewModel(group, SaveActivityGroupAsync, ReorderActivityGroupAsync));
+            }
+
+            CalendarAdminRows.Clear();
+            foreach (var calendar in bootstrap.Calendars)
+            {
+                CalendarAdminRows.Add(new CalendarAdminRowViewModel(calendar, SaveCalendarAsync));
+            }
+
+            ProjectAdminRows.Clear();
+            foreach (var project in bootstrap.Projects)
+            {
+                ProjectAdminRows.Add(new ProjectAdminRowViewModel(project, SaveProjectAsync, ToggleProjectArchiveAsync, AddProjectTagAsync, ReorderProjectAsync));
+            }
+
+            BoardAdminRows.Clear();
+            foreach (var board in bootstrap.Boards)
+            {
+                BoardAdminRows.Add(new BoardAdminRowViewModel(board, SaveBoardAsync, ToggleBoardArchiveAsync, ReorderBoardAsync));
+            }
+
+            ActivityAdminRows.Clear();
+            foreach (var activity in bootstrap.Activities)
+            {
+                ActivityAdminRows.Add(new ActivityAdminRowViewModel(activity, ActivityGroups, SaveActivityAsync, ToggleActivityArchiveAsync, AddActivityTagAsync));
+            }
+
+            if (!Projects.Any(project => project.Id == SelectedProjectId))
+            {
+                SelectedProjectId = Projects.Count == 0 ? Guid.Empty : Projects[0].Id;
+            }
+            _selectedCalendarId = bootstrap.Calendars.Count == 0 ? Guid.Empty : bootstrap.Calendars[0].Id;
+            ((AsyncCommand)CreateCalendarEventCommand).RaiseCanExecuteChanged();
+
+            ActiveSessions.Clear();
+            foreach (var item in bootstrap.Today.ActiveSessions)
+            {
+                ActiveSessions.Add(new ActiveSessionRowViewModel(item, PauseResumeAsync, StopAsync));
+            }
+            HasNoActiveSessions = ActiveSessions.Count == 0;
+
+            RecoverySessions.Clear();
+            foreach (var session in bootstrap.Today.RecoverySessions ?? [])
+            {
+                RecoverySessions.Add(new RecoverySessionRowViewModel(session, ResolveRecoveryAsync));
+            }
+            RaisePropertyChanged(nameof(HasRecoverySessions));
+
+            await LoadTasksAsync();
+            if (IsTodayVisible)
+            {
+                await LoadTodayReviewAsync();
+            }
+
+            StatusMessage = "All changes are saved locally.";
+            if (IsHistoryVisible)
+            {
+                await LoadHistoryAsync();
+            }
+            else if (IsCalendarVisible)
+            {
+                await LoadCalendarAsync(bootstrap);
+            }
+            else if (IsSummaryVisible)
+            {
+                await LoadSummaryAsync();
+            }
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "Snook could not refresh the workspace.";
+        }
+    }
+
+    private async Task CreateTaskAsync()
+    {
+        try
+        {
+            await _backend.CreateTaskAsync(SelectedProjectId, TaskTitle.Trim());
+            TaskTitle = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task could not be created.";
+        }
+    }
+
+    private async Task CreateProjectAsync()
+    {
+        try
+        {
+            await _backend.CreateProjectAsync(SelectedBoardId, NewProjectName.Trim());
+            NewProjectName = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The project could not be created.";
+        }
+    }
+
+    private async Task CreateBoardAsync()
+    {
+        try
+        {
+            await _backend.CreateBoardAsync(NewBoardName.Trim());
+            NewBoardName = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The board could not be created.";
+        }
+    }
+
+    private async Task CreateActivityAsync()
+    {
+        try
+        {
+            await _backend.CreateActivityAsync(NewActivityName.Trim());
+            NewActivityName = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity could not be created.";
+        }
+    }
+
+    private async Task CreateActivityGroupAsync()
+    {
+        try
+        {
+            await _backend.CreateActivityGroupAsync(NewActivityGroupName.Trim());
+            NewActivityGroupName = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity group could not be created.";
+        }
+    }
+
+    private async Task SaveActivityGroupAsync(ActivityGroupAdminRowViewModel row)
+    {
+        try
+        {
+            await _backend.UpdateActivityGroupAsync(row.Group.Id, new ActivityGroupUpdate(row.DraftName), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Group.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity group could not be updated.";
+        }
+    }
+
+    private async Task ReorderActivityGroupAsync(ActivityGroupAdminRowViewModel row, ReorderDirection direction)
+    {
+        try
+        {
+            await _backend.ReorderActivityGroupAsync(row.Group.Id, direction, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Group.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity group order could not be changed.";
+        }
+    }
+
+    private async Task CreateCalendarAsync()
+    {
+        try
+        {
+            await _backend.CreateCalendarAsync(NewCalendarName.Trim(), NewCalendarColor.Trim());
+            NewCalendarName = string.Empty;
+            StatusMessage = "Calendar created.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar could not be created.";
+        }
+    }
+
+    private async Task SaveCalendarAsync(CalendarAdminRowViewModel row)
+    {
+        try
+        {
+            await _backend.UpdateCalendarAsync(
+                row.Calendar.Id,
+                new CalendarUpdate(row.DraftName, row.DraftColor, row.IsVisible),
+                new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Calendar.Revision));
+            StatusMessage = "Calendar updated.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar could not be updated.";
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        try
+        {
+            var updated = await _backend.UpdateSettingsAsync(
+                new WorkspaceSettings(AllowConcurrentForeground, _settingsRevision),
+                new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), _settingsRevision));
+            _settingsRevision = updated.Revision;
+            StatusMessage = "Workspace settings saved.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "Workspace settings could not be saved.";
+        }
+    }
+
+    private async Task SaveProjectAsync(ProjectAdminRowViewModel row)
+    {
+        try
+        {
+            await _backend.UpdateProjectAsync(row.Project.Id, new ProjectUpdate(row.DraftName, row.Project.Description, row.Project.Starred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The project could not be updated.";
+        }
+    }
+
+    private async Task ReorderProjectAsync(ProjectAdminRowViewModel row, ReorderDirection direction)
+    {
+        try
+        {
+            await _backend.ReorderProjectAsync(row.Project.Id, direction, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The project order could not be changed.";
+        }
+    }
+
+    private async Task AddProjectTagAsync(ProjectAdminRowViewModel row)
+    {
+        if (string.IsNullOrWhiteSpace(row.TagText))
+        {
+            return;
+        }
+
+        try
+        {
+            await _backend.AddProjectTagAsync(row.Project.Id, row.TagText.Trim());
+            row.TagText = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The project tag could not be added.";
+        }
+    }
+
+    private async Task SaveBoardAsync(BoardAdminRowViewModel row)
+    {
+        try
+        {
+            await _backend.UpdateBoardAsync(row.Board.Id, new BoardUpdate(row.DraftName), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Board.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The board could not be updated.";
+        }
+    }
+
+    private async Task ReorderBoardAsync(BoardAdminRowViewModel row, ReorderDirection direction)
+    {
+        try
+        {
+            await _backend.ReorderBoardAsync(row.Board.Id, direction, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Board.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The board order could not be changed.";
+        }
+    }
+
+    private async Task ToggleBoardArchiveAsync(BoardAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Board.Revision);
+            if (row.Board.ArchivedAtUtc is null)
+            {
+                await _backend.ArchiveBoardAsync(row.Board.Id, request);
+            }
+            else
+            {
+                await _backend.RestoreBoardAsync(row.Board.Id, request);
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The board archive state could not be changed.";
+        }
+    }
+
+    private async Task ToggleProjectArchiveAsync(ProjectAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision);
+            if (row.Project.ArchivedAtUtc is null)
+            {
+                await _backend.ArchiveProjectAsync(row.Project.Id, request);
+            }
+            else
+            {
+                await _backend.RestoreProjectAsync(row.Project.Id, request);
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The project archive state could not be changed.";
+        }
+    }
+
+    private async Task SaveActivityAsync(ActivityAdminRowViewModel row)
+    {
+        try
+        {
+            await _backend.UpdateActivityAsync(row.Activity.Id, new ActivityUpdate(row.DraftName, row.Activity.Description, row.Activity.DefaultLane, row.GroupId == Guid.Empty ? null : row.GroupId), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Activity.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity could not be updated.";
+        }
+    }
+
+    private async Task AddActivityTagAsync(ActivityAdminRowViewModel row)
+    {
+        if (string.IsNullOrWhiteSpace(row.TagText))
+        {
+            return;
+        }
+
+        try
+        {
+            await _backend.AddActivityTagAsync(row.Activity.Id, row.TagText.Trim());
+            row.TagText = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity tag could not be added.";
+        }
+    }
+
+    private async Task ToggleActivityArchiveAsync(ActivityAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Activity.Revision);
+            if (row.Activity.ArchivedAtUtc is null)
+            {
+                await _backend.ArchiveActivityAsync(row.Activity.Id, request);
+            }
+            else
+            {
+                await _backend.RestoreActivityAsync(row.Activity.Id, request);
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity archive state could not be changed.";
+        }
+    }
+
+    private async Task SelectSectionAsync(string section)
+    {
+        var normalized = section switch
+        {
+            "History" => "History",
+            "Summary" => "Summary",
+            "Calendar" => "Calendar",
+            "Tasks" => "Tasks",
+            "Settings" => "Settings",
+            _ => "Today"
+        };
+        CurrentSection = normalized;
+        SectionTitle = normalized switch
+        {
+            "History" => "Your work, remembered",
+            "Summary" => "See where your time went",
+            "Tasks" => "Make the next step visible",
+            "Calendar" => "Make room for the work",
+            "Settings" => "Shape the workspace",
+            _ => "Good morning"
+        };
+        SectionSubtitle = normalized switch
+        {
+            "History" => "Searchable time history with no hidden result limit.",
+            "Summary" => "Attributed duration and wall-clock coverage stay distinct.",
+            "Tasks" => "Board and list views share one task model.",
+            "Calendar" => "Planned blocks stay separate from deadlines.",
+            "Settings" => "Projects, boards, and activities are saved locally.",
+            _ => "A little progress, thoughtfully recorded."
+        };
+        RaisePropertyChanged(nameof(IsTodayVisible));
+        RaisePropertyChanged(nameof(IsTasksVisible));
+        RaisePropertyChanged(nameof(IsHistoryVisible));
+        RaisePropertyChanged(nameof(IsSummaryVisible));
+        RaisePropertyChanged(nameof(IsCalendarVisible));
+        RaisePropertyChanged(nameof(IsSettingsVisible));
+        if (normalized == "History")
+        {
+            await LoadHistoryAsync();
+        }
+        else if (normalized == "Tasks")
+        {
+            await LoadTasksAsync();
+        }
+        else if (normalized == "Calendar")
+        {
+            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+        }
+        else if (normalized == "Summary")
+        {
+            await LoadSummaryAsync();
+        }
+    }
+
+    private Task LoadMoreHistoryAsync() => LoadHistoryAsync(true);
+
+    private async Task LoadTodayReviewAsync()
+    {
+        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.Local);
+        var localStart = new DateTimeOffset(localNow.Date, localNow.Offset).ToUniversalTime();
+        var localEnd = localStart.AddDays(7);
+        TodayRecentRows.Clear();
+        TodayUpcomingRows.Clear();
+
+        foreach (var task in Tasks.Where(item => item.Task.DueDate is not null).OrderBy(item => item.Task.DueDate).Take(5))
+        {
+            TodayUpcomingRows.Add(new ReviewRowViewModel(task.Title, $"Deadline · {task.DueLabel}"));
+        }
+
+        var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
+        var taskNames = taskItems.ToDictionary(item => item.Task.Id, item => item.Task.Title);
+        var activityNames = Activities.ToDictionary(item => item.Id, item => item.Name);
+        foreach (var block in await _backend.GetCalendarRangeAsync(new CalendarRangeQuery(localStart, localEnd)))
+        {
+            var label = block.TaskId is { } taskId && taskNames.TryGetValue(taskId, out var taskName)
+                ? taskName
+                : block.ActivityId is { } activityId && activityNames.TryGetValue(activityId, out var activityName)
+                    ? activityName
+                    : block.TitleOverride ?? "Planned work";
+            TodayUpcomingRows.Add(new ReviewRowViewModel(label, $"Scheduled · {block.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}"));
+        }
+
+        foreach (var item in await _backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(localStart, localEnd)))
+        {
+            TodayUpcomingRows.Add(new ReviewRowViewModel(item.Title, item.AllDay
+                ? $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d} all day"
+                : $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}"));
+        }
+
+        var history = await _backend.GetHistoryAsync(new HistoryQuery(localStart.AddDays(-7), DateTimeOffset.UtcNow, PageSize: 5));
+        foreach (var item in history.Items)
+        {
+            var label = item.TaskTitle ?? item.ActivityName ?? "Tracked work";
+            TodayRecentRows.Add(new ReviewRowViewModel(label, $"{item.Session.StartedAtUtc.ToLocalTime():ddd, MMM d h:mm tt} · {FormatForRow(item.AttributedMilliseconds)}"));
+        }
+
+        HasNoTodayRecentRows = TodayRecentRows.Count == 0;
+        HasNoTodayUpcomingRows = TodayUpcomingRows.Count == 0;
+    }
+
+    private async Task LoadHistoryAsync(bool append = false)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!append)
+        {
+            _historyContinuation = null;
+            HistoryItems.Clear();
+        }
+
+        var items = await _backend.GetHistoryAsync(new HistoryQuery(now.AddDays(-30), now.AddDays(1), SearchText, 50, _historyContinuation));
+        var taskItems = await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true);
+        var taskOptions = taskItems.Select(item => new TaskOption(item.Task.Id, item.Task.Title)).ToArray();
+        foreach (var item in items.Items)
+        {
+            HistoryItems.Add(new HistoryRowViewModel(item, taskOptions, Activities, CorrectHistoryAsync));
+        }
+        HasNoHistory = HistoryItems.Count == 0;
+        _historyContinuation = items.ContinuationToken;
+        HistoryHasMore = items.HasMore;
+    }
+
+    private async Task LoadSummaryAsync()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var grouping = Enum.TryParse<Snook.Domain.SummaryGrouping>(SummaryGrouping, true, out var parsed) ? parsed : Snook.Domain.SummaryGrouping.Tag;
+        var buckets = await _backend.GetSummaryAsync(now.AddDays(-30), now.AddDays(1), grouping, TimeZoneInfo.Local.Id);
+        SummaryItems.Clear();
+        foreach (var bucket in buckets)
+        {
+            SummaryItems.Add(new SummaryRowViewModel(bucket));
+        }
+
+        HasNoSummary = SummaryItems.Count == 0;
+    }
+
+    private async Task LoadTasksAsync()
+    {
+        var tasks = await _backend.SearchTasksAsync(SearchText, ShowCompleted, ShowArchived);
+        tasks = TaskSortMode switch
+        {
+            "DueDate" => tasks.OrderBy(item => item.Task.DueDate is null).ThenBy(item => item.Task.DueDate).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
+            "Tracked" => tasks.OrderByDescending(item => item.TrackedMilliseconds).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
+            "Title" => tasks.OrderBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
+            _ => tasks.OrderByDescending(item => item.Task.Priority).ThenBy(item => item.Task.DueDate is null).ThenBy(item => item.Task.DueDate).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray()
+        };
+        var prerequisiteOptions = tasks.Select(item => new TaskOption(item.Task.Id, item.Task.Title)).ToArray();
+        Tasks.Clear();
+        TaskGroups.Clear();
+        var rows = new List<TaskRowViewModel>();
+        foreach (var task in tasks)
+        {
+            var row = new TaskRowViewModel(task, Projects, Activities, prerequisiteOptions, StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
+            Tasks.Add(row);
+            rows.Add(row);
+        }
+
+        foreach (var group in rows.GroupBy(row => row.ProjectName).OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            TaskGroups.Add(new ProjectTaskGroupViewModel(group.Key, group.ToArray()));
+        }
+        HasNoTasks = Tasks.Count == 0;
+    }
+
+    private async Task LoadCalendarAsync(BootstrapSnapshot bootstrap)
+    {
+        var localNow = DateTimeOffset.Now;
+        var localStart = CalendarView switch
+        {
+            "Day" => localNow.Date,
+            "Month" => new DateTime(localNow.Year, localNow.Month, 1),
+            "Agenda" => localNow.Date,
+            _ => localNow.Date.AddDays(-(int)localNow.DayOfWeek + (localNow.DayOfWeek == DayOfWeek.Sunday ? -6 : 1))
+        };
+        var localEnd = CalendarView switch
+        {
+            "Day" => localStart.AddDays(1),
+            "Month" => localStart.AddMonths(1),
+            "Agenda" => localStart.AddDays(14),
+            _ => localStart.AddDays(7)
+        };
+        var rangeStart = new DateTimeOffset(localStart, localNow.Offset).ToUniversalTime();
+        var rangeEnd = new DateTimeOffset(localEnd, localNow.Offset).ToUniversalTime();
+        var range = new CalendarRangeQuery(rangeStart, rangeEnd);
+        var blocks = await _backend.GetCalendarRangeAsync(range);
+        var events = await _backend.GetCalendarEventsRangeAsync(range);
+        var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
+        CalendarBlocks.Clear();
+        CalendarEvents.Clear();
+        foreach (var block in blocks)
+        {
+            var task = taskItems.FirstOrDefault(item => item.Task.Id == block.TaskId)?.Task.Title;
+            var activity = bootstrap.Activities.FirstOrDefault(item => item.Id == block.ActivityId)?.Name;
+            CalendarBlocks.Add(new CalendarBlockRowViewModel(block, task ?? activity ?? block.TitleOverride ?? "Planned work", UpdateCalendarBlockAsync, StartCalendarBlockAsync));
+        }
+        foreach (var item in events)
+        {
+            CalendarEvents.Add(new CalendarEventRowViewModel(item, DeleteCalendarEventAsync));
+        }
+        HasNoCalendarBlocks = CalendarBlocks.Count == 0 && CalendarEvents.Count == 0;
+    }
+
+    private async Task PlanNextTaskAsync()
+    {
+        if (_selectedCalendarId == Guid.Empty)
+        {
+            StatusMessage = "Create a calendar before planning time.";
+            return;
+        }
+
+        var tasks = await _backend.SearchTasksAsync(includeCompleted: false);
+        var task = tasks.Count == 0 ? null : tasks[0];
+        if (task is null)
+        {
+            StatusMessage = "Capture an open task before planning time.";
+            return;
+        }
+
+        try
+        {
+            var start = DateTimeOffset.UtcNow.AddHours(1);
+            await _backend.CreateScheduleBlockAsync(_selectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, start.AddHours(1), TimeZoneInfo.Utc.Id);
+            StatusMessage = "Planned one hour for your next task.";
+            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The schedule block could not be created.";
+        }
+    }
+
+    private async Task SelectCalendarViewAsync(string view)
+    {
+        CalendarView = view is "Day" or "Week" or "Month" or "Agenda" ? view : "Week";
+        if (IsCalendarVisible)
+        {
+            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+        }
+    }
+
+    private Task SelectTaskViewAsync(string view)
+    {
+        TaskViewMode = view is "Board" ? "Board" : "List";
+        return Task.CompletedTask;
+    }
+
+    private async Task SelectSummaryGroupingAsync(string grouping)
+    {
+        SummaryGrouping = grouping is "Day" or "Task" or "Project" or "Activity" or "ActivityGroup" or "Tag" or "Lane" ? grouping : "Tag";
+        if (IsSummaryVisible)
+        {
+            await LoadSummaryAsync();
+        }
+    }
+
+    private async Task CreateCalendarEventAsync()
+    {
+        if (_selectedCalendarId == Guid.Empty)
+        {
+            StatusMessage = "Create a calendar before adding an event.";
+            return;
+        }
+
+        if (!DateTimeOffset.TryParse(NewEventStart, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
+            || !DateTimeOffset.TryParse(NewEventEnd, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end)
+            || end <= start)
+        {
+            StatusMessage = "Use valid event start and end instants.";
+            return;
+        }
+
+        try
+        {
+            DateTimeOffset? recurrenceEnd = null;
+            if (!string.IsNullOrWhiteSpace(NewEventRecurrenceEnd))
+            {
+                if (!DateTimeOffset.TryParse(NewEventRecurrenceEnd, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var parsedRecurrenceEnd))
+                {
+                    StatusMessage = "Use a valid recurrence end instant, or leave it empty.";
+                    return;
+                }
+
+                recurrenceEnd = parsedRecurrenceEnd.ToUniversalTime();
+            }
+
+            await _backend.CreateCalendarEventAsync(
+                _selectedCalendarId,
+                NewEventTitle.Trim(),
+                start.ToUniversalTime(),
+                end.ToUniversalTime(),
+                NewEventDescription.Trim(),
+                string.IsNullOrWhiteSpace(NewEventLocation) ? null : NewEventLocation.Trim(),
+                string.IsNullOrWhiteSpace(NewEventColor) ? "#6767F2" : NewEventColor.Trim(),
+                NewEventAllDay,
+                TimeZoneInfo.Local.Id,
+                string.IsNullOrWhiteSpace(NewEventRecurrence) ? null : NewEventRecurrence.Trim(),
+                recurrenceEnd);
+            NewEventTitle = string.Empty;
+            NewEventDescription = string.Empty;
+            NewEventLocation = string.Empty;
+            NewEventColor = "#6767F2";
+            NewEventRecurrence = string.Empty;
+            NewEventRecurrenceEnd = string.Empty;
+            NewEventAllDay = false;
+            NewEventStart = string.Empty;
+            NewEventEnd = string.Empty;
+            StatusMessage = "Calendar event created.";
+            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar event could not be created.";
+        }
+    }
+
+    private Task StartCalendarBlockAsync(CalendarBlockRowViewModel row)
+        => StartTimerAsync(row.Block.TaskId, row.Block.ActivityId, SessionLane.Foreground);
+
+    private async Task DeleteCalendarEventAsync(CalendarEventRowViewModel row)
+    {
+        try
+        {
+            await _backend.DeleteCalendarEventAsync(row.Event.Id, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Event.Revision));
+            StatusMessage = "Calendar event deleted.";
+            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar event could not be deleted.";
+        }
+    }
+
+    private async Task CorrectHistoryAsync(HistoryRowViewModel row)
+    {
+        if (!DateTimeOffset.TryParse(row.StartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start))
+        {
+            StatusMessage = "Use a valid start instant, such as 2026-09-09T14:30:00Z.";
+            return;
+        }
+
+        DateTimeOffset? end = null;
+        if (!string.IsNullOrWhiteSpace(row.EndText))
+        {
+            if (!DateTimeOffset.TryParse(row.EndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var parsedEnd))
+            {
+                StatusMessage = "Use a valid end instant, or leave it empty for an open interval.";
+                return;
+            }
+
+            end = parsedEnd;
+        }
+
+        var intervals = row.Item.Session.Intervals.ToArray();
+        intervals[0] = intervals[0] with { StartedAtUtc = start };
+        if (end is not null && intervals[^1].EndedAtUtc is not null)
+        {
+            intervals[^1] = intervals[^1] with { EndedAtUtc = end };
+        }
+
+        try
+        {
+            var stoppedAt = row.Item.Session.State == SessionState.Stopped ? end : null;
+            await _backend.CorrectSessionAsync(
+                row.Item.Session.Id,
+                new SessionCorrection(row.SelectedTaskId, row.SelectedActivityId, start, stoppedAt, row.NotesEditor, intervals, row.ReasonText),
+                new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Item.Session.Revision));
+            StatusMessage = "Correction saved with before/after provenance.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The correction could not be saved.";
+        }
+    }
+
+    private async Task UpdateCalendarBlockAsync(CalendarBlockRowViewModel row)
+    {
+        if (!DateTimeOffset.TryParse(row.StartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
+            || !DateTimeOffset.TryParse(row.EndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end))
+        {
+            StatusMessage = "Use valid start and end instants for the schedule block.";
+            return;
+        }
+
+        try
+        {
+            await _backend.UpdateScheduleBlockAsync(
+                row.Block.Id,
+                new ScheduleBlockUpdate(start, end, row.Block.TimeZone, row.TitleEditor, row.Block.RecurrenceRule, row.Block.RecurrenceEndUtc),
+                new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Block.Revision));
+            StatusMessage = "Schedule block updated.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The schedule block could not be updated.";
+        }
+    }
+
+    private async Task CreateBackupAsync()
+    {
+        try
+        {
+            var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var path = Path.Combine(root, "Snook", "Backups", $"workspace-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.db");
+            var result = await _backend.CreateBackupAsync(path);
+            StatusMessage = $"Backup verified ({result.Bytes:N0} bytes).";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The backup could not be created.";
+        }
+    }
+
+    private async Task ExportAsync()
+    {
+        try
+        {
+            var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var path = Path.Combine(root, "Snook", "Exports", $"workspace-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
+            var result = await _backend.ExportJsonAsync(path);
+            StatusMessage = $"Exported {result.Bytes:N0} bytes of workspace data.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The export could not be created.";
+        }
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        try
+        {
+            var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var path = Path.Combine(root, "Snook", "Exports", $"worklog-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.csv");
+            var now = DateTimeOffset.UtcNow;
+            var result = await _backend.ExportCsvAsync(path, now.AddDays(-30), now.AddDays(1));
+            StatusMessage = $"Exported {result.Bytes:N0} bytes of CSV time history.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The CSV report could not be created.";
+        }
+    }
+
+    private async Task RestoreLatestBackupAsync()
+    {
+        try
+        {
+            var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var backupDirectory = Path.Combine(root, "Snook", "Backups");
+            var latest = Directory.Exists(backupDirectory)
+                ? Directory.GetFiles(backupDirectory, "*.db").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault()
+                : null;
+            if (latest is null)
+            {
+                StatusMessage = "There is no backup to restore yet.";
+                return;
+            }
+
+            var result = await _backend.RestoreBackupAsync(latest);
+            StatusMessage = $"Restored and verified {Path.GetFileName(result.SourcePath)}.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The backup could not be restored.";
+        }
+    }
+
+    private async Task AddManualTimeAsync()
+    {
+        var activity = (await _backend.GetBootstrapAsync()).Activities.FirstOrDefault(item => item.DefaultLane == SessionLane.Foreground);
+        if (activity is null)
+        {
+            StatusMessage = "Create an activity before adding manual time.";
+            return;
+        }
+
+        try
+        {
+            var end = DateTimeOffset.UtcNow;
+            await _backend.CreateManualSessionAsync(null, activity.Id, end.AddMinutes(-30), end, "Manual entry");
+            StatusMessage = "Added 30 minutes of manual time.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "Manual time could not be added.";
+        }
+    }
+
+    private async Task StartFocusAsync()
+    {
+        var activity = (await _backend.GetBootstrapAsync()).Activities.FirstOrDefault(item => item.DefaultLane == SessionLane.Foreground);
+        if (activity is null)
+        {
+            StatusMessage = "Create an activity before starting a general timer.";
+            return;
+        }
+
+        await StartTimerAsync(null, activity.Id, SessionLane.Foreground);
+    }
+
+    private Task StartTaskAsync(TaskRowViewModel task) => StartTimerAsync(task.Task.Id, task.Task.DefaultActivityId, SessionLane.Foreground);
+
+    private async Task StartTimerAsync(Guid? taskId, Guid? activityId, SessionLane lane)
+    {
+        try
+        {
+            await _backend.StartSessionAsync(taskId, activityId, lane, new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The timer could not be started.";
+        }
+    }
+
+    private async Task CompleteTaskAsync(TaskRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision);
+            if (row.Task.Status == TaskState.Completed)
+            {
+                await _backend.ReopenTaskAsync(row.Task.Id, request);
+            }
+            else
+            {
+                await _backend.CompleteTaskAsync(row.Task.Id, request);
+            }
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task could not be completed.";
+        }
+    }
+
+    private async Task SaveTaskAsync(TaskRowViewModel row)
+    {
+        DateOnly? dueDate = null;
+        if (!string.IsNullOrWhiteSpace(row.DueDateText))
+        {
+            if (!DateOnly.TryParseExact(row.DueDateText.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDueDate)
+                || parsedDueDate < new DateOnly(1900, 1, 1))
+            {
+                StatusMessage = "Use a deadline in yyyy-MM-dd format, or leave it blank.";
+                return;
+            }
+
+            dueDate = parsedDueDate;
+        }
+
+        try
+        {
+            await _backend.UpdateTaskAsync(row.Task.Id, new TaskUpdate(row.DraftTitle, row.Task.Description, row.DraftPriority, dueDate, row.DraftActivityId, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task could not be updated.";
+        }
+    }
+
+    private async Task MoveTaskAsync(TaskRowViewModel row)
+    {
+        if (row.TargetProjectId == Guid.Empty || row.TargetProjectId == row.Task.ProjectId)
+        {
+            StatusMessage = "Choose a different project before moving the task.";
+            return;
+        }
+
+        try
+        {
+            await _backend.MoveTaskAsync(row.Task.Id, row.TargetProjectId, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task could not be moved.";
+        }
+    }
+
+    private async Task AddTaskTagAsync(TaskRowViewModel row)
+    {
+        if (string.IsNullOrWhiteSpace(row.TagText))
+        {
+            return;
+        }
+
+        try
+        {
+            await _backend.AddTaskTagAsync(row.Task.Id, row.TagText.Trim());
+            row.TagText = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task tag could not be added.";
+        }
+    }
+
+    private async Task AddTaskDependencyAsync(TaskRowViewModel row)
+    {
+        if (row.PrerequisiteTaskId is null || row.PrerequisiteTaskId == row.Task.Id)
+        {
+            StatusMessage = "Choose a different prerequisite task.";
+            return;
+        }
+
+        try
+        {
+            await _backend.AddTaskDependencyAsync(row.Task.Id, row.PrerequisiteTaskId.Value);
+            row.PrerequisiteTaskId = null;
+            StatusMessage = "Task dependency added.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task dependency could not be added.";
+        }
+    }
+
+    private async Task AddTaskLinkAsync(TaskRowViewModel row)
+    {
+        if (string.IsNullOrWhiteSpace(row.LinkUriText))
+        {
+            StatusMessage = "Enter an absolute HTTP, HTTPS, or file URI.";
+            return;
+        }
+
+        try
+        {
+            await _backend.AddTaskLinkAsync(row.Task.Id, string.IsNullOrWhiteSpace(row.LinkLabelText) ? null : row.LinkLabelText.Trim(), row.LinkUriText.Trim());
+            row.LinkLabelText = string.Empty;
+            row.LinkUriText = string.Empty;
+            StatusMessage = "Task reference added.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task reference could not be added.";
+        }
+    }
+
+    private async Task ShowTaskDetailsAsync(TaskRowViewModel row)
+    {
+        try
+        {
+            SelectedTaskDetails = await _backend.GetTaskDetailsAsync(row.Task.Id);
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "Task details could not be loaded.";
+        }
+    }
+
+    private async Task ArchiveTaskAsync(TaskRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision);
+            if (row.Task.ArchivedAtUtc is null)
+            {
+                await _backend.ArchiveTaskAsync(row.Task.Id, request);
+            }
+            else
+            {
+                await _backend.RestoreTaskAsync(row.Task.Id, request);
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task archive state could not be changed.";
+        }
+    }
+
+    private async Task PauseResumeAsync(ActiveSessionRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Session.Revision);
+            if (row.Session.State == SessionState.Running)
+            {
+                await _backend.PauseSessionAsync(row.Session.Id, request);
+            }
+            else
+            {
+                await _backend.ResumeSessionAsync(row.Session.Id, request);
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The timer could not be updated.";
+        }
+    }
+
+    private async Task StopAsync(ActiveSessionRowViewModel row)
+    {
+        try
+        {
+            await _backend.StopSessionAsync(row.Session.Id, null, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Session.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The timer could not be stopped.";
+        }
+    }
+
+    private async Task ResolveRecoveryAsync(RecoverySessionRowViewModel row, RecoveryDecision decision)
+    {
+        try
+        {
+            await _backend.ResolveRecoveryAsync(row.Session.Id, decision, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Session.Revision));
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The recovery decision could not be saved.";
+        }
+    }
+
+    private void OnBackendChanged(object? sender, ChangeNotification notification)
+    {
+        _ = Dispatcher.UIThread.InvokeAsync(RefreshAsync);
+    }
+
+    private void UpdateDisplayTimes()
+    {
+        foreach (var session in ActiveSessions)
+        {
+            session.UpdateElapsed();
+        }
+    }
+
+    private static string FormatDuration(long milliseconds)
+    {
+        var minutes = Math.Max(0, milliseconds) / 60_000;
+        return minutes < 60 ? $"{minutes}m" : $"{minutes / 60}h {minutes % 60:00}m";
+    }
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return false;
+        }
+
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        return true;
+    }
+
+    private void RaisePropertyChanged(string propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    public async ValueTask DisposeAsync()
+    {
+        _displayTimer.Dispose();
+        _backend.Changed -= OnBackendChanged;
+        await _backend.DisposeAsync();
+    }
+}
+
+public sealed record ProjectOption(Guid Id, string Name);
+public sealed record BoardOption(Guid Id, string Name);
+public sealed record ActivityOption(Guid Id, string Name);
+public sealed record ActivityGroupOption(Guid Id, string Name);
+public sealed record TaskOption(Guid Id, string Name);
+public sealed record PriorityOption(Priority Value, string Name);
+public sealed record TaskSortOption(string Value, string Name);
+
+public sealed class ReviewRowViewModel
+{
+    public ReviewRowViewModel(string label, string detail)
+    {
+        Label = label;
+        Detail = detail;
+    }
+
+    public string Label { get; }
+    public string Detail { get; }
+}
+
+public sealed class ActivityGroupAdminRowViewModel
+{
+    private readonly Func<ActivityGroupAdminRowViewModel, Task> _save;
+    private readonly Func<ActivityGroupAdminRowViewModel, ReorderDirection, Task> _reorder;
+
+    public ActivityGroupAdminRowViewModel(ActivityGroup group, Func<ActivityGroupAdminRowViewModel, Task> save, Func<ActivityGroupAdminRowViewModel, ReorderDirection, Task> reorder)
+    {
+        Group = group;
+        DraftName = group.Name;
+        _save = save;
+        _reorder = reorder;
+        SaveCommand = new AsyncCommand(_ => _save(this));
+        MoveEarlierCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Earlier));
+        MoveLaterCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Later));
+    }
+
+    public ActivityGroup Group { get; }
+    public string DraftName { get; set; }
+    public ICommand SaveCommand { get; }
+    public ICommand MoveEarlierCommand { get; }
+    public ICommand MoveLaterCommand { get; }
+}
+
+public sealed class BoardAdminRowViewModel
+{
+    private readonly Func<BoardAdminRowViewModel, Task> _save;
+    private readonly Func<BoardAdminRowViewModel, Task> _toggleArchive;
+    private readonly Func<BoardAdminRowViewModel, ReorderDirection, Task> _reorder;
+
+    public BoardAdminRowViewModel(Board board, Func<BoardAdminRowViewModel, Task> save, Func<BoardAdminRowViewModel, Task> toggleArchive, Func<BoardAdminRowViewModel, ReorderDirection, Task> reorder)
+    {
+        Board = board;
+        DraftName = board.Name;
+        _save = save;
+        _toggleArchive = toggleArchive;
+        _reorder = reorder;
+        SaveCommand = new AsyncCommand(_ => _save(this));
+        ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
+        MoveEarlierCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Earlier));
+        MoveLaterCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Later));
+    }
+
+    public Board Board { get; }
+    public string DraftName { get; set; }
+    public string ArchiveLabel => Board.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public ICommand SaveCommand { get; }
+    public ICommand ToggleArchiveCommand { get; }
+    public ICommand MoveEarlierCommand { get; }
+    public ICommand MoveLaterCommand { get; }
+}
+
+public sealed class ProjectAdminRowViewModel
+{
+    private readonly Func<ProjectAdminRowViewModel, Task> _save;
+    private readonly Func<ProjectAdminRowViewModel, Task> _toggleArchive;
+    private readonly Func<ProjectAdminRowViewModel, Task> _addTag;
+    private readonly Func<ProjectAdminRowViewModel, ReorderDirection, Task> _reorder;
+
+    public ProjectAdminRowViewModel(Project project, Func<ProjectAdminRowViewModel, Task> save, Func<ProjectAdminRowViewModel, Task> toggleArchive, Func<ProjectAdminRowViewModel, Task> addTag, Func<ProjectAdminRowViewModel, ReorderDirection, Task> reorder)
+    {
+        Project = project;
+        DraftName = project.Name;
+        _save = save;
+        _toggleArchive = toggleArchive;
+        _addTag = addTag;
+        _reorder = reorder;
+        SaveCommand = new AsyncCommand(_ => _save(this));
+        ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
+        AddTagCommand = new AsyncCommand(_ => _addTag(this));
+        MoveEarlierCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Earlier));
+        MoveLaterCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Later));
+    }
+
+    public Project Project { get; }
+    public string DraftName { get; set; }
+    public string TagText { get; set; } = string.Empty;
+    public string ArchiveLabel => Project.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public ICommand SaveCommand { get; }
+    public ICommand ToggleArchiveCommand { get; }
+    public ICommand AddTagCommand { get; }
+    public ICommand MoveEarlierCommand { get; }
+    public ICommand MoveLaterCommand { get; }
+}
+
+public sealed class ActivityAdminRowViewModel
+{
+    private readonly Func<ActivityAdminRowViewModel, Task> _save;
+    private readonly Func<ActivityAdminRowViewModel, Task> _toggleArchive;
+    private readonly Func<ActivityAdminRowViewModel, Task> _addTag;
+
+    public ActivityAdminRowViewModel(Activity activity, IReadOnlyList<ActivityGroupOption> groups, Func<ActivityAdminRowViewModel, Task> save, Func<ActivityAdminRowViewModel, Task> toggleArchive, Func<ActivityAdminRowViewModel, Task> addTag)
+    {
+        Activity = activity;
+        GroupOptions = groups;
+        GroupId = activity.GroupId ?? Guid.Empty;
+        DraftName = activity.Name;
+        _save = save;
+        _toggleArchive = toggleArchive;
+        _addTag = addTag;
+        SaveCommand = new AsyncCommand(_ => _save(this));
+        ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
+        AddTagCommand = new AsyncCommand(_ => _addTag(this));
+    }
+
+    public Activity Activity { get; }
+    public IReadOnlyList<ActivityGroupOption> GroupOptions { get; }
+    public Guid GroupId { get; set; }
+    public string DraftName { get; set; }
+    public string TagText { get; set; } = string.Empty;
+    public string ArchiveLabel => Activity.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public ICommand SaveCommand { get; }
+    public ICommand ToggleArchiveCommand { get; }
+    public ICommand AddTagCommand { get; }
+}
+
+public sealed class ProjectTaskGroupViewModel
+{
+    public ProjectTaskGroupViewModel(string projectName, IReadOnlyList<TaskRowViewModel> tasks)
+    {
+        ProjectName = projectName;
+        Tasks = tasks;
+    }
+
+    public string ProjectName { get; }
+    public IReadOnlyList<TaskRowViewModel> Tasks { get; }
+}
+
+public sealed class TaskRowViewModel
+{
+    private readonly Func<TaskRowViewModel, Task> _start;
+    private readonly Func<TaskRowViewModel, Task> _complete;
+    private readonly Func<TaskRowViewModel, Task> _save;
+    private readonly Func<TaskRowViewModel, Task> _move;
+    private readonly Func<TaskRowViewModel, Task> _archive;
+    private readonly Func<TaskRowViewModel, Task> _addTag;
+    private readonly Func<TaskRowViewModel, Task> _addDependency;
+    private readonly Func<TaskRowViewModel, Task> _addLink;
+    private readonly Func<TaskRowViewModel, Task> _showDetails;
+    private string _draftTitle;
+    private Guid _targetProjectId;
+
+    public TaskRowViewModel(TaskListItem item, IEnumerable<ProjectOption> projects, IEnumerable<ActivityOption> activities, IEnumerable<TaskOption> prerequisiteOptions, Func<TaskRowViewModel, Task> start, Func<TaskRowViewModel, Task> complete, Func<TaskRowViewModel, Task> save, Func<TaskRowViewModel, Task> move, Func<TaskRowViewModel, Task> archive, Func<TaskRowViewModel, Task> addTag, Func<TaskRowViewModel, Task> addDependency, Func<TaskRowViewModel, Task> addLink, Func<TaskRowViewModel, Task> showDetails)
+    {
+        Item = item;
+        ProjectOptions = projects.ToArray();
+        ActivityOptions = activities.ToArray();
+        PrerequisiteOptions = prerequisiteOptions.Where(option => option.Id != item.Task.Id).ToArray();
+        _start = start;
+        _complete = complete;
+        _save = save;
+        _move = move;
+        _archive = archive;
+        _addTag = addTag;
+        _addDependency = addDependency;
+        _addLink = addLink;
+        _showDetails = showDetails;
+        _draftTitle = item.Task.Title;
+        _targetProjectId = item.Task.ProjectId;
+        DueDateText = item.Task.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+        DraftPriority = item.Task.Priority;
+        DraftActivityId = item.Task.DefaultActivityId;
+        DraftStarred = item.Task.Starred;
+        StartCommand = new AsyncCommand(_ => _start(this));
+        CompleteCommand = new AsyncCommand(_ => _complete(this));
+        SaveCommand = new AsyncCommand(_ => _save(this));
+        MoveCommand = new AsyncCommand(_ => _move(this));
+        ArchiveCommand = new AsyncCommand(_ => _archive(this));
+        AddTagCommand = new AsyncCommand(_ => _addTag(this));
+        AddDependencyCommand = new AsyncCommand(_ => _addDependency(this));
+        AddLinkCommand = new AsyncCommand(_ => _addLink(this));
+        ShowDetailsCommand = new AsyncCommand(_ => _showDetails(this));
+    }
+
+    public TaskListItem Item { get; private set; }
+    public TaskItem Task => Item.Task;
+    public string Title => Task.Title;
+    public string DraftTitle { get => _draftTitle; set { if (!string.IsNullOrWhiteSpace(value)) _draftTitle = value; } }
+    public IReadOnlyList<ProjectOption> ProjectOptions { get; }
+    public IReadOnlyList<ActivityOption> ActivityOptions { get; }
+    public IReadOnlyList<TaskOption> PrerequisiteOptions { get; }
+    public IReadOnlyList<PriorityOption> PriorityOptions { get; } =
+    [
+        new(Priority.None, "No priority"),
+        new(Priority.Low, "Low"),
+        new(Priority.Medium, "Medium"),
+        new(Priority.High, "High"),
+        new(Priority.Urgent, "Urgent")
+    ];
+    public Guid TargetProjectId { get => _targetProjectId; set => _targetProjectId = value; }
+    public string DueDateText { get; set; }
+    public string TagText { get; set; } = string.Empty;
+    public Priority DraftPriority { get; set; }
+    public Guid? DraftActivityId { get; set; }
+    public Guid? PrerequisiteTaskId { get; set; }
+    public string LinkLabelText { get; set; } = string.Empty;
+    public string LinkUriText { get; set; } = string.Empty;
+    public bool DraftStarred { get; set; }
+    public string ProjectName => Item.ProjectName;
+    public string PriorityLabel => Task.Priority switch { Priority.Urgent => "Urgent", Priority.High => "High", Priority.Medium => "Medium", Priority.Low => "Low", _ => "No priority" };
+    public string DueLabel => Task.DueDate is null ? "No deadline" : $"Due {Task.DueDate:MMM d}";
+    public string TrackedLabel => Item.TrackedMilliseconds == 0 ? "No time yet" : MainWindowViewModel.FormatForRow(Item.TrackedMilliseconds);
+    public string ActionLabel => Task.Status == TaskState.Completed ? "Reopen" : "Done";
+    public string ArchiveLabel => Task.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public ICommand StartCommand { get; }
+    public ICommand CompleteCommand { get; }
+    public ICommand SaveCommand { get; }
+    public ICommand MoveCommand { get; }
+    public ICommand ArchiveCommand { get; }
+    public ICommand AddTagCommand { get; }
+    public ICommand AddDependencyCommand { get; }
+    public ICommand AddLinkCommand { get; }
+    public ICommand ShowDetailsCommand { get; }
+}
+
+public sealed class ActiveSessionRowViewModel : INotifyPropertyChanged
+{
+    private readonly Func<ActiveSessionRowViewModel, Task> _toggle;
+    private readonly Func<ActiveSessionRowViewModel, Task> _stop;
+    private long _displayedMilliseconds;
+
+    public ActiveSessionRowViewModel(ActiveSessionItem item, Func<ActiveSessionRowViewModel, Task> toggle, Func<ActiveSessionRowViewModel, Task> stop)
+    {
+        Session = item.Session;
+        TaskTitle = item.TaskTitle;
+        ActivityName = item.ActivityName;
+        _displayedMilliseconds = item.DisplayedMilliseconds;
+        _toggle = toggle;
+        _stop = stop;
+        ToggleCommand = new AsyncCommand(_ => _toggle(this));
+        StopCommand = new AsyncCommand(_ => _stop(this));
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public TrackingSession Session { get; }
+    public string? TaskTitle { get; }
+    public string? ActivityName { get; }
+    public string Label => TaskTitle ?? ActivityName ?? "General focus";
+    public string LaneLabel => Session.Lane == SessionLane.Background ? "Background" : "Focus";
+    public string StateLabel => Session.State == SessionState.Running ? "Running" : "Paused";
+    public string ElapsedLabel => MainWindowViewModel.FormatForRow(_displayedMilliseconds);
+    public string ToggleLabel => Session.State == SessionState.Running ? "Pause" : "Resume";
+    public ICommand ToggleCommand { get; }
+    public ICommand StopCommand { get; }
+
+    public void UpdateElapsed()
+    {
+        _displayedMilliseconds = TimeMath.DurationMilliseconds(Session.Intervals, DateTimeOffset.UtcNow);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ElapsedLabel)));
+    }
+}
+
+public sealed class RecoverySessionRowViewModel
+{
+    private readonly Func<RecoverySessionRowViewModel, RecoveryDecision, Task> _resolve;
+
+    public RecoverySessionRowViewModel(TrackingSession session, Func<RecoverySessionRowViewModel, RecoveryDecision, Task> resolve)
+    {
+        Session = session;
+        _resolve = resolve;
+        StopAtLastKnownCommand = new AsyncCommand(_ => _resolve(this, RecoveryDecision.StopAtLastKnown));
+        StopNowCommand = new AsyncCommand(_ => _resolve(this, RecoveryDecision.StopNow));
+        ContinueCommand = new AsyncCommand(_ => _resolve(this, RecoveryDecision.Continue));
+    }
+
+    public TrackingSession Session { get; }
+    public string ReasonLabel => Session.RecoveryReason ?? "The timer needs a recovery decision.";
+    public ICommand StopAtLastKnownCommand { get; }
+    public ICommand StopNowCommand { get; }
+    public ICommand ContinueCommand { get; }
+}
+
+public sealed class HistoryRowViewModel
+{
+    private readonly Func<HistoryRowViewModel, Task> _correct;
+
+    public HistoryRowViewModel(HistoryItem item, IReadOnlyList<TaskOption> taskOptions, IReadOnlyList<ActivityOption> activityOptions, Func<HistoryRowViewModel, Task> correct)
+    {
+        Item = item;
+        TaskOptions = taskOptions;
+        ActivityOptions = activityOptions;
+        SelectedTaskId = item.Session.TaskId;
+        SelectedActivityId = item.Session.ActivityId;
+        NotesEditor = item.Session.Notes;
+        StartText = item.Session.StartedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        var lastIntervalEnd = item.Session.Intervals.Count == 0 ? null : item.Session.Intervals[^1].EndedAtUtc;
+        EndText = item.Session.StoppedAtUtc?.ToString("O", CultureInfo.InvariantCulture)
+            ?? lastIntervalEnd?.ToString("O", CultureInfo.InvariantCulture)
+            ?? string.Empty;
+        ReasonText = "Corrected from History";
+        _correct = correct;
+        CorrectCommand = new AsyncCommand(_ => _correct(this));
+    }
+
+    public HistoryItem Item { get; }
+    public IReadOnlyList<TaskOption> TaskOptions { get; }
+    public IReadOnlyList<ActivityOption> ActivityOptions { get; }
+    public Guid? SelectedTaskId { get; set; }
+    public Guid? SelectedActivityId { get; set; }
+    public string NotesEditor { get; set; }
+    public string StartText { get; set; }
+    public string EndText { get; set; }
+    public string ReasonText { get; set; }
+    public ICommand CorrectCommand { get; }
+    public string Title => Item.TaskTitle ?? Item.ActivityName ?? "General time";
+    public string Context => Item.ProjectName is null ? Item.ActivityName ?? "Activity" : $"{Item.ProjectName}  ·  {Item.ActivityName ?? "Task work"}";
+    public string DateLabel => Item.Session.StartedAtUtc.ToLocalTime().ToString("ddd, MMM d", CultureInfo.CurrentCulture);
+    public string TimeLabel => $"{Item.Session.StartedAtUtc.ToLocalTime():h:mm tt}  ·  {MainWindowViewModel.FormatForRow(Item.AttributedMilliseconds)}";
+    public string LaneLabel => Item.Session.Lane == SessionLane.Background ? "Background" : "Focus";
+}
+
+public sealed class SummaryRowViewModel
+{
+    public SummaryRowViewModel(SummaryBucket bucket)
+    {
+        Bucket = bucket;
+    }
+
+    public SummaryBucket Bucket { get; }
+    public string Label => Bucket.Label;
+    public string DurationLabel => $"{MainWindowViewModel.FormatForRow(Bucket.AttributedMilliseconds)} attributed";
+    public string CoverageLabel => $"{MainWindowViewModel.FormatForRow(Bucket.CoverageMilliseconds)} coverage";
+}
+
+public sealed class CalendarBlockRowViewModel
+{
+    private readonly Func<CalendarBlockRowViewModel, Task> _update;
+    private readonly Func<CalendarBlockRowViewModel, Task> _start;
+
+    public CalendarBlockRowViewModel(ScheduleBlock block, string label, Func<CalendarBlockRowViewModel, Task> update, Func<CalendarBlockRowViewModel, Task> start)
+    {
+        Block = block;
+        Label = label;
+        TitleEditor = block.TitleOverride ?? label;
+        StartText = block.StartAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        EndText = block.EndAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        _update = update;
+        _start = start;
+        UpdateCommand = new AsyncCommand(_ => _update(this));
+        StartCommand = new AsyncCommand(_ => _start(this));
+    }
+
+    public ScheduleBlock Block { get; }
+    public string Label { get; }
+    public string TitleEditor { get; set; }
+    public string StartText { get; set; }
+    public string EndText { get; set; }
+    public ICommand UpdateCommand { get; }
+    public ICommand StartCommand { get; }
+    public string DayLabel => Block.StartAtUtc.ToLocalTime().ToString("ddd, MMM d", CultureInfo.CurrentCulture);
+    public string TimeLabel => $"{Block.StartAtUtc.ToLocalTime():h:mm tt} – {Block.EndAtUtc.ToLocalTime():h:mm tt}";
+    public string DurationLabel => MainWindowViewModel.FormatForRow((Block.EndAtUtc - Block.StartAtUtc).Ticks / TimeSpan.TicksPerMillisecond);
+}
+
+public sealed class CalendarAdminRowViewModel
+{
+    private readonly Func<CalendarAdminRowViewModel, Task> _save;
+
+    public CalendarAdminRowViewModel(DomainCalendar calendar, Func<CalendarAdminRowViewModel, Task> save)
+    {
+        Calendar = calendar;
+        DraftName = calendar.Name;
+        DraftColor = calendar.Color;
+        IsVisible = calendar.Visible;
+        _save = save;
+        SaveCommand = new AsyncCommand(_ => _save(this));
+    }
+
+    public DomainCalendar Calendar { get; }
+    public string DraftName { get; set; }
+    public string DraftColor { get; set; }
+    public bool IsVisible { get; set; }
+    public ICommand SaveCommand { get; }
+}
+
+public sealed class CalendarEventRowViewModel
+{
+    private readonly Func<CalendarEventRowViewModel, Task> _delete;
+
+    public CalendarEventRowViewModel(CalendarEvent item, Func<CalendarEventRowViewModel, Task> delete)
+    {
+        Event = item;
+        _delete = delete;
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
+    }
+
+    public CalendarEvent Event { get; }
+    public string Label => Event.Title;
+    public string DetailLabel => Event.AllDay
+        ? $"{Event.StartAtUtc.ToLocalTime():ddd, MMM d} · all day"
+        : $"{Event.StartAtUtc.ToLocalTime():ddd, MMM d · h:mm tt} – {Event.EndAtUtc.ToLocalTime():h:mm tt}";
+    public string LocationLabel => string.IsNullOrWhiteSpace(Event.Location) ? "" : Event.Location;
+    public string DescriptionLabel => Event.Description;
+    public ICommand DeleteCommand { get; }
+}
+
+public partial class MainWindowViewModel
+{
+    internal static string FormatForRow(long milliseconds)
+    {
+        var totalSeconds = Math.Max(0, milliseconds) / 1000;
+        return $"{totalSeconds / 3600:00}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}";
+    }
+}
