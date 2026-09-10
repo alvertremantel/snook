@@ -8,6 +8,7 @@ namespace Snook.UI;
 public partial class App : Avalonia.Application
 {
     public static IBackendClient? ConfiguredBackend { get; set; }
+    public static Func<MainWindow, string, Task>? ScreenshotWriter { get; set; }
 
     public override void Initialize()
     {

@@ -52,8 +52,8 @@ public sealed class DaemonBackendClient : IBackendClient
     public Task<WorkspaceSettings> UpdateSettingsAsync(WorkspaceSettings settings, OperationRequest request, CancellationToken cancellationToken = default)
         => CallAsync<WorkspaceSettings>(nameof(UpdateSettingsAsync), cancellationToken, settings, request);
 
-    public async Task<IReadOnlyList<TaskListItem>> SearchTasksAsync(string? search = null, bool includeCompleted = false, bool includeArchived = false, CancellationToken cancellationToken = default)
-        => await CallAsync<TaskListItem[]>(nameof(SearchTasksAsync), cancellationToken, search, includeCompleted, includeArchived);
+    public async Task<IReadOnlyList<TaskListItem>> SearchTasksAsync(string? search = null, bool includeCompleted = false, bool includeArchived = false, bool includeDeleted = false, CancellationToken cancellationToken = default)
+        => await CallAsync<TaskListItem[]>(nameof(SearchTasksAsync), cancellationToken, search, includeCompleted, includeArchived, includeDeleted);
 
     public Task<Board> CreateBoardAsync(string name, CancellationToken cancellationToken = default)
         => CallAsync<Board>(nameof(CreateBoardAsync), cancellationToken, name);
@@ -353,6 +353,10 @@ public sealed class DaemonBackendClient : IBackendClient
             catch (HttpRequestException)
             {
                 // The daemon may be starting or restarting; reconnect without opening SQLite locally.
+            }
+            catch (IOException)
+            {
+                // A daemon shutdown or an interrupted SSE response is also a reconnectable transport event.
             }
 
             try

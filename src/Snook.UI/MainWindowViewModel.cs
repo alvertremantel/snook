@@ -21,7 +21,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private string _workspaceName = "Snook";
     private string _trackedToday = "0m";
     private string _currentSection = "Today";
-    private string _sectionTitle = "Good morning";
+    private string _sectionTitle = "Welcome back";
     private string _sectionSubtitle = "A little progress, thoughtfully recorded.";
     private bool _hasNoHistory = true;
     private bool _historyHasMore;
@@ -30,6 +30,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private bool _hasNoCalendarBlocks = true;
     private bool _showCompleted;
     private bool _showArchived;
+    private bool _showDeleted;
     private bool _hasNoTasks = true;
     private Guid _selectedCalendarId;
     private string _calendarView = "Week";
@@ -40,6 +41,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private bool _hasNoActiveSessions = true;
     private bool _hasNoTodayRecentRows = true;
     private bool _hasNoTodayUpcomingRows = true;
+    private bool _hasDeletedCalendarEvents;
     private Guid _selectedProjectId;
     private Guid _selectedBoardId;
     private string _newProjectName = string.Empty;
@@ -57,10 +59,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private string _newCalendarName = string.Empty;
     private string _newCalendarColor = "#6767F2";
     private string _newActivityGroupName = string.Empty;
+    private Guid? _manualTaskId;
+    private Guid? _manualActivityId;
+    private string _manualStartText = DateTimeOffset.UtcNow.AddMinutes(-30).ToString("O", CultureInfo.InvariantCulture);
+    private string _manualEndText = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+    private string _manualNotes = string.Empty;
     private bool _allowConcurrentForeground;
     private long _settingsRevision = 1;
     private long _todayMilliseconds;
-    private TaskDetails? _selectedTaskDetails;
+    private TaskDetailsPanelViewModel? _selectedTaskDetails;
 
     public MainWindowViewModel(IBackendClient backend)
     {
@@ -78,6 +85,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         LoadMoreHistoryCommand = new AsyncCommand(_ => LoadMoreHistoryAsync(), _ => HistoryHasMore);
         ShowTaskDetailsCommand = new AsyncCommand(row => row is TaskRowViewModel taskRow ? ShowTaskDetailsAsync(taskRow) : Task.CompletedTask);
         ManualTimeCommand = new AsyncCommand(_ => AddManualTimeAsync());
+        QuickManualTimeCommand = new AsyncCommand(_ => AddQuickManualTimeAsync());
         SelectCalendarViewCommand = new AsyncCommand(view => SelectCalendarViewAsync(view as string ?? "Week"));
         SelectTaskViewCommand = new AsyncCommand(view => SelectTaskViewAsync(view as string ?? "List"));
         SelectSummaryGroupingCommand = new AsyncCommand(grouping => SelectSummaryGroupingAsync(grouping as string ?? "Tag"));
@@ -85,7 +93,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         CreateBoardCommand = new AsyncCommand(_ => CreateBoardAsync(), _ => !string.IsNullOrWhiteSpace(NewBoardName));
         CreateActivityCommand = new AsyncCommand(_ => CreateActivityAsync(), _ => !string.IsNullOrWhiteSpace(NewActivityName));
         CreateActivityGroupCommand = new AsyncCommand(_ => CreateActivityGroupAsync(), _ => !string.IsNullOrWhiteSpace(NewActivityGroupName));
-        CreateCalendarEventCommand = new AsyncCommand(_ => CreateCalendarEventAsync(), _ => !string.IsNullOrWhiteSpace(NewEventTitle) && _selectedCalendarId != Guid.Empty);
+        CreateCalendarEventCommand = new AsyncCommand(_ => CreateCalendarEventAsync(), _ => !string.IsNullOrWhiteSpace(NewEventTitle) && SelectedCalendarId != Guid.Empty);
         CreateCalendarCommand = new AsyncCommand(_ => CreateCalendarAsync(), _ => !string.IsNullOrWhiteSpace(NewCalendarName));
         SaveSettingsCommand = new AsyncCommand(_ => SaveSettingsAsync());
         _displayTimer = new Timer(_ => Dispatcher.UIThread.Post(UpdateDisplayTimes), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
@@ -99,6 +107,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ObservableCollection<ProjectOption> Projects { get; } = [];
     public ObservableCollection<BoardOption> Boards { get; } = [];
     public ObservableCollection<ActivityOption> Activities { get; } = [];
+    public ObservableCollection<TaskOption> ManualTaskOptions { get; } = [];
     public ObservableCollection<ActivityGroupOption> ActivityGroups { get; } = [];
     public ObservableCollection<ProjectAdminRowViewModel> ProjectAdminRows { get; } = [];
     public ObservableCollection<BoardAdminRowViewModel> BoardAdminRows { get; } = [];
@@ -108,6 +117,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ObservableCollection<SummaryRowViewModel> SummaryItems { get; } = [];
     public ObservableCollection<CalendarBlockRowViewModel> CalendarBlocks { get; } = [];
     public ObservableCollection<CalendarEventRowViewModel> CalendarEvents { get; } = [];
+    public ObservableCollection<CalendarDayColumnViewModel> CalendarDayColumns { get; } = [];
+    public ObservableCollection<DeletedCalendarEventRowViewModel> DeletedCalendarEvents { get; } = [];
+    public ObservableCollection<CalendarOption> CalendarOptions { get; } = [];
     public ObservableCollection<CalendarAdminRowViewModel> CalendarAdminRows { get; } = [];
     public ObservableCollection<RecoverySessionRowViewModel> RecoverySessions { get; } = [];
     public ObservableCollection<ReviewRowViewModel> TodayRecentRows { get; } = [];
@@ -125,6 +137,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ICommand LoadMoreHistoryCommand { get; }
     public ICommand ShowTaskDetailsCommand { get; }
     public ICommand ManualTimeCommand { get; }
+    public ICommand QuickManualTimeCommand { get; }
     public ICommand SelectCalendarViewCommand { get; }
     public ICommand SelectTaskViewCommand { get; }
     public ICommand SelectSummaryGroupingCommand { get; }
@@ -148,7 +161,26 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public bool IsSummaryVisible => CurrentSection == "Summary";
     public bool IsCalendarVisible => CurrentSection == "Calendar";
     public bool IsSettingsVisible => CurrentSection == "Settings";
-    public string CalendarView { get => _calendarView; private set => SetField(ref _calendarView, value); }
+    public string CalendarView
+    {
+        get => _calendarView;
+        private set
+        {
+            if (!SetField(ref _calendarView, value)) return;
+            RaisePropertyChanged(nameof(IsCalendarDay));
+            RaisePropertyChanged(nameof(IsCalendarWeek));
+            RaisePropertyChanged(nameof(IsCalendarMonth));
+            RaisePropertyChanged(nameof(IsCalendarAgenda));
+            RaisePropertyChanged(nameof(IsCalendarGridVisible));
+            RaisePropertyChanged(nameof(CalendarGridColumns));
+        }
+    }
+    public bool IsCalendarDay => CalendarView == "Day";
+    public bool IsCalendarWeek => CalendarView == "Week";
+    public bool IsCalendarMonth => CalendarView == "Month";
+    public bool IsCalendarAgenda => CalendarView == "Agenda";
+    public bool IsCalendarGridVisible => !IsCalendarAgenda;
+    public int CalendarGridColumns => IsCalendarDay ? 1 : 7;
     public string SummaryGrouping { get => _summaryGrouping; private set => SetField(ref _summaryGrouping, value); }
     public string TaskViewMode { get => _taskViewMode; private set { if (SetField(ref _taskViewMode, value)) { RaisePropertyChanged(nameof(IsTaskListVisible)); RaisePropertyChanged(nameof(IsTaskBoardVisible)); } } }
     public string TaskSortMode { get => _taskSortMode; set { if (SetField(ref _taskSortMode, value)) _ = LoadTasksAsync(); } }
@@ -161,12 +193,13 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     ];
     public bool HasNoHistory { get => _hasNoHistory; private set => SetField(ref _hasNoHistory, value); }
     public bool HistoryHasMore { get => _historyHasMore; private set { if (SetField(ref _historyHasMore, value)) ((AsyncCommand)LoadMoreHistoryCommand).RaiseCanExecuteChanged(); } }
-    public TaskDetails? SelectedTaskDetails { get => _selectedTaskDetails; private set { if (SetField(ref _selectedTaskDetails, value)) RaisePropertyChanged(nameof(HasSelectedTaskDetails)); } }
+    public TaskDetailsPanelViewModel? SelectedTaskDetails { get => _selectedTaskDetails; private set { if (SetField(ref _selectedTaskDetails, value)) RaisePropertyChanged(nameof(HasSelectedTaskDetails)); } }
     public bool HasSelectedTaskDetails => SelectedTaskDetails is not null;
     public bool HasNoSummary { get => _hasNoSummary; private set => SetField(ref _hasNoSummary, value); }
     public bool HasNoCalendarBlocks { get => _hasNoCalendarBlocks; private set => SetField(ref _hasNoCalendarBlocks, value); }
     public bool ShowCompleted { get => _showCompleted; set { if (SetField(ref _showCompleted, value)) _ = LoadTasksAsync(); } }
     public bool ShowArchived { get => _showArchived; set { if (SetField(ref _showArchived, value)) _ = LoadTasksAsync(); } }
+    public bool ShowDeleted { get => _showDeleted; set { if (SetField(ref _showDeleted, value)) _ = LoadTasksAsync(); } }
     public bool HasNoTasks { get => _hasNoTasks; private set => SetField(ref _hasNoTasks, value); }
     public string TaskTitle { get => _taskTitle; set { if (SetField(ref _taskTitle, value)) ((AsyncCommand)CreateTaskCommand).RaiseCanExecuteChanged(); } }
     public string SearchText { get => _searchText; set { if (SetField(ref _searchText, value)) _ = RefreshAsync(); } }
@@ -176,9 +209,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
     public bool HasNoTodayRecentRows { get => _hasNoTodayRecentRows; private set => SetField(ref _hasNoTodayRecentRows, value); }
     public bool HasNoTodayUpcomingRows { get => _hasNoTodayUpcomingRows; private set => SetField(ref _hasNoTodayUpcomingRows, value); }
+    public bool HasDeletedCalendarEvents { get => _hasDeletedCalendarEvents; private set => SetField(ref _hasDeletedCalendarEvents, value); }
     public bool HasRecoverySessions => RecoverySessions.Count > 0;
     public Guid SelectedProjectId { get => _selectedProjectId; set { if (SetField(ref _selectedProjectId, value)) ((AsyncCommand)CreateTaskCommand).RaiseCanExecuteChanged(); } }
     public Guid SelectedBoardId { get => _selectedBoardId; set { if (SetField(ref _selectedBoardId, value)) ((AsyncCommand)CreateProjectCommand).RaiseCanExecuteChanged(); } }
+    public Guid SelectedCalendarId { get => _selectedCalendarId; set { if (SetField(ref _selectedCalendarId, value)) ((AsyncCommand)CreateCalendarEventCommand).RaiseCanExecuteChanged(); } }
     public string NewProjectName { get => _newProjectName; set { if (SetField(ref _newProjectName, value)) ((AsyncCommand)CreateProjectCommand).RaiseCanExecuteChanged(); } }
     public string NewBoardName { get => _newBoardName; set { if (SetField(ref _newBoardName, value)) ((AsyncCommand)CreateBoardCommand).RaiseCanExecuteChanged(); } }
     public string NewActivityName { get => _newActivityName; set { if (SetField(ref _newActivityName, value)) ((AsyncCommand)CreateActivityCommand).RaiseCanExecuteChanged(); } }
@@ -195,6 +230,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string NewCalendarName { get => _newCalendarName; set { if (SetField(ref _newCalendarName, value)) ((AsyncCommand)CreateCalendarCommand).RaiseCanExecuteChanged(); } }
     public string NewCalendarColor { get => _newCalendarColor; set => SetField(ref _newCalendarColor, value); }
     public bool AllowConcurrentForeground { get => _allowConcurrentForeground; set => SetField(ref _allowConcurrentForeground, value); }
+    public Guid? ManualTaskId { get => _manualTaskId; set => SetField(ref _manualTaskId, value); }
+    public Guid? ManualActivityId { get => _manualActivityId; set => SetField(ref _manualActivityId, value); }
+    public string ManualStartText { get => _manualStartText; set => SetField(ref _manualStartText, value); }
+    public string ManualEndText { get => _manualEndText; set => SetField(ref _manualEndText, value); }
+    public string ManualNotes { get => _manualNotes; set => SetField(ref _manualNotes, value); }
 
     public async Task InitializeAsync()
     {
@@ -224,12 +264,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
             Projects.Clear();
             Boards.Clear();
-            foreach (var board in bootstrap.Boards.Where(item => item.ArchivedAtUtc is null))
+            foreach (var board in bootstrap.Boards.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null))
             {
                 Boards.Add(new BoardOption(board.Id, board.Name));
             }
 
-            foreach (var project in bootstrap.Projects.Where(item => item.ArchivedAtUtc is null))
+            foreach (var project in bootstrap.Projects.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null))
             {
                 Projects.Add(new ProjectOption(project.Id, project.Name));
             }
@@ -240,52 +280,74 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             Activities.Clear();
-            foreach (var activity in bootstrap.Activities)
+            foreach (var activity in bootstrap.Activities.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null))
             {
-                Activities.Add(new ActivityOption(activity.Id, activity.Name));
+                Activities.Add(new ActivityOption(activity.Id, activity.Name, activity.DefaultLane));
+            }
+
+            ManualTaskOptions.Clear();
+            foreach (var task in await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true))
+            {
+                ManualTaskOptions.Add(new TaskOption(task.Task.Id, task.Task.Title));
             }
 
             ActivityGroups.Clear();
-            foreach (var group in bootstrap.ActivityGroups ?? [])
+            foreach (var group in (bootstrap.ActivityGroups ?? []).Where(item => item.DeletedAtUtc is null))
             {
                 ActivityGroups.Add(new ActivityGroupOption(group.Id, group.Name));
             }
 
             ActivityGroupAdminRows.Clear();
-            foreach (var group in bootstrap.ActivityGroups ?? [])
+            foreach (var group in (bootstrap.ActivityGroups ?? []).Concat(bootstrap.DeletedItems?.ActivityGroups ?? []))
             {
-                ActivityGroupAdminRows.Add(new ActivityGroupAdminRowViewModel(group, SaveActivityGroupAsync, ReorderActivityGroupAsync));
+                ActivityGroupAdminRows.Add(new ActivityGroupAdminRowViewModel(group, SaveActivityGroupAsync, DeleteActivityGroupAsync, ReorderActivityGroupAsync));
             }
 
             CalendarAdminRows.Clear();
-            foreach (var calendar in bootstrap.Calendars)
+            CalendarOptions.Clear();
+            foreach (var calendar in bootstrap.Calendars.Where(item => item.Visible && item.DeletedAtUtc is null))
             {
-                CalendarAdminRows.Add(new CalendarAdminRowViewModel(calendar, SaveCalendarAsync));
+                CalendarOptions.Add(new CalendarOption(calendar.Id, calendar.Name));
             }
 
-            ProjectAdminRows.Clear();
-            foreach (var project in bootstrap.Projects)
+            foreach (var calendar in bootstrap.Calendars.Concat(bootstrap.DeletedItems?.Calendars ?? []))
             {
-                ProjectAdminRows.Add(new ProjectAdminRowViewModel(project, SaveProjectAsync, ToggleProjectArchiveAsync, AddProjectTagAsync, ReorderProjectAsync));
+                CalendarAdminRows.Add(new CalendarAdminRowViewModel(calendar, SaveCalendarAsync, DeleteCalendarAsync));
+            }
+
+            DeletedCalendarEvents.Clear();
+            foreach (var item in bootstrap.DeletedItems?.CalendarEvents ?? [])
+            {
+                DeletedCalendarEvents.Add(new DeletedCalendarEventRowViewModel(item, RestoreDeletedCalendarEventAsync));
+            }
+            HasDeletedCalendarEvents = DeletedCalendarEvents.Count > 0;
+
+            ProjectAdminRows.Clear();
+            foreach (var project in bootstrap.Projects.Concat(bootstrap.DeletedItems?.Projects ?? []))
+            {
+                ProjectAdminRows.Add(new ProjectAdminRowViewModel(project, SaveProjectAsync, ToggleProjectArchiveAsync, DeleteProjectAsync, AddProjectTagAsync, ReorderProjectAsync));
             }
 
             BoardAdminRows.Clear();
-            foreach (var board in bootstrap.Boards)
+            foreach (var board in bootstrap.Boards.Concat(bootstrap.DeletedItems?.Boards ?? []))
             {
-                BoardAdminRows.Add(new BoardAdminRowViewModel(board, SaveBoardAsync, ToggleBoardArchiveAsync, ReorderBoardAsync));
+                BoardAdminRows.Add(new BoardAdminRowViewModel(board, SaveBoardAsync, ToggleBoardArchiveAsync, DeleteBoardAsync, ReorderBoardAsync));
             }
 
             ActivityAdminRows.Clear();
-            foreach (var activity in bootstrap.Activities)
+            foreach (var activity in bootstrap.Activities.Concat(bootstrap.DeletedItems?.Activities ?? []))
             {
-                ActivityAdminRows.Add(new ActivityAdminRowViewModel(activity, ActivityGroups, SaveActivityAsync, ToggleActivityArchiveAsync, AddActivityTagAsync));
+                ActivityAdminRows.Add(new ActivityAdminRowViewModel(activity, ActivityGroups, SaveActivityAsync, ToggleActivityArchiveAsync, DeleteActivityAsync, AddActivityTagAsync));
             }
 
             if (!Projects.Any(project => project.Id == SelectedProjectId))
             {
                 SelectedProjectId = Projects.Count == 0 ? Guid.Empty : Projects[0].Id;
             }
-            _selectedCalendarId = bootstrap.Calendars.Count == 0 ? Guid.Empty : bootstrap.Calendars[0].Id;
+            if (!CalendarOptions.Any(calendar => calendar.Id == SelectedCalendarId))
+            {
+                SelectedCalendarId = CalendarOptions.Count == 0 ? Guid.Empty : CalendarOptions[0].Id;
+            }
             ((AsyncCommand)CreateCalendarEventCommand).RaiseCanExecuteChanged();
 
             ActiveSessions.Clear();
@@ -424,6 +486,30 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
     }
 
+    private async Task DeleteActivityGroupAsync(ActivityGroupAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Group.Revision);
+            if (row.Group.DeletedAtUtc is null)
+            {
+                await _backend.DeleteActivityGroupAsync(row.Group.Id, request);
+                StatusMessage = "Activity group moved to deleted items.";
+            }
+            else
+            {
+                await _backend.RestoreDeletedActivityGroupAsync(row.Group.Id, request);
+                StatusMessage = "Activity group restored.";
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity group deleted state could not be changed.";
+        }
+    }
+
     private async Task CreateCalendarAsync()
     {
         try
@@ -453,6 +539,44 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         catch (Exception exception)
         {
             StatusMessage = exception is SnookException snook ? snook.Message : "The calendar could not be updated.";
+        }
+    }
+
+    private async Task DeleteCalendarAsync(CalendarAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Calendar.Revision);
+            if (row.Calendar.DeletedAtUtc is null)
+            {
+                await _backend.DeleteCalendarAsync(row.Calendar.Id, request);
+                StatusMessage = "Calendar moved to deleted items.";
+            }
+            else
+            {
+                await _backend.RestoreDeletedCalendarAsync(row.Calendar.Id, request);
+                StatusMessage = "Calendar restored.";
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar deleted state could not be changed.";
+        }
+    }
+
+    private async Task RestoreDeletedCalendarEventAsync(DeletedCalendarEventRowViewModel row)
+    {
+        try
+        {
+            await _backend.RestoreDeletedCalendarEventAsync(row.Event.Id, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Event.Revision));
+            StatusMessage = "Calendar event restored.";
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar event could not be restored.";
         }
     }
 
@@ -565,6 +689,30 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
     }
 
+    private async Task DeleteBoardAsync(BoardAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Board.Revision);
+            if (row.Board.DeletedAtUtc is null)
+            {
+                await _backend.DeleteBoardAsync(row.Board.Id, request);
+                StatusMessage = "Board moved to deleted items.";
+            }
+            else
+            {
+                await _backend.RestoreDeletedBoardAsync(row.Board.Id, request);
+                StatusMessage = "Board restored.";
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The board deleted state could not be changed.";
+        }
+    }
+
     private async Task ToggleProjectArchiveAsync(ProjectAdminRowViewModel row)
     {
         try
@@ -584,6 +732,30 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         catch (Exception exception)
         {
             StatusMessage = exception is SnookException snook ? snook.Message : "The project archive state could not be changed.";
+        }
+    }
+
+    private async Task DeleteProjectAsync(ProjectAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision);
+            if (row.Project.DeletedAtUtc is null)
+            {
+                await _backend.DeleteProjectAsync(row.Project.Id, request);
+                StatusMessage = "Project moved to deleted items.";
+            }
+            else
+            {
+                await _backend.RestoreDeletedProjectAsync(row.Project.Id, request);
+                StatusMessage = "Project restored.";
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The project deleted state could not be changed.";
         }
     }
 
@@ -641,6 +813,30 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
     }
 
+    private async Task DeleteActivityAsync(ActivityAdminRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Activity.Revision);
+            if (row.Activity.DeletedAtUtc is null)
+            {
+                await _backend.DeleteActivityAsync(row.Activity.Id, request);
+                StatusMessage = "Activity moved to deleted items.";
+            }
+            else
+            {
+                await _backend.RestoreDeletedActivityAsync(row.Activity.Id, request);
+                StatusMessage = "Activity restored.";
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The activity deleted state could not be changed.";
+        }
+    }
+
     private async Task SelectSectionAsync(string section)
     {
         var normalized = section switch
@@ -660,19 +856,21 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Tasks" => "Make the next step visible",
             "Calendar" => "Make room for the work",
             "Settings" => "Shape the workspace",
-            _ => "Good morning"
+            _ => "Welcome back"
         };
         SectionSubtitle = normalized switch
         {
-            "History" => "Searchable time history with no hidden result limit.",
+            "History" => "Revisit your sessions and keep your time accurate.",
             "Summary" => "Attributed duration and wall-clock coverage stay distinct.",
-            "Tasks" => "Board and list views share one task model.",
+            "Tasks" => "A clear place for everything you want to do.",
             "Calendar" => "Planned blocks stay separate from deadlines.",
             "Settings" => "Projects, boards, and activities are saved locally.",
             _ => "A little progress, thoughtfully recorded."
         };
         RaisePropertyChanged(nameof(IsTodayVisible));
         RaisePropertyChanged(nameof(IsTasksVisible));
+        RaisePropertyChanged(nameof(IsTaskListVisible));
+        RaisePropertyChanged(nameof(IsTaskBoardVisible));
         RaisePropertyChanged(nameof(IsHistoryVisible));
         RaisePropertyChanged(nameof(IsSummaryVisible));
         RaisePropertyChanged(nameof(IsCalendarVisible));
@@ -692,6 +890,21 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         else if (normalized == "Summary")
         {
             await LoadSummaryAsync();
+        }
+    }
+
+    // Kept separate from the normal command path so the screenshot harness can
+    // select a deterministic variant without reaching into private state.
+    public async Task SelectSectionForScreenshotAsync(string section, string? variant)
+    {
+        await SelectSectionAsync(section);
+        if (section == "Tasks")
+        {
+            await SelectTaskViewAsync(variant == "board" ? "Board" : "List");
+        }
+        else if (section == "Calendar" && variant is "day" or "week" or "month" or "agenda")
+        {
+            await SelectCalendarViewAsync(CultureInfo.InvariantCulture.TextInfo.ToTitleCase(variant));
         }
     }
 
@@ -778,7 +991,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task LoadTasksAsync()
     {
-        var tasks = await _backend.SearchTasksAsync(SearchText, ShowCompleted, ShowArchived);
+        var tasks = await _backend.SearchTasksAsync(SearchText, ShowCompleted, ShowArchived, ShowDeleted);
         tasks = TaskSortMode switch
         {
             "DueDate" => tasks.OrderBy(item => item.Task.DueDate is null).ThenBy(item => item.Task.DueDate).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -792,7 +1005,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         var rows = new List<TaskRowViewModel>();
         foreach (var task in tasks)
         {
-            var row = new TaskRowViewModel(task, Projects, Activities, prerequisiteOptions, StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
+            var row = new TaskRowViewModel(task, Projects, Activities, prerequisiteOptions, StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
             Tasks.Add(row);
             rows.Add(row);
         }
@@ -821,8 +1034,23 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Agenda" => localStart.AddDays(14),
             _ => localStart.AddDays(7)
         };
-        var rangeStart = new DateTimeOffset(localStart, localNow.Offset).ToUniversalTime();
-        var rangeEnd = new DateTimeOffset(localEnd, localNow.Offset).ToUniversalTime();
+        var gridStart = localStart;
+        var gridEnd = localEnd;
+        if (IsCalendarMonth)
+        {
+            while (gridStart.DayOfWeek != DayOfWeek.Monday)
+            {
+                gridStart = gridStart.AddDays(-1);
+            }
+
+            while (gridEnd.DayOfWeek != DayOfWeek.Monday)
+            {
+                gridEnd = gridEnd.AddDays(1);
+            }
+        }
+
+        var rangeStart = LocalDateToUtc(gridStart);
+        var rangeEnd = LocalDateToUtc(gridEnd);
         var range = new CalendarRangeQuery(rangeStart, rangeEnd);
         var blocks = await _backend.GetCalendarRangeAsync(range);
         var events = await _backend.GetCalendarEventsRangeAsync(range);
@@ -837,14 +1065,56 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         foreach (var item in events)
         {
-            CalendarEvents.Add(new CalendarEventRowViewModel(item, DeleteCalendarEventAsync));
+            CalendarEvents.Add(new CalendarEventRowViewModel(item, UpdateCalendarEventAsync, DeleteCalendarEventAsync));
         }
+        BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents);
         HasNoCalendarBlocks = CalendarBlocks.Count == 0 && CalendarEvents.Count == 0;
     }
 
+    private void BuildCalendarGrid(
+        DateTime gridStart,
+        DateTime gridEnd,
+        DateTime displayedMonth,
+        IEnumerable<CalendarBlockRowViewModel> blocks,
+        IEnumerable<CalendarEventRowViewModel> events)
+    {
+        CalendarDayColumns.Clear();
+        if (!IsCalendarGridVisible)
+        {
+            return;
+        }
+
+        var blockRows = blocks.ToArray();
+        var eventRows = events.ToArray();
+        for (var date = gridStart; date < gridEnd; date = date.AddDays(1))
+        {
+            var dayStart = LocalDateToUtc(date);
+            var dayEnd = LocalDateToUtc(date.AddDays(1));
+            var items = new List<CalendarGridItemViewModel>();
+
+            foreach (var block in blockRows.Where(item => item.Block.StartAtUtc < dayEnd && item.Block.EndAtUtc > dayStart))
+            {
+                items.Add(CalendarGridItemViewModel.ForBlock(block.Label, block.Block.StartAtUtc, block.Block.EndAtUtc));
+            }
+
+            foreach (var item in eventRows.Where(item => item.Event.StartAtUtc < dayEnd && item.Event.EndAtUtc > dayStart))
+            {
+                items.Add(CalendarGridItemViewModel.ForEvent(item.Label, item.Event.StartAtUtc, item.Event.EndAtUtc, item.Event.AllDay));
+            }
+
+            CalendarDayColumns.Add(new CalendarDayColumnViewModel(
+                date,
+                IsCalendarMonth && date.Month != displayedMonth.Month,
+                items.OrderBy(item => item.StartAtUtc).ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase).ToArray()));
+        }
+    }
+
+    private static DateTimeOffset LocalDateToUtc(DateTime date)
+        => new DateTimeOffset(date, TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();
+
     private async Task PlanNextTaskAsync()
     {
-        if (_selectedCalendarId == Guid.Empty)
+        if (SelectedCalendarId == Guid.Empty)
         {
             StatusMessage = "Create a calendar before planning time.";
             return;
@@ -861,7 +1131,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             var start = DateTimeOffset.UtcNow.AddHours(1);
-            await _backend.CreateScheduleBlockAsync(_selectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, start.AddHours(1), TimeZoneInfo.Utc.Id);
+            await _backend.CreateScheduleBlockAsync(SelectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, start.AddHours(1), TimeZoneInfo.Utc.Id);
             StatusMessage = "Planned one hour for your next task.";
             await LoadCalendarAsync(await _backend.GetBootstrapAsync());
         }
@@ -897,7 +1167,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task CreateCalendarEventAsync()
     {
-        if (_selectedCalendarId == Guid.Empty)
+        if (SelectedCalendarId == Guid.Empty)
         {
             StatusMessage = "Create a calendar before adding an event.";
             return;
@@ -926,7 +1196,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             await _backend.CreateCalendarEventAsync(
-                _selectedCalendarId,
+                SelectedCalendarId,
                 NewEventTitle.Trim(),
                 start.ToUniversalTime(),
                 end.ToUniversalTime(),
@@ -969,6 +1239,53 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         catch (Exception exception)
         {
             StatusMessage = exception is SnookException snook ? snook.Message : "The calendar event could not be deleted.";
+        }
+    }
+
+    private async Task UpdateCalendarEventAsync(CalendarEventRowViewModel row)
+    {
+        if (!DateTimeOffset.TryParse(row.StartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
+            || !DateTimeOffset.TryParse(row.EndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end)
+            || end <= start)
+        {
+            StatusMessage = "Use valid event start and end instants.";
+            return;
+        }
+
+        DateTimeOffset? recurrenceEnd = null;
+        if (!string.IsNullOrWhiteSpace(row.RecurrenceEndText))
+        {
+            if (!DateTimeOffset.TryParse(row.RecurrenceEndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var parsedRecurrenceEnd))
+            {
+                StatusMessage = "Use a valid recurrence end instant, or leave it empty.";
+                return;
+            }
+
+            recurrenceEnd = parsedRecurrenceEnd.ToUniversalTime();
+        }
+
+        try
+        {
+            await _backend.UpdateCalendarEventAsync(
+                row.Event.Id,
+                new CalendarEventUpdate(
+                    row.TitleEditor.Trim(),
+                    row.DescriptionEditor.Trim(),
+                    string.IsNullOrWhiteSpace(row.LocationEditor) ? null : row.LocationEditor.Trim(),
+                    string.IsNullOrWhiteSpace(row.ColorEditor) ? "#6767F2" : row.ColorEditor.Trim(),
+                    start.ToUniversalTime(),
+                    end.ToUniversalTime(),
+                    row.AllDayEditor,
+                    row.Event.TimeZone,
+                    string.IsNullOrWhiteSpace(row.RecurrenceEditor) ? null : row.RecurrenceEditor.Trim(),
+                    recurrenceEnd),
+                new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Event.Revision));
+            StatusMessage = "Calendar event updated.";
+            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar event could not be updated.";
         }
     }
 
@@ -1116,10 +1433,47 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task AddManualTimeAsync()
     {
-        var activity = (await _backend.GetBootstrapAsync()).Activities.FirstOrDefault(item => item.DefaultLane == SessionLane.Foreground);
+        if (ManualTaskId is null && ManualActivityId is null)
+        {
+            StatusMessage = "Choose a task or activity before adding manual time.";
+            return;
+        }
+
+        if (!DateTimeOffset.TryParse(ManualStartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
+            || !DateTimeOffset.TryParse(ManualEndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end)
+            || end <= start)
+        {
+            StatusMessage = "Use valid manual start and end instants.";
+            return;
+        }
+
+        try
+        {
+            await _backend.CreateManualSessionAsync(
+                ManualTaskId,
+                ManualActivityId,
+                start.ToUniversalTime(),
+                end.ToUniversalTime(),
+                string.IsNullOrWhiteSpace(ManualNotes) ? null : ManualNotes.Trim());
+            StatusMessage = "Manual time added.";
+            ManualStartText = DateTimeOffset.UtcNow.AddMinutes(-30).ToString("O", CultureInfo.InvariantCulture);
+            ManualEndText = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            ManualNotes = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "Manual time could not be added.";
+        }
+    }
+
+    private async Task AddQuickManualTimeAsync()
+    {
+        var activity = Activities.FirstOrDefault(item => item.DefaultLane == SessionLane.Foreground)
+            ?? Activities.FirstOrDefault(item => item.Id != Guid.Empty);
         if (activity is null)
         {
-            StatusMessage = "Create an activity before adding manual time.";
+            StatusMessage = "Create an activity before adding quick manual time.";
             return;
         }
 
@@ -1201,7 +1555,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.UpdateTaskAsync(row.Task.Id, new TaskUpdate(row.DraftTitle, row.Task.Description, row.DraftPriority, dueDate, row.DraftActivityId, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            await _backend.UpdateTaskAsync(row.Task.Id, new TaskUpdate(row.DraftTitle, row.DraftDescription, row.DraftPriority, dueDate, row.DraftActivityId, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -1295,7 +1649,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            SelectedTaskDetails = await _backend.GetTaskDetailsAsync(row.Task.Id);
+            SelectedTaskDetails = new TaskDetailsPanelViewModel(await _backend.GetTaskDetailsAsync(row.Task.Id));
         }
         catch (Exception exception)
         {
@@ -1322,6 +1676,30 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         catch (Exception exception)
         {
             StatusMessage = exception is SnookException snook ? snook.Message : "The task archive state could not be changed.";
+        }
+    }
+
+    private async Task DeleteTaskAsync(TaskRowViewModel row)
+    {
+        try
+        {
+            var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision);
+            if (row.Task.DeletedAtUtc is null)
+            {
+                await _backend.DeleteTaskAsync(row.Task.Id, request);
+                StatusMessage = "Task moved to deleted items.";
+            }
+            else
+            {
+                await _backend.RestoreDeletedTaskAsync(row.Task.Id, request);
+                StatusMessage = "Task restored.";
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The task deleted state could not be changed.";
         }
     }
 
@@ -1416,11 +1794,29 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
 public sealed record ProjectOption(Guid Id, string Name);
 public sealed record BoardOption(Guid Id, string Name);
-public sealed record ActivityOption(Guid Id, string Name);
+public sealed record ActivityOption(Guid Id, string Name, SessionLane DefaultLane = SessionLane.Foreground);
 public sealed record ActivityGroupOption(Guid Id, string Name);
+public sealed record CalendarOption(Guid Id, string Name);
 public sealed record TaskOption(Guid Id, string Name);
 public sealed record PriorityOption(Priority Value, string Name);
 public sealed record TaskSortOption(string Value, string Name);
+
+public sealed class TaskDetailsPanelViewModel
+{
+    public TaskDetailsPanelViewModel(TaskDetails details)
+    {
+        Details = details;
+    }
+
+    public TaskDetails Details { get; }
+    public TaskItem Task => Details.Task;
+    public IReadOnlyList<Tag> Tags => Details.Tags;
+    public IReadOnlyList<TaskLink> Links => Details.Links;
+    public IReadOnlyList<Guid> PrerequisiteTaskIds => Details.PrerequisiteTaskIds;
+    public string TrackedLabel => $"{MainWindowViewModel.FormatForRow(Details.TrackedMilliseconds)} tracked";
+    public string ActiveLabel => $"{MainWindowViewModel.FormatForRow(Details.ActiveMilliseconds)} active";
+    public string PrerequisiteLabel => $"{Details.PrerequisiteTaskIds.Count} prerequisite{(Details.PrerequisiteTaskIds.Count == 1 ? "" : "s")}";
+}
 
 public sealed class ReviewRowViewModel
 {
@@ -1437,22 +1833,27 @@ public sealed class ReviewRowViewModel
 public sealed class ActivityGroupAdminRowViewModel
 {
     private readonly Func<ActivityGroupAdminRowViewModel, Task> _save;
+    private readonly Func<ActivityGroupAdminRowViewModel, Task> _delete;
     private readonly Func<ActivityGroupAdminRowViewModel, ReorderDirection, Task> _reorder;
 
-    public ActivityGroupAdminRowViewModel(ActivityGroup group, Func<ActivityGroupAdminRowViewModel, Task> save, Func<ActivityGroupAdminRowViewModel, ReorderDirection, Task> reorder)
+    public ActivityGroupAdminRowViewModel(ActivityGroup group, Func<ActivityGroupAdminRowViewModel, Task> save, Func<ActivityGroupAdminRowViewModel, Task> delete, Func<ActivityGroupAdminRowViewModel, ReorderDirection, Task> reorder)
     {
         Group = group;
         DraftName = group.Name;
         _save = save;
+        _delete = delete;
         _reorder = reorder;
         SaveCommand = new AsyncCommand(_ => _save(this));
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
         MoveEarlierCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Earlier));
         MoveLaterCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Later));
     }
 
     public ActivityGroup Group { get; }
     public string DraftName { get; set; }
+    public string DeleteLabel => Group.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand SaveCommand { get; }
+    public ICommand DeleteCommand { get; }
     public ICommand MoveEarlierCommand { get; }
     public ICommand MoveLaterCommand { get; }
 }
@@ -1461,17 +1862,20 @@ public sealed class BoardAdminRowViewModel
 {
     private readonly Func<BoardAdminRowViewModel, Task> _save;
     private readonly Func<BoardAdminRowViewModel, Task> _toggleArchive;
+    private readonly Func<BoardAdminRowViewModel, Task> _delete;
     private readonly Func<BoardAdminRowViewModel, ReorderDirection, Task> _reorder;
 
-    public BoardAdminRowViewModel(Board board, Func<BoardAdminRowViewModel, Task> save, Func<BoardAdminRowViewModel, Task> toggleArchive, Func<BoardAdminRowViewModel, ReorderDirection, Task> reorder)
+    public BoardAdminRowViewModel(Board board, Func<BoardAdminRowViewModel, Task> save, Func<BoardAdminRowViewModel, Task> toggleArchive, Func<BoardAdminRowViewModel, Task> delete, Func<BoardAdminRowViewModel, ReorderDirection, Task> reorder)
     {
         Board = board;
         DraftName = board.Name;
         _save = save;
         _toggleArchive = toggleArchive;
+        _delete = delete;
         _reorder = reorder;
         SaveCommand = new AsyncCommand(_ => _save(this));
         ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
         MoveEarlierCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Earlier));
         MoveLaterCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Later));
     }
@@ -1479,8 +1883,10 @@ public sealed class BoardAdminRowViewModel
     public Board Board { get; }
     public string DraftName { get; set; }
     public string ArchiveLabel => Board.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public string DeleteLabel => Board.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand SaveCommand { get; }
     public ICommand ToggleArchiveCommand { get; }
+    public ICommand DeleteCommand { get; }
     public ICommand MoveEarlierCommand { get; }
     public ICommand MoveLaterCommand { get; }
 }
@@ -1489,19 +1895,22 @@ public sealed class ProjectAdminRowViewModel
 {
     private readonly Func<ProjectAdminRowViewModel, Task> _save;
     private readonly Func<ProjectAdminRowViewModel, Task> _toggleArchive;
+    private readonly Func<ProjectAdminRowViewModel, Task> _delete;
     private readonly Func<ProjectAdminRowViewModel, Task> _addTag;
     private readonly Func<ProjectAdminRowViewModel, ReorderDirection, Task> _reorder;
 
-    public ProjectAdminRowViewModel(Project project, Func<ProjectAdminRowViewModel, Task> save, Func<ProjectAdminRowViewModel, Task> toggleArchive, Func<ProjectAdminRowViewModel, Task> addTag, Func<ProjectAdminRowViewModel, ReorderDirection, Task> reorder)
+    public ProjectAdminRowViewModel(Project project, Func<ProjectAdminRowViewModel, Task> save, Func<ProjectAdminRowViewModel, Task> toggleArchive, Func<ProjectAdminRowViewModel, Task> delete, Func<ProjectAdminRowViewModel, Task> addTag, Func<ProjectAdminRowViewModel, ReorderDirection, Task> reorder)
     {
         Project = project;
         DraftName = project.Name;
         _save = save;
         _toggleArchive = toggleArchive;
+        _delete = delete;
         _addTag = addTag;
         _reorder = reorder;
         SaveCommand = new AsyncCommand(_ => _save(this));
         ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
         AddTagCommand = new AsyncCommand(_ => _addTag(this));
         MoveEarlierCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Earlier));
         MoveLaterCommand = new AsyncCommand(_ => _reorder(this, ReorderDirection.Later));
@@ -1511,8 +1920,10 @@ public sealed class ProjectAdminRowViewModel
     public string DraftName { get; set; }
     public string TagText { get; set; } = string.Empty;
     public string ArchiveLabel => Project.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public string DeleteLabel => Project.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand SaveCommand { get; }
     public ICommand ToggleArchiveCommand { get; }
+    public ICommand DeleteCommand { get; }
     public ICommand AddTagCommand { get; }
     public ICommand MoveEarlierCommand { get; }
     public ICommand MoveLaterCommand { get; }
@@ -1522,9 +1933,10 @@ public sealed class ActivityAdminRowViewModel
 {
     private readonly Func<ActivityAdminRowViewModel, Task> _save;
     private readonly Func<ActivityAdminRowViewModel, Task> _toggleArchive;
+    private readonly Func<ActivityAdminRowViewModel, Task> _delete;
     private readonly Func<ActivityAdminRowViewModel, Task> _addTag;
 
-    public ActivityAdminRowViewModel(Activity activity, IReadOnlyList<ActivityGroupOption> groups, Func<ActivityAdminRowViewModel, Task> save, Func<ActivityAdminRowViewModel, Task> toggleArchive, Func<ActivityAdminRowViewModel, Task> addTag)
+    public ActivityAdminRowViewModel(Activity activity, IReadOnlyList<ActivityGroupOption> groups, Func<ActivityAdminRowViewModel, Task> save, Func<ActivityAdminRowViewModel, Task> toggleArchive, Func<ActivityAdminRowViewModel, Task> delete, Func<ActivityAdminRowViewModel, Task> addTag)
     {
         Activity = activity;
         GroupOptions = groups;
@@ -1532,9 +1944,11 @@ public sealed class ActivityAdminRowViewModel
         DraftName = activity.Name;
         _save = save;
         _toggleArchive = toggleArchive;
+        _delete = delete;
         _addTag = addTag;
         SaveCommand = new AsyncCommand(_ => _save(this));
         ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
         AddTagCommand = new AsyncCommand(_ => _addTag(this));
     }
 
@@ -1544,8 +1958,10 @@ public sealed class ActivityAdminRowViewModel
     public string DraftName { get; set; }
     public string TagText { get; set; } = string.Empty;
     public string ArchiveLabel => Activity.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public string DeleteLabel => Activity.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand SaveCommand { get; }
     public ICommand ToggleArchiveCommand { get; }
+    public ICommand DeleteCommand { get; }
     public ICommand AddTagCommand { get; }
 }
 
@@ -1568,6 +1984,7 @@ public sealed class TaskRowViewModel
     private readonly Func<TaskRowViewModel, Task> _save;
     private readonly Func<TaskRowViewModel, Task> _move;
     private readonly Func<TaskRowViewModel, Task> _archive;
+    private readonly Func<TaskRowViewModel, Task> _delete;
     private readonly Func<TaskRowViewModel, Task> _addTag;
     private readonly Func<TaskRowViewModel, Task> _addDependency;
     private readonly Func<TaskRowViewModel, Task> _addLink;
@@ -1575,7 +1992,7 @@ public sealed class TaskRowViewModel
     private string _draftTitle;
     private Guid _targetProjectId;
 
-    public TaskRowViewModel(TaskListItem item, IEnumerable<ProjectOption> projects, IEnumerable<ActivityOption> activities, IEnumerable<TaskOption> prerequisiteOptions, Func<TaskRowViewModel, Task> start, Func<TaskRowViewModel, Task> complete, Func<TaskRowViewModel, Task> save, Func<TaskRowViewModel, Task> move, Func<TaskRowViewModel, Task> archive, Func<TaskRowViewModel, Task> addTag, Func<TaskRowViewModel, Task> addDependency, Func<TaskRowViewModel, Task> addLink, Func<TaskRowViewModel, Task> showDetails)
+    public TaskRowViewModel(TaskListItem item, IEnumerable<ProjectOption> projects, IEnumerable<ActivityOption> activities, IEnumerable<TaskOption> prerequisiteOptions, Func<TaskRowViewModel, Task> start, Func<TaskRowViewModel, Task> complete, Func<TaskRowViewModel, Task> save, Func<TaskRowViewModel, Task> move, Func<TaskRowViewModel, Task> archive, Func<TaskRowViewModel, Task> delete, Func<TaskRowViewModel, Task> addTag, Func<TaskRowViewModel, Task> addDependency, Func<TaskRowViewModel, Task> addLink, Func<TaskRowViewModel, Task> showDetails)
     {
         Item = item;
         ProjectOptions = projects.ToArray();
@@ -1586,6 +2003,7 @@ public sealed class TaskRowViewModel
         _save = save;
         _move = move;
         _archive = archive;
+        _delete = delete;
         _addTag = addTag;
         _addDependency = addDependency;
         _addLink = addLink;
@@ -1594,6 +2012,7 @@ public sealed class TaskRowViewModel
         _targetProjectId = item.Task.ProjectId;
         DueDateText = item.Task.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
         DraftPriority = item.Task.Priority;
+        DraftDescription = item.Task.Description;
         DraftActivityId = item.Task.DefaultActivityId;
         DraftStarred = item.Task.Starred;
         StartCommand = new AsyncCommand(_ => _start(this));
@@ -1601,6 +2020,7 @@ public sealed class TaskRowViewModel
         SaveCommand = new AsyncCommand(_ => _save(this));
         MoveCommand = new AsyncCommand(_ => _move(this));
         ArchiveCommand = new AsyncCommand(_ => _archive(this));
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
         AddTagCommand = new AsyncCommand(_ => _addTag(this));
         AddDependencyCommand = new AsyncCommand(_ => _addDependency(this));
         AddLinkCommand = new AsyncCommand(_ => _addLink(this));
@@ -1611,6 +2031,7 @@ public sealed class TaskRowViewModel
     public TaskItem Task => Item.Task;
     public string Title => Task.Title;
     public string DraftTitle { get => _draftTitle; set { if (!string.IsNullOrWhiteSpace(value)) _draftTitle = value; } }
+    public string DraftDescription { get; set; } = string.Empty;
     public IReadOnlyList<ProjectOption> ProjectOptions { get; }
     public IReadOnlyList<ActivityOption> ActivityOptions { get; }
     public IReadOnlyList<TaskOption> PrerequisiteOptions { get; }
@@ -1637,11 +2058,13 @@ public sealed class TaskRowViewModel
     public string TrackedLabel => Item.TrackedMilliseconds == 0 ? "No time yet" : MainWindowViewModel.FormatForRow(Item.TrackedMilliseconds);
     public string ActionLabel => Task.Status == TaskState.Completed ? "Reopen" : "Done";
     public string ArchiveLabel => Task.ArchivedAtUtc is null ? "Archive" : "Restore";
+    public string DeleteLabel => Task.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand StartCommand { get; }
     public ICommand CompleteCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand MoveCommand { get; }
     public ICommand ArchiveCommand { get; }
+    public ICommand DeleteCommand { get; }
     public ICommand AddTagCommand { get; }
     public ICommand AddDependencyCommand { get; }
     public ICommand AddLinkCommand { get; }
@@ -1787,46 +2210,138 @@ public sealed class CalendarBlockRowViewModel
     public string DurationLabel => MainWindowViewModel.FormatForRow((Block.EndAtUtc - Block.StartAtUtc).Ticks / TimeSpan.TicksPerMillisecond);
 }
 
+public sealed class CalendarDayColumnViewModel
+{
+    public CalendarDayColumnViewModel(DateTime date, bool outsideDisplayedMonth, IReadOnlyList<CalendarGridItemViewModel> items)
+    {
+        Date = date;
+        OutsideDisplayedMonth = outsideDisplayedMonth;
+        Items = items;
+    }
+
+    public DateTime Date { get; }
+    public bool OutsideDisplayedMonth { get; }
+    public double Opacity => OutsideDisplayedMonth ? 0.48 : 1;
+    public string DayLabel => Date.ToString("ddd", CultureInfo.CurrentCulture);
+    public string DateLabel => Date.ToString("MMM d", CultureInfo.CurrentCulture);
+    public IReadOnlyList<CalendarGridItemViewModel> Items { get; }
+    public bool HasItems => Items.Count > 0;
+}
+
+public sealed class CalendarGridItemViewModel
+{
+    private CalendarGridItemViewModel(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool isEvent, bool allDay)
+    {
+        Label = label;
+        StartAtUtc = startAtUtc;
+        EndAtUtc = endAtUtc;
+        IsEvent = isEvent;
+        AllDay = allDay;
+    }
+
+    public string Label { get; }
+    public DateTimeOffset StartAtUtc { get; }
+    public DateTimeOffset EndAtUtc { get; }
+    public bool IsEvent { get; }
+    public bool AllDay { get; }
+    public string KindLabel => IsEvent ? "Event" : "Plan";
+    public string TimeLabel => AllDay ? "All day" : StartAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.CurrentCulture);
+    public string Background => IsEvent ? "#FFF4DF" : "#ECECFF";
+    public string Foreground => IsEvent ? "#6D5127" : "#39398C";
+
+    public static CalendarGridItemViewModel ForBlock(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc)
+        => new(label, startAtUtc, endAtUtc, false, false);
+
+    public static CalendarGridItemViewModel ForEvent(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool allDay)
+        => new(label, startAtUtc, endAtUtc, true, allDay);
+}
+
 public sealed class CalendarAdminRowViewModel
 {
     private readonly Func<CalendarAdminRowViewModel, Task> _save;
+    private readonly Func<CalendarAdminRowViewModel, Task> _delete;
 
-    public CalendarAdminRowViewModel(DomainCalendar calendar, Func<CalendarAdminRowViewModel, Task> save)
+    public CalendarAdminRowViewModel(DomainCalendar calendar, Func<CalendarAdminRowViewModel, Task> save, Func<CalendarAdminRowViewModel, Task> delete)
     {
         Calendar = calendar;
         DraftName = calendar.Name;
         DraftColor = calendar.Color;
         IsVisible = calendar.Visible;
         _save = save;
+        _delete = delete;
         SaveCommand = new AsyncCommand(_ => _save(this));
+        DeleteCommand = new AsyncCommand(_ => _delete(this));
     }
 
     public DomainCalendar Calendar { get; }
     public string DraftName { get; set; }
     public string DraftColor { get; set; }
     public bool IsVisible { get; set; }
+    public string DeleteLabel => Calendar.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand SaveCommand { get; }
+    public ICommand DeleteCommand { get; }
 }
 
 public sealed class CalendarEventRowViewModel
 {
+    private readonly Func<CalendarEventRowViewModel, Task> _update;
     private readonly Func<CalendarEventRowViewModel, Task> _delete;
 
-    public CalendarEventRowViewModel(CalendarEvent item, Func<CalendarEventRowViewModel, Task> delete)
+    public CalendarEventRowViewModel(CalendarEvent item, Func<CalendarEventRowViewModel, Task> update, Func<CalendarEventRowViewModel, Task> delete)
     {
         Event = item;
+        TitleEditor = item.Title;
+        DescriptionEditor = item.Description;
+        LocationEditor = item.Location ?? string.Empty;
+        ColorEditor = item.Color;
+        StartText = item.StartAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        EndText = item.EndAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        RecurrenceEditor = item.RecurrenceRule ?? string.Empty;
+        RecurrenceEndText = item.RecurrenceEndUtc?.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
+        AllDayEditor = item.AllDay;
+        _update = update;
         _delete = delete;
+        UpdateCommand = new AsyncCommand(_ => _update(this));
         DeleteCommand = new AsyncCommand(_ => _delete(this));
     }
 
     public CalendarEvent Event { get; }
+    public string TitleEditor { get; set; }
+    public string DescriptionEditor { get; set; }
+    public string LocationEditor { get; set; }
+    public string ColorEditor { get; set; }
+    public string StartText { get; set; }
+    public string EndText { get; set; }
+    public string RecurrenceEditor { get; set; }
+    public string RecurrenceEndText { get; set; }
+    public bool AllDayEditor { get; set; }
     public string Label => Event.Title;
     public string DetailLabel => Event.AllDay
         ? $"{Event.StartAtUtc.ToLocalTime():ddd, MMM d} · all day"
         : $"{Event.StartAtUtc.ToLocalTime():ddd, MMM d · h:mm tt} – {Event.EndAtUtc.ToLocalTime():h:mm tt}";
     public string LocationLabel => string.IsNullOrWhiteSpace(Event.Location) ? "" : Event.Location;
     public string DescriptionLabel => Event.Description;
+    public ICommand UpdateCommand { get; }
     public ICommand DeleteCommand { get; }
+}
+
+public sealed class DeletedCalendarEventRowViewModel
+{
+    private readonly Func<DeletedCalendarEventRowViewModel, Task> _restore;
+
+    public DeletedCalendarEventRowViewModel(CalendarEvent item, Func<DeletedCalendarEventRowViewModel, Task> restore)
+    {
+        Event = item;
+        _restore = restore;
+        RestoreCommand = new AsyncCommand(_ => _restore(this));
+    }
+
+    public CalendarEvent Event { get; }
+    public string Title => Event.Title;
+    public string DetailLabel => Event.AllDay
+        ? $"{Event.StartAtUtc.ToLocalTime():ddd, MMM d} · all day"
+        : $"{Event.StartAtUtc.ToLocalTime():ddd, MMM d · h:mm tt} – {Event.EndAtUtc.ToLocalTime():h:mm tt}";
+    public ICommand RestoreCommand { get; }
 }
 
 public partial class MainWindowViewModel

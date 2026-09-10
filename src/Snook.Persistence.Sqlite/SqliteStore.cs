@@ -1,3 +1,4 @@
+using Process = System.Diagnostics.Process;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -64,7 +65,7 @@ public sealed class SqliteStore : IAsyncDisposable
 
         try
         {
-            _lease = new FileStream(_leasePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 128, FileOptions.DeleteOnClose);
+            _lease = AcquireLease();
             await using var writer = new StreamWriter(_lease, leaveOpen: true);
             await writer.WriteAsync($"pid={Environment.ProcessId}{Environment.NewLine}started={DateTimeOffset.UtcNow:O}");
             await writer.FlushAsync(cancellationToken);
@@ -74,17 +75,84 @@ public sealed class SqliteStore : IAsyncDisposable
             throw new SnookException(SnookErrorCode.StoreUnavailable, "The workspace is already open in another Snook host.", exception);
         }
 
-        await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = SchemaSql;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await EnsureSchemaVersionAsync(connection, cancellationToken);
-        await SeedAsync(connection, cancellationToken);
-        await EnsureDefaultSettingsAsync(connection, cancellationToken);
-        await EnsureDefaultCalendarAsync(connection, cancellationToken);
-        await ValidateIntegrityAsync(connection, cancellationToken);
-        await DetectRecoveryRequiredAsync(connection, DateTimeOffset.UtcNow, cancellationToken);
-        _initialized = true;
+        try
+        {
+            await using var connection = await OpenConnectionAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = SchemaSql;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await EnsureSchemaVersionAsync(connection, cancellationToken);
+            await SeedAsync(connection, cancellationToken);
+            await EnsureDefaultSettingsAsync(connection, cancellationToken);
+            await EnsureDefaultCalendarAsync(connection, cancellationToken);
+            await ValidateIntegrityAsync(connection, cancellationToken);
+            await DetectRecoveryRequiredAsync(connection, DateTimeOffset.UtcNow, cancellationToken);
+            _initialized = true;
+        }
+        catch
+        {
+            _lease?.Dispose();
+            _lease = null;
+            throw;
+        }
+    }
+
+    private FileStream AcquireLease()
+    {
+        try
+        {
+            return OpenLeaseFile();
+        }
+        catch (IOException) when (TryRemoveStaleLease())
+        {
+            return OpenLeaseFile();
+        }
+    }
+
+    private FileStream OpenLeaseFile()
+        => new(_leasePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 128, FileOptions.DeleteOnClose);
+
+    private bool TryRemoveStaleLease()
+    {
+        try
+        {
+            var marker = File.ReadAllText(_leasePath);
+            var pidText = marker
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(line => line.StartsWith("pid=", StringComparison.Ordinal));
+            if (pidText is null || !int.TryParse(pidText[4..], CultureInfo.InvariantCulture, out var pid) || IsProcessAlive(pid))
+            {
+                return false;
+            }
+
+            File.Delete(_leasePath);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsProcessAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     public async Task<StoreState> LoadStateAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -94,19 +162,19 @@ public sealed class SqliteStore : IAsyncDisposable
 
         var workspace = await ReadWorkspaceAsync(connection, cancellationToken);
         var settings = await ReadSettingsAsync(connection, workspace.Id, cancellationToken);
-        var activityGroups = await ReadActivityGroupsAsync(connection, workspace.Id, cancellationToken);
-        var boards = await ReadBoardsAsync(connection, workspace.Id, cancellationToken);
-        var projects = await ReadProjectsAsync(connection, boards.Select(board => board.Id), cancellationToken);
-        var activities = await ReadActivitiesAsync(connection, workspace.Id, cancellationToken);
-        var calendars = await ReadCalendarsAsync(connection, workspace.Id, cancellationToken);
+        var activityGroups = await ReadActivityGroupsAsync(connection, workspace.Id, includeDeleted: true, cancellationToken);
+        var boards = await ReadBoardsAsync(connection, workspace.Id, includeDeleted: true, cancellationToken);
+        var projects = await ReadProjectsAsync(connection, boards.Select(board => board.Id), includeDeleted: true, cancellationToken);
+        var activities = await ReadActivitiesAsync(connection, workspace.Id, includeDeleted: true, cancellationToken);
+        var calendars = await ReadCalendarsAsync(connection, workspace.Id, includeDeleted: true, cancellationToken);
         var tags = await ReadTagsAsync(connection, workspace.Id, cancellationToken);
         var taskTagIds = await ReadTaskTagIdsAsync(connection, cancellationToken);
         var projectTagIds = await ReadTagIdsAsync(connection, "project_tags", "project_id", cancellationToken);
         var activityTagIds = await ReadTagIdsAsync(connection, "activity_tags", "activity_id", cancellationToken);
-        var scheduleBlocks = await ReadScheduleBlocksAsync(connection, calendars.Select(calendar => calendar.Id), cancellationToken);
-        var calendarEvents = await ReadCalendarEventsAsync(connection, calendars.Select(calendar => calendar.Id), cancellationToken);
+        var scheduleBlocks = await ReadScheduleBlocksAsync(connection, calendars.Select(calendar => calendar.Id), includeDeleted: true, cancellationToken);
+        var calendarEvents = await ReadCalendarEventsAsync(connection, calendars.Select(calendar => calendar.Id), includeDeleted: true, cancellationToken);
         var calendarEventExceptions = await ReadCalendarEventExceptionsAsync(connection, calendarEvents.Select(item => item.Id), cancellationToken);
-        var tasks = await ReadTasksAsync(connection, projects.Select(project => project.Id), cancellationToken);
+        var tasks = await ReadTasksAsync(connection, projects.Select(project => project.Id), includeDeleted: true, cancellationToken);
         var sessions = await ReadSessionsAsync(connection, workspace.Id, cancellationToken);
         var cursor = await ReadCursorAsync(connection, cancellationToken);
         return new StoreState(workspace, settings, activityGroups, boards, projects, activities, calendars, tags, taskTagIds, projectTagIds, activityTagIds, scheduleBlocks, calendarEvents, calendarEventExceptions, tasks, sessions, cursor);
@@ -3522,11 +3590,11 @@ public sealed class SqliteStore : IAsyncDisposable
         return new ActivityGroup(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)), reader.GetString(2), reader.GetDecimal(3), NullableMs(reader, 4), reader.GetInt64(5));
     }
 
-    private static async Task<IReadOnlyList<Board>> ReadBoardsAsync(SqliteConnection connection, Guid workspaceId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<Board>> ReadBoardsAsync(SqliteConnection connection, Guid workspaceId, bool includeDeleted, CancellationToken cancellationToken)
     {
         var result = new List<Board>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,workspace_id,name,sort_key,archived_at_utc_ms,deleted_at_utc_ms,revision FROM boards WHERE workspace_id=$workspace AND deleted_at_utc_ms IS NULL ORDER BY sort_key,name;";
+        command.CommandText = $"SELECT id,workspace_id,name,sort_key,archived_at_utc_ms,deleted_at_utc_ms,revision FROM boards WHERE workspace_id=$workspace{(includeDeleted ? string.Empty : " AND deleted_at_utc_ms IS NULL")} ORDER BY sort_key,name;";
         command.Parameters.AddWithValue("$workspace", Id(workspaceId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -3537,7 +3605,7 @@ public sealed class SqliteStore : IAsyncDisposable
         return result;
     }
 
-    private static async Task<IReadOnlyList<Project>> ReadProjectsAsync(SqliteConnection connection, IEnumerable<Guid> boardIds, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<Project>> ReadProjectsAsync(SqliteConnection connection, IEnumerable<Guid> boardIds, bool includeDeleted, CancellationToken cancellationToken)
     {
         var ids = boardIds.ToArray();
         if (ids.Length == 0)
@@ -3547,7 +3615,7 @@ public sealed class SqliteStore : IAsyncDisposable
 
         var result = new List<Project>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,board_id,name,description,starred,sort_key,archived_at_utc_ms,deleted_at_utc_ms,revision FROM projects WHERE deleted_at_utc_ms IS NULL ORDER BY sort_key,name;";
+        command.CommandText = $"SELECT id,board_id,name,description,starred,sort_key,archived_at_utc_ms,deleted_at_utc_ms,revision FROM projects{(includeDeleted ? string.Empty : " WHERE deleted_at_utc_ms IS NULL")} ORDER BY sort_key,name;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -3562,11 +3630,11 @@ public sealed class SqliteStore : IAsyncDisposable
         return result;
     }
 
-    private static async Task<IReadOnlyList<Activity>> ReadActivitiesAsync(SqliteConnection connection, Guid workspaceId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<Activity>> ReadActivitiesAsync(SqliteConnection connection, Guid workspaceId, bool includeDeleted, CancellationToken cancellationToken)
     {
         var result = new List<Activity>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,workspace_id,name,description,lane_default,archived_at_utc_ms,deleted_at_utc_ms,group_id,revision FROM activities WHERE workspace_id=$workspace AND deleted_at_utc_ms IS NULL ORDER BY name;";
+        command.CommandText = $"SELECT id,workspace_id,name,description,lane_default,archived_at_utc_ms,deleted_at_utc_ms,group_id,revision FROM activities WHERE workspace_id=$workspace{(includeDeleted ? string.Empty : " AND deleted_at_utc_ms IS NULL")} ORDER BY name;";
         command.Parameters.AddWithValue("$workspace", Id(workspaceId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -3577,11 +3645,11 @@ public sealed class SqliteStore : IAsyncDisposable
         return result;
     }
 
-    private static async Task<IReadOnlyList<ActivityGroup>> ReadActivityGroupsAsync(SqliteConnection connection, Guid workspaceId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<ActivityGroup>> ReadActivityGroupsAsync(SqliteConnection connection, Guid workspaceId, bool includeDeleted, CancellationToken cancellationToken)
     {
         var result = new List<ActivityGroup>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,workspace_id,name,sort_key,deleted_at_utc_ms,revision FROM activity_groups WHERE workspace_id=$workspace AND deleted_at_utc_ms IS NULL ORDER BY sort_key,name;";
+        command.CommandText = $"SELECT id,workspace_id,name,sort_key,deleted_at_utc_ms,revision FROM activity_groups WHERE workspace_id=$workspace{(includeDeleted ? string.Empty : " AND deleted_at_utc_ms IS NULL")} ORDER BY sort_key,name;";
         command.Parameters.AddWithValue("$workspace", Id(workspaceId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -3647,11 +3715,11 @@ public sealed class SqliteStore : IAsyncDisposable
         return result;
     }
 
-    private static async Task<IReadOnlyList<DomainCalendar>> ReadCalendarsAsync(SqliteConnection connection, Guid workspaceId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<DomainCalendar>> ReadCalendarsAsync(SqliteConnection connection, Guid workspaceId, bool includeDeleted, CancellationToken cancellationToken)
     {
         var result = new List<DomainCalendar>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,workspace_id,name,color,visible,revision,deleted_at_utc_ms FROM calendars WHERE workspace_id=$workspace AND deleted_at_utc_ms IS NULL ORDER BY name;";
+        command.CommandText = $"SELECT id,workspace_id,name,color,visible,revision,deleted_at_utc_ms FROM calendars WHERE workspace_id=$workspace{(includeDeleted ? string.Empty : " AND deleted_at_utc_ms IS NULL")} ORDER BY name;";
         command.Parameters.AddWithValue("$workspace", Id(workspaceId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -3677,12 +3745,12 @@ public sealed class SqliteStore : IAsyncDisposable
         return new DomainCalendar(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)), reader.GetString(2), reader.GetString(3), reader.GetInt64(4) == 1, reader.GetInt64(5), NullableMs(reader, 6));
     }
 
-    private static async Task<IReadOnlyList<ScheduleBlock>> ReadScheduleBlocksAsync(SqliteConnection connection, IEnumerable<Guid> calendarIds, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<ScheduleBlock>> ReadScheduleBlocksAsync(SqliteConnection connection, IEnumerable<Guid> calendarIds, bool includeDeleted, CancellationToken cancellationToken)
     {
         var ids = calendarIds.ToHashSet();
         var result = new List<ScheduleBlock>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,calendar_id,task_id,activity_id,title_override,start_at_utc_ms,end_at_utc_ms,time_zone,recurrence_rule,recurrence_end_utc_ms,deleted_at_utc_ms,revision FROM schedule_blocks WHERE deleted_at_utc_ms IS NULL ORDER BY start_at_utc_ms;";
+        command.CommandText = $"SELECT id,calendar_id,task_id,activity_id,title_override,start_at_utc_ms,end_at_utc_ms,time_zone,recurrence_rule,recurrence_end_utc_ms,deleted_at_utc_ms,revision FROM schedule_blocks{(includeDeleted ? string.Empty : " WHERE deleted_at_utc_ms IS NULL")} ORDER BY start_at_utc_ms;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -3725,12 +3793,12 @@ public sealed class SqliteStore : IAsyncDisposable
         return await reader.ReadAsync(cancellationToken) ? ReadScheduleBlock(reader) : null;
     }
 
-    private static async Task<IReadOnlyList<CalendarEvent>> ReadCalendarEventsAsync(SqliteConnection connection, IEnumerable<Guid> calendarIds, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<CalendarEvent>> ReadCalendarEventsAsync(SqliteConnection connection, IEnumerable<Guid> calendarIds, bool includeDeleted, CancellationToken cancellationToken)
     {
         var ids = calendarIds.ToHashSet();
         var result = new List<CalendarEvent>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,calendar_id,title,description,location,color,start_at_utc_ms,end_at_utc_ms,all_day,time_zone,recurrence_rule,recurrence_end_utc_ms,deleted_at_utc_ms,revision FROM calendar_events WHERE deleted_at_utc_ms IS NULL ORDER BY start_at_utc_ms;";
+        command.CommandText = $"SELECT id,calendar_id,title,description,location,color,start_at_utc_ms,end_at_utc_ms,all_day,time_zone,recurrence_rule,recurrence_end_utc_ms,deleted_at_utc_ms,revision FROM calendar_events{(includeDeleted ? string.Empty : " WHERE deleted_at_utc_ms IS NULL")} ORDER BY start_at_utc_ms;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -3820,12 +3888,12 @@ public sealed class SqliteStore : IAsyncDisposable
         return await reader.ReadAsync(cancellationToken) ? ReadCalendarEventException(reader) : null;
     }
 
-    private static async Task<IReadOnlyList<TaskItem>> ReadTasksAsync(SqliteConnection connection, IEnumerable<Guid> projectIds, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<TaskItem>> ReadTasksAsync(SqliteConnection connection, IEnumerable<Guid> projectIds, bool includeDeleted, CancellationToken cancellationToken)
     {
         var ids = projectIds.ToHashSet();
         var result = new List<TaskItem>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision FROM tasks WHERE deleted_at_utc_ms IS NULL ORDER BY CASE priority WHEN 4 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 1 THEN 3 ELSE 4 END, COALESCE(due_date,'9999-12-31'), title;";
+        command.CommandText = $"SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision FROM tasks{(includeDeleted ? string.Empty : " WHERE deleted_at_utc_ms IS NULL")} ORDER BY CASE priority WHEN 4 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 1 THEN 3 ELSE 4 END, COALESCE(due_date,'9999-12-31'), title;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {

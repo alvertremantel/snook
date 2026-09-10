@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 1;
+    public const int Minor = 2;
 }
 
 public sealed record OperationRequest(
@@ -44,7 +44,17 @@ public sealed record BootstrapSnapshot(
     long CommittedCursor,
     HostCapabilities Capabilities,
     WorkspaceSettings? Settings = null,
-    IReadOnlyList<ActivityGroup>? ActivityGroups = null);
+    IReadOnlyList<ActivityGroup>? ActivityGroups = null,
+    DeletedItemsSnapshot? DeletedItems = null);
+
+public sealed record DeletedItemsSnapshot(
+    IReadOnlyList<Board> Boards,
+    IReadOnlyList<Project> Projects,
+    IReadOnlyList<Activity> Activities,
+    IReadOnlyList<ActivityGroup> ActivityGroups,
+    IReadOnlyList<TaskItem> Tasks,
+    IReadOnlyList<Calendar> Calendars,
+    IReadOnlyList<CalendarEvent> CalendarEvents);
 
 public sealed record HostCapabilities(
     string HostMode,
@@ -79,7 +89,8 @@ public sealed record HistoryPage(
 public sealed record CalendarRangeQuery(
     DateTimeOffset RangeStartUtc,
     DateTimeOffset RangeEndUtc,
-    int MaximumOccurrences = 500);
+    int MaximumOccurrences = 500,
+    bool IncludeDeleted = false);
 
 public interface IBackendClient : IAsyncDisposable
 {
@@ -98,6 +109,7 @@ public interface IBackendClient : IAsyncDisposable
         string? search = null,
         bool includeCompleted = false,
         bool includeArchived = false,
+        bool includeDeleted = false,
         CancellationToken cancellationToken = default);
 
     Task<Board> CreateBoardAsync(string name, CancellationToken cancellationToken = default);

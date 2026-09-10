@@ -208,6 +208,49 @@ public sealed class BackendLifecycleTests
     }
 
     [Fact]
+    public async Task CalendarRecurrenceSkipsDstGapsAndUsesOneFoldOccurrence()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-calendar-dst-test-");
+        var databasePath = Path.Combine(directory.FullName, "workspace.db");
+        await using var store = new SqliteStore(databasePath);
+        await using var backend = new SnookBackend(store);
+        await backend.InitializeAsync();
+        var bootstrap = await backend.GetBootstrapAsync();
+        var calendar = Assert.Single(bootstrap.Calendars);
+        var activity = Assert.Single(bootstrap.Activities, item => item.DefaultLane == SessionLane.Foreground);
+        const string chicago = "America/Chicago";
+
+        var springStart = new DateTimeOffset(2026, 3, 7, 8, 30, 0, TimeSpan.Zero);
+        var spring = await backend.CreateScheduleBlockAsync(calendar.Id, null, activity.Id, "Spring transition", springStart, springStart.AddMinutes(30), chicago, "FREQ=DAILY;INTERVAL=1", springStart.AddDays(2));
+        var springOccurrences = (await backend.GetCalendarRangeAsync(new CalendarRangeQuery(
+            new DateTimeOffset(2026, 3, 7, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero),
+            MaximumOccurrences: 20)))
+            .Where(item => item.Id == spring.Id)
+            .OrderBy(item => item.StartAtUtc)
+            .ToArray();
+
+        Assert.Equal(2, springOccurrences.Length);
+        Assert.Equal(new DateTimeOffset(2026, 3, 7, 8, 30, 0, TimeSpan.Zero), springOccurrences[0].StartAtUtc);
+        Assert.Equal(new DateTimeOffset(2026, 3, 9, 7, 30, 0, TimeSpan.Zero), springOccurrences[1].StartAtUtc);
+
+        var fallStart = new DateTimeOffset(2026, 10, 31, 6, 30, 0, TimeSpan.Zero);
+        var fall = await backend.CreateScheduleBlockAsync(calendar.Id, null, activity.Id, "Fall transition", fallStart, fallStart.AddMinutes(30), chicago, "FREQ=DAILY;INTERVAL=1", fallStart.AddDays(3));
+        var fallOccurrences = (await backend.GetCalendarRangeAsync(new CalendarRangeQuery(
+            new DateTimeOffset(2026, 10, 31, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.Zero),
+            MaximumOccurrences: 20)))
+            .Where(item => item.Id == fall.Id)
+            .OrderBy(item => item.StartAtUtc)
+            .ToArray();
+
+        Assert.Equal(3, fallOccurrences.Length);
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 7, 30, 0, TimeSpan.Zero), fallOccurrences[1].StartAtUtc);
+
+        Directory.Delete(directory.FullName, recursive: true);
+    }
+
+    [Fact]
     public async Task CalendarEventsSupportFieldsRecurrenceExceptionsAndSoftDelete()
     {
         var directory = Directory.CreateTempSubdirectory("snook-test-");
@@ -230,12 +273,29 @@ public sealed class BackendLifecycleTests
             timeZone: "UTC",
             recurrenceRule: "FREQ=DAILY;INTERVAL=1",
             recurrenceEndUtc: start.AddDays(3));
+        item = await backend.UpdateCalendarEventAsync(
+            item.Id,
+            new CalendarEventUpdate(
+                "Updated standup",
+                "Updated daily sync",
+                "Room 5",
+                "#34C58A",
+                start,
+                start.AddMinutes(30),
+                false,
+                "UTC",
+                "FREQ=DAILY;INTERVAL=1",
+                start.AddDays(3)),
+            Request(item.Revision));
+        Assert.Equal("Updated standup", item.Title);
+        Assert.Equal("Room 5", item.Location);
+        Assert.Equal("#34C58A", item.Color);
 
         var occurrences = await backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(start.AddMinutes(-1), start.AddDays(5), MaximumOccurrences: 20));
         var matching = occurrences.Where(entry => entry.Id == item.Id).OrderBy(entry => entry.StartAtUtc).ToArray();
         Assert.Equal(4, matching.Length);
-        Assert.Equal("Room 4", matching[0].Location);
-        Assert.Equal("#12ABEF", matching[0].Color);
+        Assert.Equal("Room 5", matching[0].Location);
+        Assert.Equal("#34C58A", matching[0].Color);
 
         var cancelled = await backend.UpsertCalendarEventExceptionAsync(item.Id, matching[1].StartAtUtc, null, null, null, cancelled: true, Request());
         var afterCancel = await backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(start.AddMinutes(-1), start.AddDays(5), MaximumOccurrences: 20));
@@ -259,6 +319,33 @@ public sealed class BackendLifecycleTests
         Assert.DoesNotContain((await backend.GetBootstrapAsync()).Calendars, entry => entry.Id == calendar.Id);
         var restoredCalendar = await backend.RestoreDeletedCalendarAsync(calendar.Id, Request(deletedCalendar.Revision));
         Assert.Contains((await backend.GetBootstrapAsync()).Calendars, entry => entry.Id == restoredCalendar.Id);
+
+        Directory.Delete(directory.FullName, recursive: true);
+    }
+
+    [Fact]
+    public async Task HiddenCalendarsAreExcludedFromScheduleAndEventProjections()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-calendar-visibility-test-");
+        var databasePath = Path.Combine(directory.FullName, "workspace.db");
+        await using var store = new SqliteStore(databasePath);
+        await using var backend = new SnookBackend(store);
+        await backend.InitializeAsync();
+
+        var bootstrap = await backend.GetBootstrapAsync();
+        var calendar = Assert.Single(bootstrap.Calendars);
+        var activity = Assert.Single(bootstrap.Activities, item => item.DefaultLane == SessionLane.Foreground);
+        var start = DateTimeOffset.UtcNow.AddHours(1);
+        var block = await backend.CreateScheduleBlockAsync(calendar.Id, null, activity.Id, "Hidden block", start, start.AddMinutes(30), "UTC");
+        var item = await backend.CreateCalendarEventAsync(calendar.Id, "Hidden event", start, start.AddMinutes(30));
+        var hidden = await backend.UpdateCalendarAsync(calendar.Id, new CalendarUpdate(calendar.Name, calendar.Color, false), Request(calendar.Revision));
+
+        Assert.DoesNotContain(await backend.GetCalendarRangeAsync(new CalendarRangeQuery(start.AddMinutes(-1), start.AddHours(1))), entry => entry.Id == block.Id);
+        Assert.DoesNotContain(await backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(start.AddMinutes(-1), start.AddHours(1))), entry => entry.Id == item.Id);
+
+        await backend.UpdateCalendarAsync(calendar.Id, new CalendarUpdate(calendar.Name, calendar.Color, true), Request(hidden.Revision));
+        Assert.Contains(await backend.GetCalendarRangeAsync(new CalendarRangeQuery(start.AddMinutes(-1), start.AddHours(1))), entry => entry.Id == block.Id);
+        Assert.Contains(await backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(start.AddMinutes(-1), start.AddHours(1))), entry => entry.Id == item.Id);
 
         Directory.Delete(directory.FullName, recursive: true);
     }
@@ -599,6 +686,96 @@ public sealed class BackendLifecycleTests
     }
 
     [Fact]
+    public async Task WorkspaceLeaseRejectsASecondHostUntilTheOwnerReleasesIt()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-lease-test-");
+        var databasePath = Path.Combine(directory.FullName, "workspace.db");
+        var owner = new SqliteStore(databasePath);
+        var contender = new SqliteStore(databasePath);
+        var ownerDisposed = false;
+        try
+        {
+            await owner.InitializeAsync();
+
+            var conflict = await Assert.ThrowsAsync<SnookException>(() => contender.InitializeAsync());
+            Assert.Equal(SnookErrorCode.StoreUnavailable, conflict.Code);
+
+            await owner.DisposeAsync();
+            ownerDisposed = true;
+            await contender.InitializeAsync();
+        }
+        finally
+        {
+            await contender.DisposeAsync();
+            if (!ownerDisposed)
+            {
+                await owner.DisposeAsync();
+            }
+
+            Directory.Delete(directory.FullName, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StaleWorkspaceLeaseIsRecoveredWhenItsOwnerProcessIsGone()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-stale-lease-test-");
+        var databasePath = Path.Combine(directory.FullName, "workspace.db");
+        var leasePath = databasePath + ".owner";
+        await File.WriteAllTextAsync(leasePath, $"pid={int.MaxValue}{Environment.NewLine}started={DateTimeOffset.UtcNow:O}");
+
+        await using var store = new SqliteStore(databasePath);
+        await store.InitializeAsync();
+
+        Assert.NotEmpty((await store.LoadStateAsync(DateTimeOffset.UtcNow)).Boards);
+        Directory.Delete(directory.FullName, recursive: true);
+    }
+
+    [Fact]
+    public async Task FailedStartupReleasesTheLeaseWithoutResettingTheDatabase()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-startup-failure-test-");
+        var databasePath = Path.Combine(directory.FullName, "workspace.db");
+        await using (var initialStore = new SqliteStore(databasePath))
+        {
+            await initialStore.InitializeAsync();
+        }
+
+        string checksum;
+        await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var read = connection.CreateCommand();
+            read.CommandText = "SELECT checksum FROM schema_migrations ORDER BY sequence DESC LIMIT 1;";
+            var scalar = await read.ExecuteScalarAsync();
+            Assert.NotNull(scalar);
+            checksum = Convert.ToString(scalar, CultureInfo.InvariantCulture)!;
+            await using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE schema_migrations SET checksum='invalid' WHERE sequence=(SELECT MAX(sequence) FROM schema_migrations);";
+            await corrupt.ExecuteNonQueryAsync();
+        }
+
+        var failedStore = new SqliteStore(databasePath);
+        var failure = await Assert.ThrowsAsync<SnookException>(() => failedStore.InitializeAsync());
+        Assert.Equal(SnookErrorCode.SchemaIncompatible, failure.Code);
+        await failedStore.DisposeAsync();
+
+        await using (var repair = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await repair.OpenAsync();
+            await using var command = repair.CreateCommand();
+            command.CommandText = "UPDATE schema_migrations SET checksum=$checksum WHERE sequence=(SELECT MAX(sequence) FROM schema_migrations);";
+            command.Parameters.AddWithValue("$checksum", checksum);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await using var retryStore = new SqliteStore(databasePath);
+        await retryStore.InitializeAsync();
+        Assert.NotEmpty((await retryStore.LoadStateAsync(DateTimeOffset.UtcNow)).Boards);
+        Directory.Delete(directory.FullName, recursive: true);
+    }
+
+    [Fact]
     public async Task ForegroundConcurrencySettingIsPersistedAndControlsNewSessions()
     {
         var directory = Directory.CreateTempSubdirectory("snook-test-");
@@ -669,6 +846,12 @@ public sealed class BackendLifecycleTests
         using var healthResponse = await WaitForResponseAsync(unauthenticated, new Uri(endpoint, "v1/health"));
         Assert.Equal(HttpStatusCode.Unauthorized, healthResponse.StatusCode);
 
+        using var oversizedRequest = new HttpRequestMessage(HttpMethod.Post, new Uri(endpoint, "v1/call"));
+        oversizedRequest.Headers.Add("X-Snook-Token", token);
+        oversizedRequest.Content = new StringContent(new string('x', 1_100_000));
+        using var oversizedResponse = await WaitForResponseAsync(unauthenticated, oversizedRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedResponse.StatusCode);
+
         await using var client = new DaemonBackendClient(endpoint, token);
         var bootstrap = await client.GetBootstrapAsync();
         Assert.True(bootstrap.Capabilities.DaemonClient);
@@ -735,6 +918,22 @@ public sealed class BackendLifecycleTests
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            }
+            catch (HttpRequestException) when (!timeout.IsCancellationRequested)
+            {
+                await Task.Delay(50, timeout.Token);
+            }
+        }
+    }
+
+    private static async Task<HttpResponseMessage> WaitForResponseAsync(HttpClient client, HttpRequestMessage request)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            try
+            {
                 return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             }
             catch (HttpRequestException) when (!timeout.IsCancellationRequested)

@@ -1,2 +1,13 @@
 <Solution>
+  <Project Path="src/Snook.Domain/Snook.Domain.csproj" />
+  <Project Path="src/Snook.Contracts/Snook.Contracts.csproj" />
+  <Project Path="src/Snook.Persistence.Sqlite/Snook.Persistence.Sqlite.csproj" />
+  <Project Path="src/Snook.Application/Snook.Application.csproj" />
+  <Project Path="src/Snook.UI/Snook.UI.csproj" />
+  <Project Path="src/Snook.Desktop/Snook.Desktop.csproj" />
+  <Project Path="src/Snook.Screenshot/Snook.Screenshot.csproj" />
+  <Project Path="src/Snook.Cli/Snook.Cli.csproj" />
+  <Project Path="src/Snook.Daemon/Snook.Daemon.csproj" />
+  <Project Path="tests/Snook.Domain.Tests/Snook.Domain.Tests.csproj" />
+  <Project Path="tests/Snook.Application.Tests/Snook.Application.Tests.csproj" />
 </Solution>

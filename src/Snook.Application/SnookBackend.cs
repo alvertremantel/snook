@@ -50,7 +50,7 @@ public sealed class SnookBackend : IBackendClient
         return BuildBootstrap(state, now);
     }
 
-    public async Task<IReadOnlyList<TaskListItem>> SearchTasksAsync(string? search = null, bool includeCompleted = false, bool includeArchived = false, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TaskListItem>> SearchTasksAsync(string? search = null, bool includeCompleted = false, bool includeArchived = false, bool includeDeleted = false, CancellationToken cancellationToken = default)
     {
         var now = _clock.GetUtcNow();
         var state = await _store.LoadStateAsync(now, cancellationToken);
@@ -62,9 +62,9 @@ public sealed class SnookBackend : IBackendClient
             .ToDictionary(group => group.Key, group => group.ToArray());
         var normalized = search?.Trim();
         return state.Tasks
-            .Where(task => (includeArchived || task.ArchivedAtUtc is null) && task.DeletedAtUtc is null)
-            .Where(task => projects.GetValueOrDefault(task.ProjectId)?.ArchivedAtUtc is null)
-            .Where(task => projects.GetValueOrDefault(task.ProjectId) is { } project && boards.GetValueOrDefault(project.BoardId)?.ArchivedAtUtc is null)
+            .Where(task => (includeArchived || task.ArchivedAtUtc is null) && (includeDeleted || task.DeletedAtUtc is null))
+            .Where(task => projects.GetValueOrDefault(task.ProjectId) is { } project && project.ArchivedAtUtc is null && (includeDeleted || project.DeletedAtUtc is null))
+            .Where(task => projects.GetValueOrDefault(task.ProjectId) is { } project && boards.GetValueOrDefault(project.BoardId) is { } board && board.ArchivedAtUtc is null && (includeDeleted || board.DeletedAtUtc is null))
             .Where(task => includeCompleted || task.Status != TaskState.Completed)
             .Where(task => string.IsNullOrWhiteSpace(normalized) || task.Title.Contains(normalized, StringComparison.OrdinalIgnoreCase) || task.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase))
             .Select(task =>
@@ -362,8 +362,12 @@ public sealed class SnookBackend : IBackendClient
 
         var state = await _store.LoadStateAsync(_clock.GetUtcNow(), cancellationToken);
         var maximum = Math.Clamp(query.MaximumOccurrences, 1, 2_000);
+        var visibleCalendarIds = state.Calendars
+            .Where(calendar => calendar.Visible && (query.IncludeDeleted || calendar.DeletedAtUtc is null))
+            .Select(calendar => calendar.Id)
+            .ToHashSet();
         var result = new List<ScheduleBlock>(maximum);
-        foreach (var block in state.ScheduleBlocks)
+        foreach (var block in state.ScheduleBlocks.Where(block => visibleCalendarIds.Contains(block.CalendarId) && (query.IncludeDeleted || block.DeletedAtUtc is null)))
         {
             result.AddRange(ExpandScheduleBlock(block, query).Take(maximum - result.Count));
             if (result.Count >= maximum)
@@ -412,11 +416,15 @@ public sealed class SnookBackend : IBackendClient
 
         var state = await _store.LoadStateAsync(_clock.GetUtcNow(), cancellationToken);
         var maximum = Math.Clamp(query.MaximumOccurrences, 1, 2_000);
+        var visibleCalendarIds = state.Calendars
+            .Where(calendar => calendar.Visible && (query.IncludeDeleted || calendar.DeletedAtUtc is null))
+            .Select(calendar => calendar.Id)
+            .ToHashSet();
         var exceptions = state.CalendarEventExceptions
             .GroupBy(item => item.EventId)
             .ToDictionary(group => group.Key, group => group.ToDictionary(item => item.OriginalStartAtUtc));
         var result = new List<CalendarEvent>(maximum);
-        foreach (var item in state.CalendarEvents)
+        foreach (var item in state.CalendarEvents.Where(item => visibleCalendarIds.Contains(item.CalendarId) && (query.IncludeDeleted || item.DeletedAtUtc is null)))
         {
             result.AddRange(ExpandCalendarEvent(item, exceptions.GetValueOrDefault(item.Id), query).Take(maximum - result.Count));
             if (result.Count >= maximum)
@@ -704,6 +712,19 @@ public sealed class SnookBackend : IBackendClient
     {
         var projects = state.Projects.ToDictionary(project => project.Id);
         var boards = state.Boards.ToDictionary(board => board.Id);
+        var liveBoards = state.Boards.Where(board => board.DeletedAtUtc is null).ToArray();
+        var liveProjects = state.Projects.Where(project => project.DeletedAtUtc is null).ToArray();
+        var liveActivities = state.Activities.Where(activity => activity.DeletedAtUtc is null).ToArray();
+        var liveActivityGroups = state.ActivityGroups.Where(group => group.DeletedAtUtc is null).ToArray();
+        var liveCalendars = state.Calendars.Where(calendar => calendar.DeletedAtUtc is null).ToArray();
+        var deletedItems = new DeletedItemsSnapshot(
+            state.Boards.Where(board => board.DeletedAtUtc is not null).ToArray(),
+            state.Projects.Where(project => project.DeletedAtUtc is not null).ToArray(),
+            state.Activities.Where(activity => activity.DeletedAtUtc is not null).ToArray(),
+            state.ActivityGroups.Where(group => group.DeletedAtUtc is not null).ToArray(),
+            state.Tasks.Where(task => task.DeletedAtUtc is not null).ToArray(),
+            state.Calendars.Where(calendar => calendar.DeletedAtUtc is not null).ToArray(),
+            state.CalendarEvents.Where(item => item.DeletedAtUtc is not null).ToArray());
         var active = state.Sessions
             .Where(session => session.State is SessionState.Running or SessionState.Paused)
             .Select(session =>
@@ -715,8 +736,8 @@ public sealed class SnookBackend : IBackendClient
             .ToArray();
         var taskItems = state.Tasks
             .Where(task => task.Status == TaskState.Open && task.ArchivedAtUtc is null && task.DeletedAtUtc is null)
-            .Where(task => projects.GetValueOrDefault(task.ProjectId)?.ArchivedAtUtc is null)
-            .Where(task => projects.GetValueOrDefault(task.ProjectId) is { } project && boards.GetValueOrDefault(project.BoardId)?.ArchivedAtUtc is null)
+            .Where(task => projects.GetValueOrDefault(task.ProjectId) is { } project && project.ArchivedAtUtc is null && project.DeletedAtUtc is null)
+            .Where(task => projects.GetValueOrDefault(task.ProjectId) is { } project && boards.GetValueOrDefault(project.BoardId) is { } board && board.ArchivedAtUtc is null && board.DeletedAtUtc is null)
             .Select(task =>
             {
                 var project = projects[task.ProjectId];
@@ -732,15 +753,16 @@ public sealed class SnookBackend : IBackendClient
         var trackedToday = state.Sessions.SelectMany(session => session.Intervals).Sum(interval => TimeMath.OverlapMilliseconds(interval, dayStart, dayStart.AddDays(1), now));
         return new BootstrapSnapshot(
             state.Workspace,
-            state.Boards,
-            state.Projects,
-            state.Activities,
-            state.Calendars,
+            liveBoards,
+            liveProjects,
+            liveActivities,
+            liveCalendars,
             new TodaySnapshot(now, taskItems.Where(item => item.Task.Priority >= Priority.High).Take(5).ToArray(), active, trackedToday, today.Length, recoverySessions),
             state.Cursor,
             new HostCapabilities("embedded", true, false, true, true, false, false),
             state.Settings,
-            state.ActivityGroups);
+            liveActivityGroups,
+            deletedItems);
     }
 
     private static IEnumerable<CalendarEvent> ExpandCalendarEvent(CalendarEvent item, IReadOnlyDictionary<DateTimeOffset, CalendarEventOccurrenceOverride>? exceptions, CalendarRangeQuery query)

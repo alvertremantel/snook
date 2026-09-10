@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using Snook.Application;
 using Snook.Contracts;
 using Snook.Domain;
@@ -29,20 +30,37 @@ internal static class Program
             eventArgs.Cancel = true;
             cancellationSource.Cancel();
         };
-
-        var store = new SqliteStore(databasePath);
-        await using var backend = new SnookBackend(store);
-        await backend.InitializeAsync(cancellationSource.Token);
-        await using var server = new DaemonRpcServer(backend, token, port);
-        Console.WriteLine(JsonSerializer.Serialize(new
+        PosixSignalRegistration? terminationRegistration = null;
+        if (!OperatingSystem.IsWindows())
         {
-            ready = true,
-            contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
-            endpoint = server.Endpoint,
-            tokenPath = Path.Combine(snookRoot, "daemon.token")
-        }, JsonOptions));
-        await server.RunAsync(cancellationSource.Token);
-        return 0;
+            terminationRegistration = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+            {
+                context.Cancel = true;
+                cancellationSource.Cancel();
+            });
+        }
+
+        try
+        {
+            var store = new SqliteStore(databasePath);
+            await using var backend = new SnookBackend(store);
+            await backend.InitializeAsync(cancellationSource.Token);
+            await using var server = new DaemonRpcServer(backend, token, port);
+            server.Start();
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                ready = true,
+                contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
+                endpoint = server.Endpoint,
+                tokenPath = Path.Combine(snookRoot, "daemon.token")
+            }, JsonOptions));
+            await server.RunAsync(cancellationSource.Token);
+            return 0;
+        }
+        finally
+        {
+            terminationRegistration?.Dispose();
+        }
     }
 
     private static int ReadPort()
@@ -74,6 +92,8 @@ internal static class Program
 
 internal sealed class DaemonRpcServer : IAsyncDisposable
 {
+    private const int MaxRequestBytes = 1_048_576;
+    private const int MaxArgumentCount = 64;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IBackendClient _backend;
     private readonly string _token;
@@ -92,9 +112,14 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
 
     public Uri Endpoint { get; }
 
+    public void Start() => _listener.Start();
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        _listener.Start();
+        if (!_listener.IsListening)
+        {
+            _listener.Start();
+        }
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -212,7 +237,8 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
 
     private async Task HandleCallAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
-        using var document = await JsonDocument.ParseAsync(context.Request.InputStream, cancellationToken: cancellationToken);
+        var body = await ReadRequestBodyAsync(context.Request, cancellationToken);
+        using var document = JsonDocument.Parse(body);
         if (!document.RootElement.TryGetProperty("method", out var methodElement)
             || methodElement.ValueKind != JsonValueKind.String
             || !document.RootElement.TryGetProperty("args", out var argsElement)
@@ -232,6 +258,10 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
             ?? throw new SnookException(SnookErrorCode.NotFound, "The requested backend method is unavailable.");
         var parameters = method.GetParameters();
         var args = argsElement.EnumerateArray().ToArray();
+        if (args.Length > MaxArgumentCount)
+        {
+            throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon calls accept at most {MaxArgumentCount} arguments.");
+        }
         var values = new object?[parameters.Length];
         var supplied = 0;
         for (var index = 0; index < parameters.Length; index++)
@@ -269,6 +299,39 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         await task;
         var result = task.GetType().GetProperty("Result")?.GetValue(task);
         await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { result }, cancellationToken);
+    }
+
+    private static async Task<byte[]> ReadRequestBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken)
+    {
+        if (request.ContentLength64 > MaxRequestBytes)
+        {
+            throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon request bodies are limited to {MaxRequestBytes} bytes.");
+        }
+
+        await using var input = request.InputStream;
+        await using var body = new MemoryStream(capacity: request.ContentLength64 is > 0 and <= MaxRequestBytes
+            ? (int)request.ContentLength64
+            : 4096);
+        var buffer = new byte[81920];
+        var total = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+            if (total > MaxRequestBytes)
+            {
+                throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon request bodies are limited to {MaxRequestBytes} bytes.");
+            }
+
+            await body.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+
+        return body.ToArray();
     }
 
     private bool IsAuthorized(HttpListenerRequest request)

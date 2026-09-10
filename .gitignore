@@ -1,3 +1,5 @@
+artifacts/ui-screenshots/*.png
+artifacts/ui-screenshot-data/
 # .NET build output
 [Bb]in/
 [Oo]bj/
@@ -60,3 +62,7 @@ Desktop.ini
 *.bak
 *.swp
 *~
+
+# Generated UI captures (the directory remains discoverable via its README).
+artifacts/ui-screenshots/*.png
+artifacts/ui-screenshot-data/

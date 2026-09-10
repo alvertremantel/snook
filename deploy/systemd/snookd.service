@@ -11,6 +11,8 @@ Environment=SNOOK_DATA_DIR=/var/lib/snook
 ExecStart=/usr/bin/snookd
 Restart=on-failure
 RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=15s
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes

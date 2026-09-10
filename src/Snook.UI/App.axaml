@@ -21,6 +21,14 @@
     <Style Selector="TextBlock.muted">
       <Setter Property="Foreground" Value="#758096" />
     </Style>
+    <Style Selector="TextBox, ComboBox">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="BorderBrush" Value="#DDE1EA" />
+      <Setter Property="MinHeight" Value="36" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
     <Style Selector="Border.card">
       <Setter Property="Background" Value="#FFFFFF" />
       <Setter Property="CornerRadius" Value="16" />
@@ -59,6 +67,21 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="9" />
       <Setter Property="Padding" Value="10" />
+    </Style>
+    <Style Selector="Button.selected">
+      <Setter Property="Background" Value="#EAEAFF" />
+      <Setter Property="Foreground" Value="#4949CB" />
+    </Style>
+    <Style Selector="Button.nav.selected">
+      <Setter Property="Background" Value="#353553" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Expander">
+      <Setter Property="BorderBrush" Value="#E7EAF0" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="WrapPanel.editor > Control">
+      <Setter Property="Margin" Value="0,0,8,8" />
     </Style>
   </Application.Styles>
 </Application>

@@ -59,6 +59,7 @@ with the backup when moving it between machines.
 
 `deploy/systemd/snookd.service` is a hardened template for a packaged
 `/usr/bin/snookd`. Install it with the package's service-management procedure,
-then inspect `journalctl -u snookd` for the JSON readiness line. Keep the data
-directory private to the service identity and back up before upgrades or
-migrations.
+then inspect `journalctl -u snookd` for the JSON readiness line. SIGTERM is
+handled as a graceful daemon shutdown, so the listener closes and the workspace
+lease is released before systemd's stop timeout. Keep the data directory private
+to the service identity and back up before upgrades or migrations.
