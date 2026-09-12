@@ -76,6 +76,46 @@
       <Setter Property="Background" Value="#353553" />
       <Setter Property="Foreground" Value="White" />
     </Style>
+    <!-- Fluent's pointer-over theme setters otherwise replace the colors above. Keep every
+         interactive state visibly distinct, rather than allowing its content to disappear. -->
+    <Style Selector="Button.primary:pointerover">
+      <Setter Property="Background" Value="#4848D6" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.ghost:pointerover">
+      <Setter Property="Background" Value="#E8EBF2" />
+      <Setter Property="Foreground" Value="#364258" />
+    </Style>
+    <Style Selector="Button.sidebar-action">
+      <Setter Property="Foreground" Value="#D9DDF0" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pointerover">
+      <Setter Property="Background" Value="#454B67" />
+      <Setter Property="Foreground" Value="#FFFFFF" />
+    </Style>
+    <Style Selector="Button.icon:pointerover">
+      <Setter Property="Background" Value="#DDDDF8" />
+      <Setter Property="Foreground" Value="#4040B8" />
+    </Style>
+    <Style Selector="Button.selected:pointerover">
+      <Setter Property="Background" Value="#DDDDF8" />
+      <Setter Property="Foreground" Value="#4040B8" />
+    </Style>
+    <Style Selector="Button.nav.selected:pointerover">
+      <Setter Property="Background" Value="#454568" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="TextBox:pointerover, ComboBox:pointerover">
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#9BA7C4" />
+      <Setter Property="Foreground" Value="#172033" />
+    </Style>
+    <Style Selector="CheckBox:pointerover">
+      <Setter Property="Foreground" Value="#172033" />
+    </Style>
+    <Style Selector="Expander:pointerover">
+      <Setter Property="Foreground" Value="#172033" />
+    </Style>
     <Style Selector="Expander">
       <Setter Property="BorderBrush" Value="#E7EAF0" />
       <Setter Property="CornerRadius" Value="8" />

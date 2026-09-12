@@ -38,10 +38,10 @@
             <TextBlock Text="No cloud. No noise." Foreground="#D9DDF0" FontSize="12" />
             <TextBlock Text="Everything is saved on this device." Foreground="#8994AF" FontSize="11" TextWrapping="Wrap" />
             <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
-              <Button Classes="ghost" Foreground="#D9DDF0" AutomationProperties.Name="Create verified backup" Content="Backup" Command="{Binding BackupCommand}" />
-              <Button Classes="ghost" Foreground="#D9DDF0" AutomationProperties.Name="Export workspace JSON" Content="Export" Command="{Binding ExportCommand}" />
-              <Button Classes="ghost" Foreground="#D9DDF0" AutomationProperties.Name="Export CSV worklog" Content="CSV" Command="{Binding ExportCsvCommand}" />
-              <Button Classes="ghost" Foreground="#D9DDF0" AutomationProperties.Name="Restore latest backup" Content="Restore" Command="{Binding RestoreCommand}" />
+              <Button Classes="ghost sidebar-action" AutomationProperties.Name="Create verified backup" Content="Backup" Command="{Binding BackupCommand}" />
+              <Button Classes="ghost sidebar-action" AutomationProperties.Name="Export workspace JSON" Content="Export" Command="{Binding ExportCommand}" />
+              <Button Classes="ghost sidebar-action" AutomationProperties.Name="Export CSV worklog" Content="CSV" Command="{Binding ExportCsvCommand}" />
+              <Button Classes="ghost sidebar-action" AutomationProperties.Name="Restore latest backup" Content="Restore" Command="{Binding RestoreCommand}" />
             </WrapPanel>
           </StackPanel>
         </Border>
