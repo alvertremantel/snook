@@ -24,6 +24,7 @@
           <TextBlock Text="WORKSPACE" Classes="eyebrow" Foreground="#66708A" Margin="14,0,0,10" />
           <Button Classes="nav" Classes.selected="{Binding IsTodayVisible}" AutomationProperties.Name="Today" Content="⌂   Today" Command="{Binding SelectSectionCommand}" CommandParameter="Today" />
           <Button Classes="nav" Classes.selected="{Binding IsTasksVisible}" AutomationProperties.Name="Tasks" Content="▣   Tasks" Command="{Binding SelectSectionCommand}" CommandParameter="Tasks" />
+          <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Content="◷   Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker" />
           <Button Classes="nav" Classes.selected="{Binding IsCalendarVisible}" AutomationProperties.Name="Calendar" Content="□   Calendar" Command="{Binding SelectSectionCommand}" CommandParameter="Calendar" />
           <Button Classes="nav" Classes.selected="{Binding IsHistoryVisible}" AutomationProperties.Name="History" Content="▤   History" Command="{Binding SelectSectionCommand}" CommandParameter="History" />
           <Button Classes="nav" Classes.selected="{Binding IsSummaryVisible}" AutomationProperties.Name="Summary" Content="⌁   Summary" Command="{Binding SelectSectionCommand}" CommandParameter="Summary" />
@@ -123,15 +124,14 @@
           <Grid ColumnDefinitions="1.15*,*" ColumnSpacing="22">
             <Border Classes="card">
               <StackPanel Spacing="16">
-                <Grid ColumnDefinitions="*,Auto">
-                  <StackPanel Spacing="4">
-                    <TextBlock Text="CURRENTLY TRACKING" Classes="eyebrow" />
-                    <TextBlock Text="One thing at a time." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  </StackPanel>
-                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                    <Button Classes="ghost" AutomationProperties.Name="Add thirty minutes of manual time" Content="Add 30m" Command="{Binding QuickManualTimeCommand}" />
-                    <Button Classes="primary" AutomationProperties.Name="Start focus timer" Content="＋  Start focus" Command="{Binding StartFocusCommand}" />
-                  </StackPanel>
+                <StackPanel Spacing="4">
+                  <TextBlock Text="CURRENTLY TRACKING" Classes="eyebrow" />
+                  <TextBlock Text="One thing at a time." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                  <Button Classes="ghost" AutomationProperties.Name="Add thirty minutes of manual time" Content="Add 30m" Command="{Binding QuickManualTimeCommand}" />
+                  <ComboBox Grid.Column="1" AutomationProperties.Name="Dashboard activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding SelectedTrackingActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose activity" />
+                  <Button Grid.Column="2" Classes="primary" AutomationProperties.Name="Start or switch activity" Content="Start / switch" Command="{Binding StartSelectedActivityCommand}" />
                 </Grid>
                 <Expander Header="Add manual time" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                   <StackPanel Spacing="8">
@@ -173,7 +173,7 @@
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
                 <Border Background="#FAFAFC" CornerRadius="10" Padding="12" IsVisible="{Binding HasNoActiveSessions}">
-                  <TextBlock Text="Ready when you are. Start a focus timer to make room for your next task." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  <TextBlock Text="Ready when you are. Choose an activity above, or start a task below." Classes="muted" FontSize="12" TextWrapping="Wrap" />
                 </Border>
               </StackPanel>
             </Border>
@@ -284,8 +284,32 @@
                   <CheckBox Content="Show archived" IsChecked="{Binding ShowArchived, Mode=TwoWay}" />
                   <CheckBox Content="Show deleted" IsChecked="{Binding ShowDeleted, Mode=TwoWay}" />
                 </StackPanel>
-              </Grid>
-              <Border Classes="card" Background="#FAFAFC" IsVisible="{Binding HasSelectedTaskDetails}" Padding="14">
+               </Grid>
+               <Border Background="#F8F8FE" CornerRadius="12" Padding="16">
+                 <StackPanel Spacing="12">
+                   <Grid ColumnDefinitions="*,Auto">
+                     <StackPanel Spacing="3">
+                       <TextBlock Text="ADD TO YOUR WORKSPACE" Classes="eyebrow" />
+                       <TextBlock Text="Capture a task here, or make the board and project it needs first." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                     </StackPanel>
+                   </Grid>
+                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                     <TextBox AutomationProperties.Name="Tasks screen new board name" Text="{Binding NewBoardName, Mode=TwoWay}" PlaceholderText="New board name" Padding="9" />
+                     <Button Grid.Column="1" Classes="ghost" AutomationProperties.Name="Create board from Tasks" Content="Add board" Command="{Binding CreateBoardCommand}" />
+                   </Grid>
+                   <Grid ColumnDefinitions="200,*,Auto" ColumnSpacing="8">
+                     <ComboBox AutomationProperties.Name="Tasks screen project board" ItemsSource="{Binding Boards}" SelectedValue="{Binding SelectedBoardId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Board" Padding="9" />
+                     <TextBox Grid.Column="1" AutomationProperties.Name="Tasks screen new project name" Text="{Binding NewProjectName, Mode=TwoWay}" PlaceholderText="New project name" Padding="9" />
+                     <Button Grid.Column="2" Classes="ghost" AutomationProperties.Name="Create project from Tasks" Content="Add project" Command="{Binding CreateProjectCommand}" />
+                   </Grid>
+                   <Grid ColumnDefinitions="*,240,Auto" ColumnSpacing="8">
+                     <TextBox AutomationProperties.Name="Tasks screen new task title" Text="{Binding TaskTitle, Mode=TwoWay}" PlaceholderText="What needs doing?" Padding="9" />
+                     <ComboBox Grid.Column="1" AutomationProperties.Name="Tasks screen task project" ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Project" Padding="9" />
+                     <Button Grid.Column="2" Classes="primary" AutomationProperties.Name="Create task from Tasks" Content="Add task" Command="{Binding CreateTaskCommand}" />
+                   </Grid>
+                 </StackPanel>
+               </Border>
+               <Border Classes="card" Background="#FAFAFC" IsVisible="{Binding HasSelectedTaskDetails}" Padding="14">
                 <StackPanel Spacing="8" DataContext="{Binding SelectedTaskDetails}">
                   <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                     <TextBlock Text="{Binding Task.Title}" Foreground="#252A42" FontWeight="SemiBold" />
@@ -380,6 +404,135 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
               <TextBlock Text="No tasks match this view." Classes="muted" IsVisible="{Binding HasNoTasks}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Spacing="22" IsVisible="{Binding IsTimeTrackerVisible}">
+          <Grid ColumnDefinitions="1.1*,*" ColumnSpacing="22">
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="ACTIVE TIMERS" Classes="eyebrow" />
+                  <TextBlock Text="Switch focus without losing your place." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                  <TextBlock Text="Starting a focus activity pauses the current one unless concurrent foreground timers are enabled." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                </StackPanel>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <ComboBox AutomationProperties.Name="Time Tracker activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding SelectedTrackingActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose an activity" />
+                  <Button Grid.Column="1" Classes="primary" AutomationProperties.Name="Start selected activity" Content="Start / switch" Command="{Binding StartSelectedActivityCommand}" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding ActiveSessions}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Background="#F6F6FF" CornerRadius="12" Padding="14" Margin="0,0,0,8">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                          <StackPanel Spacing="3">
+                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Foreground="#292E49" />
+                            <TextBlock Classes="muted" FontSize="11"><Run Text="{Binding LaneLabel}" /> · <Run Text="{Binding StateLabel}" /> · <Run Text="{Binding ElapsedLabel}" /></TextBlock>
+                          </StackPanel>
+                          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <Button Classes="ghost" Content="{Binding ToggleLabel}" Command="{Binding ToggleCommand}" />
+                            <Button Classes="icon" Content="■" Command="{Binding StopCommand}" ToolTip.Tip="Stop timer" />
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="No active timers. Start any activity to begin." Classes="muted" IsVisible="{Binding HasNoActiveSessions}" />
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="1" Classes="card">
+              <StackPanel Spacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="MANUAL TIME" Classes="eyebrow" />
+                  <TextBlock Text="Record work that already happened." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <ComboBox AutomationProperties.Name="Tracker manual task" ItemsSource="{Binding ManualTaskOptions}" SelectedValue="{Binding ManualTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Task (optional)" />
+                <ComboBox AutomationProperties.Name="Tracker manual activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding ManualActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity (optional)" />
+                <TextBox AutomationProperties.Name="Tracker manual start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" />
+                <TextBox AutomationProperties.Name="Tracker manual end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (UTC)" />
+                <TextBox AutomationProperties.Name="Tracker manual notes" Text="{Binding ManualNotes, Mode=TwoWay}" PlaceholderText="Notes (optional)" />
+                <Button Classes="primary" Content="Save manual time" HorizontalAlignment="Left" Command="{Binding ManualTimeCommand}" />
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <StackPanel Spacing="4">
+                <TextBlock Text="NEW ACTIVITY" Classes="eyebrow" />
+                <TextBlock Text="Track routines and work that do not need a task." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <Grid ColumnDefinitions="220,*,170,200,Auto" ColumnSpacing="8">
+                <TextBox AutomationProperties.Name="New standalone activity name" Text="{Binding NewActivityName, Mode=TwoWay}" PlaceholderText="Activity name" />
+                <TextBox Grid.Column="1" AutomationProperties.Name="New standalone activity description" Text="{Binding NewActivityDescription, Mode=TwoWay}" PlaceholderText="Description (optional)" />
+                <ComboBox Grid.Column="2" AutomationProperties.Name="New activity lane" ItemsSource="{Binding SessionLaneOptions}" SelectedValue="{Binding NewActivityLane, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" />
+                <ComboBox Grid.Column="3" AutomationProperties.Name="New activity group" ItemsSource="{Binding ActivityGroups}" SelectedValue="{Binding NewActivityGroupId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Group (optional)" />
+                <Button Grid.Column="4" Classes="primary" AutomationProperties.Name="Create standalone activity" Content="Add activity" Command="{Binding CreateActivityCommand}" />
+              </Grid>
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox AutomationProperties.Name="New tracker activity group" Text="{Binding NewActivityGroupName, Mode=TwoWay}" PlaceholderText="New activity group" />
+                <Button Grid.Column="1" Classes="ghost" Content="Add group" Command="{Binding CreateActivityGroupCommand}" />
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <StackPanel Spacing="4">
+                <TextBlock Text="ACTIVITIES" Classes="eyebrow" />
+                <TextBlock Text="Start, organize, and maintain every trackable activity." Foreground="#20263D" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <ItemsControl ItemsSource="{Binding ActivityAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border BorderBrush="#EEF0F4" BorderThickness="0,0,0,1" Padding="0,10">
+                      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="8">
+                        <StackPanel Spacing="3">
+                          <TextBlock Text="{Binding DraftName}" Foreground="#252A42" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding ActivityContextLabel}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Classes="primary" Content="Start" Command="{Binding StartCommand}" />
+                        <Expander Grid.Row="1" Grid.ColumnSpan="2" Header="Manage" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                          <WrapPanel Classes="editor" Orientation="Horizontal" MaxWidth="850">
+                            <StackPanel Spacing="5"><TextBlock Text="Name" Classes="muted" FontSize="11" /><TextBox Text="{Binding DraftName, Mode=TwoWay}" Width="220" /></StackPanel>
+                            <StackPanel Spacing="5"><TextBlock Text="Description" Classes="muted" FontSize="11" /><TextBox Text="{Binding DraftDescription, Mode=TwoWay}" Width="280" /></StackPanel>
+                            <StackPanel Spacing="5"><TextBlock Text="Lane" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding LaneOptions}" SelectedValue="{Binding DraftLane, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" Width="150" /></StackPanel>
+                            <StackPanel Spacing="5"><TextBlock Text="Group" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding GroupOptions}" SelectedValue="{Binding GroupId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="No group" Width="180" /></StackPanel>
+                            <Button Classes="ghost" Content="Save" Command="{Binding SaveCommand}" VerticalAlignment="Bottom" />
+                            <StackPanel Spacing="5"><TextBlock Text="Tag" Classes="muted" FontSize="11" /><TextBox Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Add tag" Width="160" /></StackPanel>
+                            <Button Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" VerticalAlignment="Bottom" />
+                            <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" VerticalAlignment="Bottom" />
+                            <Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" VerticalAlignment="Bottom" />
+                          </WrapPanel>
+                        </Expander>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="Create an activity above to start tracking standalone work." Classes="muted" IsVisible="{Binding HasNoActivities}" />
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="ACTIVITY GROUPS" Classes="eyebrow" />
+              <ItemsControl ItemsSource="{Binding ActivityGroupAdminRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" />
+                      <Button Grid.Column="1" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
+                      <Button Grid.Column="2" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
+                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
+                      <Button Grid.Column="4" Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
             </StackPanel>
           </Border>
         </StackPanel>

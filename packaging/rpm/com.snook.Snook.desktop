@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Snook
+Comment=Local-first task and time system
+Exec=snook
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true

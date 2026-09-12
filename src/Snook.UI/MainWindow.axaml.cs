@@ -44,7 +44,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(section => section.Length > 0)
             .ToArray()
-            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "history", "history-details", "summary", "settings", "settings-bottom"];
+            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "tracker", "tracker-details-bottom", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "history", "history-details", "summary", "settings", "settings-bottom"];
 
         foreach (var section in requestedSections)
         {
@@ -53,6 +53,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             {
                 "today" => "Today",
                 "tasks" => "Tasks",
+                "tracker" => "Time Tracker",
                 "calendar" => "Calendar",
                 "history" => "History",
                 "summary" => "Summary",
@@ -68,7 +69,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render);
             UpdateLayout();
             foreach (var expander in this.GetVisualDescendants().OfType<Expander>().ToArray())
-                expander.IsExpanded = section.EndsWith("-details", StringComparison.Ordinal);
+                expander.IsExpanded = section.Contains("-details", StringComparison.Ordinal);
             PageScroll.Offset = default;
             UpdateLayout();
             if (section.EndsWith("-bottom", StringComparison.Ordinal))

@@ -640,7 +640,7 @@ public sealed class SnookBackend : IBackendClient
 
     public async Task<TrackingSession> StopSessionAsync(Guid sessionId, string? notes, OperationRequest request, CancellationToken cancellationToken = default)
     {
-        var session = await _store.TransitionSessionAsync(sessionId, SessionState.Stopped, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), notes, cancellationToken);
+        var session = await _store.TransitionSessionAsync(sessionId, SessionState.Stopped, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), notes, cancellationToken: cancellationToken);
         await PublishAsync(request.OperationId, "session", session.Id, "stopped", session.Revision, cancellationToken);
         return session;
     }
@@ -697,7 +697,16 @@ public sealed class SnookBackend : IBackendClient
 
     private async Task<TrackingSession> TransitionAsync(Guid sessionId, SessionState target, OperationRequest request, CancellationToken cancellationToken)
     {
-        var session = await _store.TransitionSessionAsync(sessionId, target, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken: cancellationToken);
+        var pauseOtherForeground = target == SessionState.Running
+            && !(_allowConcurrentForegroundOverride ?? (await _store.GetSettingsAsync(cancellationToken)).AllowConcurrentForeground);
+        var session = await _store.TransitionSessionAsync(
+            sessionId,
+            target,
+            RequireRevision(request),
+            request.OperationId,
+            _clock.GetUtcNow(),
+            pauseOtherForeground: pauseOtherForeground,
+            cancellationToken: cancellationToken);
         await PublishAsync(request.OperationId, "session", session.Id, target.ToString().ToLowerInvariant(), session.Revision, cancellationToken);
         return session;
     }

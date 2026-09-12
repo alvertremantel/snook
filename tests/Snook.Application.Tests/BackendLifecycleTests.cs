@@ -45,6 +45,46 @@ public sealed class BackendLifecycleTests
     }
 
     [Fact]
+    public async Task StandaloneActivitiesCanSwitchForegroundTimersWithoutTasks()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-activity-switch-test-");
+        var databasePath = Path.Combine(directory.FullName, "workspace.db");
+        await using var store = new SqliteStore(databasePath);
+        await using var backend = new SnookBackend(store);
+        await backend.InitializeAsync();
+
+        var writing = await backend.CreateActivityAsync("Writing", "Draft without a task");
+        var reading = await backend.CreateActivityAsync("Reading", "Review references");
+        var first = await backend.StartSessionAsync(null, writing.Id, SessionLane.Foreground, Request());
+        var second = await backend.StartSessionAsync(null, reading.Id, SessionLane.Foreground, Request());
+
+        var active = (await backend.GetBootstrapAsync()).Today.ActiveSessions;
+        var pausedWriting = Assert.Single(active, item => item.Session.Id == first.Id);
+        var runningReading = Assert.Single(active, item => item.Session.Id == second.Id);
+        Assert.Equal(SessionState.Paused, pausedWriting.Session.State);
+        Assert.Equal(SessionState.Running, runningReading.Session.State);
+        Assert.Null(pausedWriting.Session.TaskId);
+        Assert.Null(runningReading.Session.TaskId);
+        Assert.Equal("Writing", pausedWriting.ActivityName);
+        Assert.Equal("Reading", runningReading.ActivityName);
+
+        await backend.ResumeSessionAsync(pausedWriting.Session.Id, Request(pausedWriting.Session.Revision));
+        var switchedBack = (await backend.GetBootstrapAsync()).Today.ActiveSessions;
+        Assert.Equal(SessionState.Running, Assert.Single(switchedBack, item => item.Session.Id == first.Id).Session.State);
+        var pausedReading = Assert.Single(switchedBack, item => item.Session.Id == second.Id);
+        Assert.Equal(SessionState.Paused, pausedReading.Session.State);
+        Assert.Equal(2, switchedBack.Count);
+
+        var settings = await backend.GetSettingsAsync();
+        await backend.UpdateSettingsAsync(settings with { AllowConcurrentForeground = true }, Request(settings.Revision));
+        await backend.ResumeSessionAsync(pausedReading.Session.Id, Request(pausedReading.Session.Revision));
+        var concurrent = (await backend.GetBootstrapAsync()).Today.ActiveSessions;
+        Assert.All(concurrent, item => Assert.Equal(SessionState.Running, item.Session.State));
+
+        Directory.Delete(directory.FullName, recursive: true);
+    }
+
+    [Fact]
     public async Task RetryingCreateWithSameOperationIdReturnsTheSameTask()
     {
         var directory = Directory.CreateTempSubdirectory("snook-test-");

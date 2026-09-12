@@ -47,6 +47,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private string _newProjectName = string.Empty;
     private string _newBoardName = string.Empty;
     private string _newActivityName = string.Empty;
+    private string _newActivityDescription = string.Empty;
+    private SessionLane _newActivityLane = SessionLane.Foreground;
+    private Guid _newActivityGroupId;
+    private Guid _selectedTrackingActivityId;
     private string _newEventTitle = string.Empty;
     private string _newEventDescription = string.Empty;
     private string _newEventLocation = string.Empty;
@@ -92,6 +96,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         CreateProjectCommand = new AsyncCommand(_ => CreateProjectAsync(), _ => !string.IsNullOrWhiteSpace(NewProjectName) && SelectedBoardId != Guid.Empty);
         CreateBoardCommand = new AsyncCommand(_ => CreateBoardAsync(), _ => !string.IsNullOrWhiteSpace(NewBoardName));
         CreateActivityCommand = new AsyncCommand(_ => CreateActivityAsync(), _ => !string.IsNullOrWhiteSpace(NewActivityName));
+        StartSelectedActivityCommand = new AsyncCommand(_ => StartSelectedActivityAsync(), _ => SelectedTrackingActivityId != Guid.Empty);
         CreateActivityGroupCommand = new AsyncCommand(_ => CreateActivityGroupAsync(), _ => !string.IsNullOrWhiteSpace(NewActivityGroupName));
         CreateCalendarEventCommand = new AsyncCommand(_ => CreateCalendarEventAsync(), _ => !string.IsNullOrWhiteSpace(NewEventTitle) && SelectedCalendarId != Guid.Empty);
         CreateCalendarCommand = new AsyncCommand(_ => CreateCalendarAsync(), _ => !string.IsNullOrWhiteSpace(NewCalendarName));
@@ -144,6 +149,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ICommand CreateProjectCommand { get; }
     public ICommand CreateBoardCommand { get; }
     public ICommand CreateActivityCommand { get; }
+    public ICommand StartSelectedActivityCommand { get; }
     public ICommand CreateActivityGroupCommand { get; }
     public ICommand CreateCalendarEventCommand { get; }
     public ICommand CreateCalendarCommand { get; }
@@ -155,6 +161,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string SectionSubtitle { get => _sectionSubtitle; private set => SetField(ref _sectionSubtitle, value); }
     public bool IsTodayVisible => CurrentSection == "Today";
     public bool IsTasksVisible => CurrentSection == "Tasks";
+    public bool IsTimeTrackerVisible => CurrentSection == "Time Tracker";
     public bool IsTaskListVisible => IsTasksVisible && TaskViewMode == "List";
     public bool IsTaskBoardVisible => IsTasksVisible && TaskViewMode == "Board";
     public bool IsHistoryVisible => CurrentSection == "History";
@@ -207,6 +214,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string TrackedToday { get => _trackedToday; private set => SetField(ref _trackedToday, value); }
     public int OpenTaskCount { get => _openTaskCount; private set => SetField(ref _openTaskCount, value); }
     public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
+    public bool HasNoActivities => ActivityAdminRows.Count == 0;
     public bool HasNoTodayRecentRows { get => _hasNoTodayRecentRows; private set => SetField(ref _hasNoTodayRecentRows, value); }
     public bool HasNoTodayUpcomingRows { get => _hasNoTodayUpcomingRows; private set => SetField(ref _hasNoTodayUpcomingRows, value); }
     public bool HasDeletedCalendarEvents { get => _hasDeletedCalendarEvents; private set => SetField(ref _hasDeletedCalendarEvents, value); }
@@ -217,6 +225,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string NewProjectName { get => _newProjectName; set { if (SetField(ref _newProjectName, value)) ((AsyncCommand)CreateProjectCommand).RaiseCanExecuteChanged(); } }
     public string NewBoardName { get => _newBoardName; set { if (SetField(ref _newBoardName, value)) ((AsyncCommand)CreateBoardCommand).RaiseCanExecuteChanged(); } }
     public string NewActivityName { get => _newActivityName; set { if (SetField(ref _newActivityName, value)) ((AsyncCommand)CreateActivityCommand).RaiseCanExecuteChanged(); } }
+    public string NewActivityDescription { get => _newActivityDescription; set => SetField(ref _newActivityDescription, value); }
+    public SessionLane NewActivityLane { get => _newActivityLane; set => SetField(ref _newActivityLane, value); }
+    public Guid NewActivityGroupId { get => _newActivityGroupId; set => SetField(ref _newActivityGroupId, value); }
+    public Guid SelectedTrackingActivityId { get => _selectedTrackingActivityId; set { if (SetField(ref _selectedTrackingActivityId, value)) ((AsyncCommand)StartSelectedActivityCommand).RaiseCanExecuteChanged(); } }
+    public IReadOnlyList<SessionLaneOption> SessionLaneOptions { get; } =
+    [
+        new(SessionLane.Foreground, "Focus"),
+        new(SessionLane.Background, "Background")
+    ];
     public string NewActivityGroupName { get => _newActivityGroupName; set { if (SetField(ref _newActivityGroupName, value)) ((AsyncCommand)CreateActivityGroupCommand).RaiseCanExecuteChanged(); } }
     public string NewEventTitle { get => _newEventTitle; set { if (SetField(ref _newEventTitle, value)) ((AsyncCommand)CreateCalendarEventCommand).RaiseCanExecuteChanged(); } }
     public string NewEventDescription { get => _newEventDescription; set => SetField(ref _newEventDescription, value); }
@@ -284,6 +301,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             {
                 Activities.Add(new ActivityOption(activity.Id, activity.Name, activity.DefaultLane));
             }
+            if (!Activities.Any(activity => activity.Id == SelectedTrackingActivityId))
+            {
+                SelectedTrackingActivityId = Activities.Count == 0 ? Guid.Empty : Activities[0].Id;
+            }
 
             ManualTaskOptions.Clear();
             foreach (var task in await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true))
@@ -292,6 +313,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             ActivityGroups.Clear();
+            ActivityGroups.Add(new ActivityGroupOption(Guid.Empty, "No group"));
             foreach (var group in (bootstrap.ActivityGroups ?? []).Where(item => item.DeletedAtUtc is null))
             {
                 ActivityGroups.Add(new ActivityGroupOption(group.Id, group.Name));
@@ -337,8 +359,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             ActivityAdminRows.Clear();
             foreach (var activity in bootstrap.Activities.Concat(bootstrap.DeletedItems?.Activities ?? []))
             {
-                ActivityAdminRows.Add(new ActivityAdminRowViewModel(activity, ActivityGroups, SaveActivityAsync, ToggleActivityArchiveAsync, DeleteActivityAsync, AddActivityTagAsync));
+                ActivityAdminRows.Add(new ActivityAdminRowViewModel(activity, ActivityGroups, SaveActivityAsync, ToggleActivityArchiveAsync, DeleteActivityAsync, AddActivityTagAsync, StartActivityAsync));
             }
+            RaisePropertyChanged(nameof(HasNoActivities));
 
             if (!Projects.Any(project => project.Id == SelectedProjectId))
             {
@@ -408,9 +431,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.CreateProjectAsync(SelectedBoardId, NewProjectName.Trim());
+            var project = await _backend.CreateProjectAsync(SelectedBoardId, NewProjectName.Trim());
             NewProjectName = string.Empty;
             await RefreshAsync();
+            SelectedProjectId = project.Id;
         }
         catch (Exception exception)
         {
@@ -422,9 +446,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.CreateBoardAsync(NewBoardName.Trim());
+            var board = await _backend.CreateBoardAsync(NewBoardName.Trim());
             NewBoardName = string.Empty;
             await RefreshAsync();
+            SelectedBoardId = board.Id;
         }
         catch (Exception exception)
         {
@@ -436,9 +461,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.CreateActivityAsync(NewActivityName.Trim());
+            var activity = await _backend.CreateActivityAsync(
+                NewActivityName.Trim(),
+                NewActivityDescription.Trim(),
+                NewActivityLane,
+                NewActivityGroupId == Guid.Empty ? null : NewActivityGroupId);
             NewActivityName = string.Empty;
+            NewActivityDescription = string.Empty;
             await RefreshAsync();
+            SelectedTrackingActivityId = activity.Id;
         }
         catch (Exception exception)
         {
@@ -763,7 +794,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.UpdateActivityAsync(row.Activity.Id, new ActivityUpdate(row.DraftName, row.Activity.Description, row.Activity.DefaultLane, row.GroupId == Guid.Empty ? null : row.GroupId), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Activity.Revision));
+            await _backend.UpdateActivityAsync(row.Activity.Id, new ActivityUpdate(row.DraftName, row.DraftDescription, row.DraftLane, row.GroupId == Guid.Empty ? null : row.GroupId), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Activity.Revision));
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -845,6 +876,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Summary" => "Summary",
             "Calendar" => "Calendar",
             "Tasks" => "Tasks",
+            "Time Tracker" => "Time Tracker",
             "Settings" => "Settings",
             _ => "Today"
         };
@@ -854,6 +886,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "History" => "Your work, remembered",
             "Summary" => "See where your time went",
             "Tasks" => "Make the next step visible",
+            "Time Tracker" => "Track the work that matters",
             "Calendar" => "Make room for the work",
             "Settings" => "Shape the workspace",
             _ => "Welcome back"
@@ -863,12 +896,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "History" => "Revisit your sessions and keep your time accurate.",
             "Summary" => "Attributed duration and wall-clock coverage stay distinct.",
             "Tasks" => "A clear place for everything you want to do.",
+            "Time Tracker" => "Start tasks or standalone activities, then switch without losing your place.",
             "Calendar" => "Planned blocks stay separate from deadlines.",
             "Settings" => "Projects, boards, and activities are saved locally.",
             _ => "A little progress, thoughtfully recorded."
         };
         RaisePropertyChanged(nameof(IsTodayVisible));
         RaisePropertyChanged(nameof(IsTasksVisible));
+        RaisePropertyChanged(nameof(IsTimeTrackerVisible));
         RaisePropertyChanged(nameof(IsTaskListVisible));
         RaisePropertyChanged(nameof(IsTaskBoardVisible));
         RaisePropertyChanged(nameof(IsHistoryVisible));
@@ -1504,6 +1539,39 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private Task StartTaskAsync(TaskRowViewModel task) => StartTimerAsync(task.Task.Id, task.Task.DefaultActivityId, SessionLane.Foreground);
 
+    private async Task StartSelectedActivityAsync()
+    {
+        var activity = Activities.FirstOrDefault(item => item.Id == SelectedTrackingActivityId);
+        if (activity is null)
+        {
+            StatusMessage = "Choose an activity before starting the timer.";
+            return;
+        }
+
+        await StartOrSwitchActivityAsync(activity.Id, activity.DefaultLane);
+    }
+
+    private Task StartActivityAsync(ActivityAdminRowViewModel row)
+        => StartOrSwitchActivityAsync(row.Activity.Id, row.Activity.DefaultLane);
+
+    private async Task StartOrSwitchActivityAsync(Guid activityId, SessionLane lane)
+    {
+        var existing = ActiveSessions.FirstOrDefault(item => item.Session.TaskId is null && item.Session.ActivityId == activityId);
+        if (existing?.Session.State == SessionState.Running)
+        {
+            StatusMessage = $"{existing.Label} is already being tracked.";
+            return;
+        }
+
+        if (existing is not null)
+        {
+            await PauseResumeAsync(existing);
+            return;
+        }
+
+        await StartTimerAsync(null, activityId, lane);
+    }
+
     private async Task StartTimerAsync(Guid? taskId, Guid? activityId, SessionLane lane)
     {
         try
@@ -1800,6 +1868,7 @@ public sealed record CalendarOption(Guid Id, string Name);
 public sealed record TaskOption(Guid Id, string Name);
 public sealed record PriorityOption(Priority Value, string Name);
 public sealed record TaskSortOption(string Value, string Name);
+public sealed record SessionLaneOption(SessionLane Value, string Name);
 
 public sealed class TaskDetailsPanelViewModel
 {
@@ -1935,34 +2004,49 @@ public sealed class ActivityAdminRowViewModel
     private readonly Func<ActivityAdminRowViewModel, Task> _toggleArchive;
     private readonly Func<ActivityAdminRowViewModel, Task> _delete;
     private readonly Func<ActivityAdminRowViewModel, Task> _addTag;
+    private readonly Func<ActivityAdminRowViewModel, Task> _start;
 
-    public ActivityAdminRowViewModel(Activity activity, IReadOnlyList<ActivityGroupOption> groups, Func<ActivityAdminRowViewModel, Task> save, Func<ActivityAdminRowViewModel, Task> toggleArchive, Func<ActivityAdminRowViewModel, Task> delete, Func<ActivityAdminRowViewModel, Task> addTag)
+    public ActivityAdminRowViewModel(Activity activity, IReadOnlyList<ActivityGroupOption> groups, Func<ActivityAdminRowViewModel, Task> save, Func<ActivityAdminRowViewModel, Task> toggleArchive, Func<ActivityAdminRowViewModel, Task> delete, Func<ActivityAdminRowViewModel, Task> addTag, Func<ActivityAdminRowViewModel, Task> start)
     {
         Activity = activity;
         GroupOptions = groups;
         GroupId = activity.GroupId ?? Guid.Empty;
         DraftName = activity.Name;
+        DraftDescription = activity.Description;
+        DraftLane = activity.DefaultLane;
         _save = save;
         _toggleArchive = toggleArchive;
         _delete = delete;
         _addTag = addTag;
+        _start = start;
         SaveCommand = new AsyncCommand(_ => _save(this));
         ToggleArchiveCommand = new AsyncCommand(_ => _toggleArchive(this));
         DeleteCommand = new AsyncCommand(_ => _delete(this));
         AddTagCommand = new AsyncCommand(_ => _addTag(this));
+        StartCommand = new AsyncCommand(_ => _start(this), _ => Activity.ArchivedAtUtc is null && Activity.DeletedAtUtc is null);
     }
 
     public Activity Activity { get; }
     public IReadOnlyList<ActivityGroupOption> GroupOptions { get; }
     public Guid GroupId { get; set; }
     public string DraftName { get; set; }
+    public string DraftDescription { get; set; }
+    public SessionLane DraftLane { get; set; }
+    public IReadOnlyList<SessionLaneOption> LaneOptions { get; } =
+    [
+        new(SessionLane.Foreground, "Focus"),
+        new(SessionLane.Background, "Background")
+    ];
     public string TagText { get; set; } = string.Empty;
+    public string LaneLabel => DraftLane == SessionLane.Background ? "Background" : "Focus";
+    public string ActivityContextLabel => string.IsNullOrWhiteSpace(DraftDescription) ? LaneLabel : $"{LaneLabel} · {DraftDescription}";
     public string ArchiveLabel => Activity.ArchivedAtUtc is null ? "Archive" : "Restore";
     public string DeleteLabel => Activity.DeletedAtUtc is null ? "Delete" : "Restore deleted";
     public ICommand SaveCommand { get; }
     public ICommand ToggleArchiveCommand { get; }
     public ICommand DeleteCommand { get; }
     public ICommand AddTagCommand { get; }
+    public ICommand StartCommand { get; }
 }
 
 public sealed class ProjectTaskGroupViewModel

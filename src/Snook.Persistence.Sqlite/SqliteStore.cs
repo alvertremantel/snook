@@ -1406,6 +1406,7 @@ public sealed class SqliteStore : IAsyncDisposable
         Guid operationId,
         DateTimeOffset nowUtc,
         string? notes = null,
+        bool pauseOtherForeground = false,
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
@@ -1449,6 +1450,10 @@ public sealed class SqliteStore : IAsyncDisposable
 
             if (targetState == SessionState.Running)
             {
+                if (session.Lane == SessionLane.Foreground && pauseOtherForeground)
+                {
+                    await PauseRunningForegroundAsync(connection, transaction, nowUtc, cancellationToken);
+                }
                 await InsertIntervalAsync(connection, transaction, sessionId, new TimeInterval(Guid.NewGuid(), nowUtc, null, "timer"), cancellationToken);
             }
 
