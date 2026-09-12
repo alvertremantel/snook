@@ -141,8 +141,8 @@
                       <ComboBox Grid.Column="1" AutomationProperties.Name="Manual time activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding ManualActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity (optional)" />
                     </Grid>
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                      <TextBox AutomationProperties.Name="Manual time start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" />
-                      <TextBox Grid.Column="1" AutomationProperties.Name="Manual time end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (UTC)" />
+                      <TextBox AutomationProperties.Name="Manual time start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (local, YYYY-MM-DD HH:MM)" />
+                      <TextBox Grid.Column="1" AutomationProperties.Name="Manual time end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (local, YYYY-MM-DD HH:MM)" />
                     </Grid>
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                       <TextBox AutomationProperties.Name="Manual time notes" Text="{Binding ManualNotes, Mode=TwoWay}" PlaceholderText="Notes (optional)" />
@@ -451,8 +451,8 @@
                 </StackPanel>
                 <ComboBox AutomationProperties.Name="Tracker manual task" ItemsSource="{Binding ManualTaskOptions}" SelectedValue="{Binding ManualTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Task (optional)" />
                 <ComboBox AutomationProperties.Name="Tracker manual activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding ManualActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity (optional)" />
-                <TextBox AutomationProperties.Name="Tracker manual start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" />
-                <TextBox AutomationProperties.Name="Tracker manual end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (UTC)" />
+                <TextBox AutomationProperties.Name="Tracker manual start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (local, YYYY-MM-DD HH:MM)" />
+                <TextBox AutomationProperties.Name="Tracker manual end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (local, YYYY-MM-DD HH:MM)" />
                 <TextBox AutomationProperties.Name="Tracker manual notes" Text="{Binding ManualNotes, Mode=TwoWay}" PlaceholderText="Notes (optional)" />
                 <Button Classes="primary" Content="Save manual time" HorizontalAlignment="Left" Command="{Binding ManualTimeCommand}" />
               </StackPanel>
@@ -563,8 +563,8 @@
                           <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Task" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding TaskOptions}" SelectedValue="{Binding SelectedTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Task" Width="360" /></StackPanel>
                           <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Activity" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding ActivityOptions}" SelectedValue="{Binding SelectedActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity" Width="200" /></StackPanel>
                           <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Notes" Classes="muted" FontSize="11" /><TextBox Text="{Binding NotesEditor, Mode=TwoWay}" PlaceholderText="Notes" Width="360" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (UTC)" Classes="muted" FontSize="11" /><TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" Width="300" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (UTC)" Classes="muted" FontSize="11" /><TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="End (UTC)" Width="300" /></StackPanel>
+                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
+                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
                           <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Correction reason" Classes="muted" FontSize="11" /><TextBox Text="{Binding ReasonText, Mode=TwoWay}" PlaceholderText="Reason" Width="200" /></StackPanel>
                           <Button VerticalAlignment="Bottom" Margin="0,0,8,12" Classes="ghost" Content="Save correction" Command="{Binding CorrectCommand}" />
                         </WrapPanel>
@@ -634,8 +634,8 @@
                   <Grid RowDefinitions="Auto,Auto" RowSpacing="7">
                     <Grid ColumnDefinitions="*,200,200,Auto" ColumnSpacing="7">
                       <TextBox Text="{Binding NewEventTitle, Mode=TwoWay}" PlaceholderText="Event title" />
-                      <TextBox Grid.Column="1" Text="{Binding NewEventStart, Mode=TwoWay}" PlaceholderText="Start (UTC)" />
-                      <TextBox Grid.Column="2" Text="{Binding NewEventEnd, Mode=TwoWay}" PlaceholderText="End (UTC)" />
+                      <TextBox Grid.Column="1" Text="{Binding NewEventStart, Mode=TwoWay}" PlaceholderText="Start (local, YYYY-MM-DD HH:MM)" />
+                      <TextBox Grid.Column="2" Text="{Binding NewEventEnd, Mode=TwoWay}" PlaceholderText="End (local, YYYY-MM-DD HH:MM)" />
                       <Button Grid.Column="3" Classes="primary" Content="Add event" Command="{Binding CreateCalendarEventCommand}" />
                     </Grid>
                     <Grid Grid.Row="1" ColumnDefinitions="200,*,*,140,140,Auto" ColumnSpacing="7">
@@ -647,7 +647,7 @@
                       <CheckBox Grid.Column="5" Content="All day" IsChecked="{Binding NewEventAllDay, Mode=TwoWay}" VerticalAlignment="Center" />
                     </Grid>
                   </Grid>
-                  <TextBox Text="{Binding NewEventRecurrenceEnd, Mode=TwoWay}" PlaceholderText="Recurrence end (UTC, optional)" />
+                  <TextBox Text="{Binding NewEventRecurrenceEnd, Mode=TwoWay}" PlaceholderText="Recurrence end (local, optional)" />
                 </StackPanel>
               </Expander>
               <Border Background="#FAFAFC" CornerRadius="12" Padding="8" IsVisible="{Binding IsCalendarGridVisible}">
@@ -705,8 +705,8 @@
                         <Expander Grid.Row="1" Grid.ColumnSpan="3" Header="Edit planned block" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <WrapPanel Classes="editor">
                           <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Block title" Classes="muted" FontSize="11" /><TextBox Text="{Binding TitleEditor, Mode=TwoWay}" PlaceholderText="Title" Width="360" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (UTC)" Classes="muted" FontSize="11" /><TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="Start (UTC)" Width="300" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (UTC)" Classes="muted" FontSize="11" /><TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="End (UTC)" Width="300" /></StackPanel>
+                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
+                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
                           <Button VerticalAlignment="Bottom" Margin="0,0,8,12" Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
                           <Button VerticalAlignment="Bottom" Margin="0,0,8,12" Classes="ghost" Content="Save block" Command="{Binding UpdateCommand}" />
                         </WrapPanel>
@@ -729,8 +729,8 @@
                         <Expander Header="Edit event" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                           <WrapPanel Classes="editor">
                             <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Title" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event title" Text="{Binding TitleEditor, Mode=TwoWay}" Width="300" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (UTC)" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event start" Text="{Binding StartText, Mode=TwoWay}" Width="300" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (UTC)" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event end" Text="{Binding EndText, Mode=TwoWay}" Width="300" /></StackPanel>
+                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (local time)" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event start" Text="{Binding StartText, Mode=TwoWay}" Width="300" PlaceholderText="YYYY-MM-DD HH:MM" /></StackPanel>
+                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (local time)" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event end" Text="{Binding EndText, Mode=TwoWay}" Width="300" PlaceholderText="YYYY-MM-DD HH:MM" /></StackPanel>
                             <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Description" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event description" Text="{Binding DescriptionEditor, Mode=TwoWay}" Width="300" /></StackPanel>
                             <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Location" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event location" Text="{Binding LocationEditor, Mode=TwoWay}" Width="220" /></StackPanel>
                             <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Color" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event color" Text="{Binding ColorEditor, Mode=TwoWay}" Width="130" /></StackPanel>

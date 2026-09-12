@@ -12,6 +12,7 @@ namespace Snook.UI;
 
 public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
+    private const string LocalDateTimeFormat = "yyyy-MM-dd HH:mm";
     private readonly IBackendClient _backend;
     private readonly Timer _displayTimer;
     private bool _initialized;
@@ -65,8 +66,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private string _newActivityGroupName = string.Empty;
     private Guid? _manualTaskId;
     private Guid? _manualActivityId;
-    private string _manualStartText = DateTimeOffset.UtcNow.AddMinutes(-30).ToString("O", CultureInfo.InvariantCulture);
-    private string _manualEndText = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+    private string _manualStartText = FormatLocalDateTime(DateTimeOffset.UtcNow.AddMinutes(-30));
+    private string _manualEndText = FormatLocalDateTime(DateTimeOffset.UtcNow);
     private string _manualNotes = string.Empty;
     private bool _allowConcurrentForeground;
     private long _settingsRevision = 1;
@@ -1147,6 +1148,28 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private static DateTimeOffset LocalDateToUtc(DateTime date)
         => new DateTimeOffset(date, TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();
 
+    internal static string FormatLocalDateTime(DateTimeOffset instant)
+        => TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.Local).ToString(LocalDateTimeFormat, CultureInfo.InvariantCulture);
+
+    internal static bool TryParseLocalDateTime(string value, out DateTimeOffset instant)
+    {
+        if (DateTime.TryParseExact(value.Trim(), LocalDateTimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var local))
+        {
+            local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+            if (TimeZoneInfo.Local.IsInvalidTime(local))
+            {
+                instant = default;
+                return false;
+            }
+
+            instant = new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+            return true;
+        }
+
+        // Retain support for pasted ISO-8601 instants, including an explicit offset.
+        return DateTimeOffset.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out instant);
+    }
+
     private async Task PlanNextTaskAsync()
     {
         if (SelectedCalendarId == Guid.Empty)
@@ -1166,7 +1189,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             var start = DateTimeOffset.UtcNow.AddHours(1);
-            await _backend.CreateScheduleBlockAsync(SelectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, start.AddHours(1), TimeZoneInfo.Utc.Id);
+            await _backend.CreateScheduleBlockAsync(SelectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, start.AddHours(1), TimeZoneInfo.Local.Id);
             StatusMessage = "Planned one hour for your next task.";
             await LoadCalendarAsync(await _backend.GetBootstrapAsync());
         }
@@ -1208,8 +1231,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             return;
         }
 
-        if (!DateTimeOffset.TryParse(NewEventStart, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
-            || !DateTimeOffset.TryParse(NewEventEnd, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end)
+        if (!TryParseLocalDateTime(NewEventStart, out var start)
+            || !TryParseLocalDateTime(NewEventEnd, out var end)
             || end <= start)
         {
             StatusMessage = "Use valid event start and end instants.";
@@ -1221,7 +1244,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             DateTimeOffset? recurrenceEnd = null;
             if (!string.IsNullOrWhiteSpace(NewEventRecurrenceEnd))
             {
-                if (!DateTimeOffset.TryParse(NewEventRecurrenceEnd, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var parsedRecurrenceEnd))
+                if (!TryParseLocalDateTime(NewEventRecurrenceEnd, out var parsedRecurrenceEnd))
                 {
                     StatusMessage = "Use a valid recurrence end instant, or leave it empty.";
                     return;
@@ -1279,8 +1302,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task UpdateCalendarEventAsync(CalendarEventRowViewModel row)
     {
-        if (!DateTimeOffset.TryParse(row.StartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
-            || !DateTimeOffset.TryParse(row.EndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end)
+        if (!TryParseLocalDateTime(row.StartText, out var start)
+            || !TryParseLocalDateTime(row.EndText, out var end)
             || end <= start)
         {
             StatusMessage = "Use valid event start and end instants.";
@@ -1290,7 +1313,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         DateTimeOffset? recurrenceEnd = null;
         if (!string.IsNullOrWhiteSpace(row.RecurrenceEndText))
         {
-            if (!DateTimeOffset.TryParse(row.RecurrenceEndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var parsedRecurrenceEnd))
+            if (!TryParseLocalDateTime(row.RecurrenceEndText, out var parsedRecurrenceEnd))
             {
                 StatusMessage = "Use a valid recurrence end instant, or leave it empty.";
                 return;
@@ -1326,7 +1349,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task CorrectHistoryAsync(HistoryRowViewModel row)
     {
-        if (!DateTimeOffset.TryParse(row.StartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start))
+        if (!TryParseLocalDateTime(row.StartText, out var start))
         {
             StatusMessage = "Use a valid start instant, such as 2026-09-09T14:30:00Z.";
             return;
@@ -1335,7 +1358,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         DateTimeOffset? end = null;
         if (!string.IsNullOrWhiteSpace(row.EndText))
         {
-            if (!DateTimeOffset.TryParse(row.EndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var parsedEnd))
+            if (!TryParseLocalDateTime(row.EndText, out var parsedEnd))
             {
                 StatusMessage = "Use a valid end instant, or leave it empty for an open interval.";
                 return;
@@ -1369,8 +1392,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task UpdateCalendarBlockAsync(CalendarBlockRowViewModel row)
     {
-        if (!DateTimeOffset.TryParse(row.StartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
-            || !DateTimeOffset.TryParse(row.EndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end))
+        if (!TryParseLocalDateTime(row.StartText, out var start)
+            || !TryParseLocalDateTime(row.EndText, out var end))
         {
             StatusMessage = "Use valid start and end instants for the schedule block.";
             return;
@@ -1474,8 +1497,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             return;
         }
 
-        if (!DateTimeOffset.TryParse(ManualStartText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var start)
-            || !DateTimeOffset.TryParse(ManualEndText, CultureInfo.CurrentCulture, DateTimeStyles.RoundtripKind, out var end)
+        if (!TryParseLocalDateTime(ManualStartText, out var start)
+            || !TryParseLocalDateTime(ManualEndText, out var end)
             || end <= start)
         {
             StatusMessage = "Use valid manual start and end instants.";
@@ -1491,8 +1514,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 end.ToUniversalTime(),
                 string.IsNullOrWhiteSpace(ManualNotes) ? null : ManualNotes.Trim());
             StatusMessage = "Manual time added.";
-            ManualStartText = DateTimeOffset.UtcNow.AddMinutes(-30).ToString("O", CultureInfo.InvariantCulture);
-            ManualEndText = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            ManualStartText = FormatLocalDateTime(DateTimeOffset.UtcNow.AddMinutes(-30));
+            ManualEndText = FormatLocalDateTime(DateTimeOffset.UtcNow);
             ManualNotes = string.Empty;
             await RefreshAsync();
         }
@@ -2224,11 +2247,11 @@ public sealed class HistoryRowViewModel
         SelectedTaskId = item.Session.TaskId;
         SelectedActivityId = item.Session.ActivityId;
         NotesEditor = item.Session.Notes;
-        StartText = item.Session.StartedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        StartText = MainWindowViewModel.FormatLocalDateTime(item.Session.StartedAtUtc);
         var lastIntervalEnd = item.Session.Intervals.Count == 0 ? null : item.Session.Intervals[^1].EndedAtUtc;
-        EndText = item.Session.StoppedAtUtc?.ToString("O", CultureInfo.InvariantCulture)
-            ?? lastIntervalEnd?.ToString("O", CultureInfo.InvariantCulture)
-            ?? string.Empty;
+        EndText = item.Session.StoppedAtUtc is { } stoppedAt ? MainWindowViewModel.FormatLocalDateTime(stoppedAt)
+            : lastIntervalEnd is { } intervalEnd ? MainWindowViewModel.FormatLocalDateTime(intervalEnd)
+            : string.Empty;
         ReasonText = "Corrected from History";
         _correct = correct;
         CorrectCommand = new AsyncCommand(_ => _correct(this));
@@ -2274,8 +2297,8 @@ public sealed class CalendarBlockRowViewModel
         Block = block;
         Label = label;
         TitleEditor = block.TitleOverride ?? label;
-        StartText = block.StartAtUtc.ToString("O", CultureInfo.InvariantCulture);
-        EndText = block.EndAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        StartText = MainWindowViewModel.FormatLocalDateTime(block.StartAtUtc);
+        EndText = MainWindowViewModel.FormatLocalDateTime(block.EndAtUtc);
         _update = update;
         _start = start;
         UpdateCommand = new AsyncCommand(_ => _update(this));
@@ -2378,10 +2401,12 @@ public sealed class CalendarEventRowViewModel
         DescriptionEditor = item.Description;
         LocationEditor = item.Location ?? string.Empty;
         ColorEditor = item.Color;
-        StartText = item.StartAtUtc.ToString("O", CultureInfo.InvariantCulture);
-        EndText = item.EndAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        StartText = MainWindowViewModel.FormatLocalDateTime(item.StartAtUtc);
+        EndText = MainWindowViewModel.FormatLocalDateTime(item.EndAtUtc);
         RecurrenceEditor = item.RecurrenceRule ?? string.Empty;
-        RecurrenceEndText = item.RecurrenceEndUtc?.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
+        RecurrenceEndText = item.RecurrenceEndUtc is { } recurrenceEnd
+            ? MainWindowViewModel.FormatLocalDateTime(recurrenceEnd)
+            : string.Empty;
         AllDayEditor = item.AllDay;
         _update = update;
         _delete = delete;
