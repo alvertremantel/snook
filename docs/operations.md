@@ -32,6 +32,12 @@ The authenticated readiness endpoint is `/v1/health`. The change stream is
 `/v1/changes`; clients reconnect and refresh their bootstrap snapshot before
 resuming push notifications.
 
+The headless CLI uses this same boundary. Configure it with `snook --host daemon --endpoint http://127.0.0.1:43871/ --token-file <data-root>/Snook/daemon.token doctor`, or the corresponding `SNOOK_*` environment variables. It fails closed
+in daemon mode: a missing token, failed authentication, unavailable endpoint, or
+protocol failure does not permit it to open the workspace database. This keeps
+the CLI configuration compatible with a future server/daemon transport without
+silently changing ownership mode.
+
 ## Backup and restore
 
 Use Settings → Your data → Create backup, or the CLI/backend backup operation while the

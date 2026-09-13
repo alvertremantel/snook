@@ -23,7 +23,7 @@ Snook is a working desktop vertical slice for local work organization and time t
 - Calendar desktop workflow: event and planned-block creation now use an explicit visible-calendar selector and preserve that selection across refreshes; Day, Week, and Month render distinct date-grid layouts while Agenda remains the editable chronological view.
 - Today/review: priority and active work, recent and upcoming work, history search with pagination, and summaries by day/task/project/activity/activity group/tag/lane.
 - Data operations: migrations, integrity-checked backups, safe restore, JSON export, and CSV worklog export.
-- Hosting: embedded SQLite desktop mode, authenticated loopback daemon mode with RPC and SSE changes, and CLI bootstrap/summary workflows.
+- Hosting: embedded SQLite desktop mode, authenticated loopback daemon mode with RPC and SSE changes, and a complete JSON CLI surface generated from the shared backend contract. The CLI supports both host modes, agent-safe named JSON arguments, operation/revision retries, and all workspace, tracking, calendar, recovery, export, backup, and restore methods; see `docs/cli.md`.
 - Operations: README guidance, backup/recovery/hosting documentation, and a hardened Linux systemd service definition.
 - Desktop finishing: live pickers exclude deleted records; Tasks can reveal and restore deleted tasks; Settings exposes soft-delete/restore for boards, projects, activities, groups, and calendars; deleted calendar events have a restore surface; Today now has both a fast 30-minute manual-time shortcut and an explicit task/activity, UTC start/end, and notes form.
 - Ownership recovery: a dead owner PID no longer strands a workspace after an interrupted host, while a live owner still blocks a second host before writes.
@@ -42,7 +42,7 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 - Full solution build has passed with zero warnings and zero errors.
 - The application suite has 25 passing tests and the domain suite has 5 passing tests, covering timer lifecycle and ownership, standalone activity switching, stale-lease recovery, migrations, recurrence including DST gap/fold behavior and exceptions, calendar event editing and visibility, task details, settings, corrections, backups/restores, ordering, and local-day boundaries.
-- CLI smoke checks have passed for bootstrap and summary against a disposable data directory.
+- CLI integration checks cover generated full-contract discovery, embedded named-argument task mutation plus idempotent retry, and authenticated daemon-mode mutation without opening SQLite. The command reference documents agent workflows, mutation concurrency, calendar/time tracking, maintenance, and transport configuration.
 - The daemon-backed contract test covers authenticated access, capability reporting, board creation, and committed change notification. Interrupted SSE responses are treated as reconnectable shutdown/transport events.
 - Daemon RPC request bodies and argument counts are bounded before JSON dispatch; the integration test verifies oversized authenticated calls fail closed.
 - Task detail durations are presented as readable elapsed labels, and primary desktop controls expose non-visual automation names.

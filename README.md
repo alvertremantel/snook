@@ -66,6 +66,59 @@ dotnet run --project src/Snook.Daemon/Snook.Daemon.csproj
 SNOOK_HOST_MODE=daemon dotnet run --project src/Snook.Desktop/Snook.Desktop.csproj
 ```
 
+## Headless CLI
+
+`snook` is a JSON-in/JSON-out client intended for scripts and autonomous agents.
+It exposes the entire versioned `IBackendClient` contract—not a smaller CLI-only
+data model—so boards, projects, tasks, activities, timer sessions, calendar
+events and exceptions, history, summaries, backups, exports, and recovery all
+have the same behavior as the desktop application. Read results are written to
+standard output; failures are structured JSON on standard error and have a
+non-zero exit code.
+
+```bash
+# Discover every available operation, named argument, type, and default.
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- api
+
+# Work with a disposable embedded workspace.
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent bootstrap
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent \
+  call create-task '{"projectId":"<id>","title":"Prepare release notes","priority":"High"}'
+
+# Invoke concise read helpers.
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent tasks release
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent summary project 14
+```
+
+Use `call METHOD JSON_OBJECT` for every backend method. Method names are
+case-insensitive; hyphens and the `Async` suffix are optional. Arguments are
+always named JSON properties, which avoids positional ambiguity. See
+[the CLI reference](docs/cli.md) for lifecycle, timer, calendar, data-operation,
+and retry examples.
+
+Use `watch` when an agent needs committed change notifications. It emits NDJSON:
+one ready record followed by `change` records, and runs until cancelled. It is
+particularly useful in daemon mode, where it uses the authenticated change
+stream rather than opening the database.
+
+The transport is configurable now, even though a future database server is not
+part of this desktop slice. `--host embedded` (the default) owns the SQLite
+workspace; `--host daemon` creates a `DaemonBackendClient` and never opens the
+database. Daemon settings can also use `SNOOK_HOST_MODE`,
+`SNOOK_DAEMON_ENDPOINT`, `SNOOK_DAEMON_TOKEN`, and `SNOOK_DAEMON_PORT`.
+
+```bash
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- \
+  --data-dir /var/lib/snook --host daemon \
+  --endpoint http://127.0.0.1:43871/ --token-file /var/lib/snook/Snook/daemon.token \
+  doctor
+```
+
+Never place a daemon token in a command history when `--token-file` or the
+private default token file can be used. The CLI fails explicitly if daemon
+credentials or connectivity are unavailable; it does not fall back to embedded
+SQLite.
+
 ### Fedora RPM
 
 The desktop RPM is a self-contained `linux-x64` build. Install the packaging
