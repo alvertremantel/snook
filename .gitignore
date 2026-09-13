@@ -5,6 +5,7 @@ artifacts/ui-screenshot-data/
 [Oo]bj/
 /artifacts/
 /Artifacts/
+/.rpm-work/
 [Tt]est[Rr]esults/
 [Pp]ublish/
 *.nupkg

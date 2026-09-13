@@ -1,43 +1,180 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="Snook.UI.App">
+             x:Class="Snook.UI.App"
+             RequestedThemeVariant="Light">
+  <!-- One explicit light palette prevents OS dark controls leaking into the workspace. -->
+  <Application.Resources>
+    <Color x:Key="CanvasColor">#F5F6F3</Color>
+    <Color x:Key="SurfaceColor">#FFFFFF</Color>
+    <Color x:Key="SubtleColor">#F0F3F0</Color>
+    <Color x:Key="BorderColor">#DCE3DF</Color>
+    <Color x:Key="BorderStrongColor">#BAC9C2</Color>
+    <Color x:Key="InkColor">#23373D</Color>
+    <Color x:Key="MutedColor">#60747A</Color>
+    <Color x:Key="AccentColor">#246B63</Color>
+    <Color x:Key="AccentHoverColor">#1D5A53</Color>
+    <Color x:Key="AccentPressedColor">#164A44</Color>
+    <Color x:Key="AccentSoftColor">#E6F0EC</Color>
+    <Color x:Key="AccentSoftHoverColor">#D5E7DF</Color>
+    <Color x:Key="SidebarColor">#20343B</Color>
+    <Color x:Key="SidebarRaisedColor">#2B434A</Color>
+    <Color x:Key="SidebarHoverColor">#355259</Color>
+    <Color x:Key="SidebarTextColor">#E4EDE9</Color>
+    <Color x:Key="SidebarMutedColor">#A7BBB9</Color>
+    <Color x:Key="RunningColor">#287667</Color>
+    <Color x:Key="RunningSurfaceColor">#EDF5F0</Color>
+    <Color x:Key="PausedColor">#91692E</Color>
+    <Color x:Key="PausedSurfaceColor">#FBF5E9</Color>
+    <Color x:Key="BackgroundAccentColor">#566C87</Color>
+    <Color x:Key="BackgroundSurfaceColor">#EFF3F7</Color>
+    <Color x:Key="DisabledColor">#EDF0ED</Color>
+    <Color x:Key="DisabledInkColor">#7A8987</Color>
+    <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
+    <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="SubtleBrush" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}" />
+    <SolidColorBrush x:Key="InkBrush" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="AccentPressedBrush" Color="{StaticResource AccentPressedColor}" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="{StaticResource AccentSoftColor}" />
+    <SolidColorBrush x:Key="AccentSoftHoverBrush" Color="{StaticResource AccentSoftHoverColor}" />
+    <SolidColorBrush x:Key="SidebarBrush" Color="{StaticResource SidebarColor}" />
+    <SolidColorBrush x:Key="SidebarRaisedBrush" Color="{StaticResource SidebarRaisedColor}" />
+    <SolidColorBrush x:Key="SidebarHoverBrush" Color="{StaticResource SidebarHoverColor}" />
+    <SolidColorBrush x:Key="SidebarTextBrush" Color="{StaticResource SidebarTextColor}" />
+    <SolidColorBrush x:Key="SidebarMutedBrush" Color="{StaticResource SidebarMutedColor}" />
+    <SolidColorBrush x:Key="RunningBrush" Color="{StaticResource RunningColor}" />
+    <SolidColorBrush x:Key="RunningSurfaceBrush" Color="{StaticResource RunningSurfaceColor}" />
+    <SolidColorBrush x:Key="PausedBrush" Color="{StaticResource PausedColor}" />
+    <SolidColorBrush x:Key="PausedSurfaceBrush" Color="{StaticResource PausedSurfaceColor}" />
+    <SolidColorBrush x:Key="BackgroundAccentBrush" Color="{StaticResource BackgroundAccentColor}" />
+    <SolidColorBrush x:Key="BackgroundSurfaceBrush" Color="{StaticResource BackgroundSurfaceColor}" />
+    <SolidColorBrush x:Key="DisabledBrush" Color="{StaticResource DisabledColor}" />
+    <SolidColorBrush x:Key="DisabledInkBrush" Color="{StaticResource DisabledInkColor}" />
+    <SolidColorBrush x:Key="TextControlBackground" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{StaticResource DisabledColor}" />
+    <SolidColorBrush x:Key="TextControlForeground" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{StaticResource DisabledInkColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{StaticResource BorderStrongColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{StaticResource DisabledInkColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackground" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{StaticResource AccentSoftColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{StaticResource DisabledColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ComboBoxForeground" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ComboBoxForegroundFocusedPressed" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{StaticResource DisabledInkColor}" />
+    <SolidColorBrush x:Key="ComboBoxPlaceHolderForeground" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{StaticResource BorderStrongColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{StaticResource BorderStrongColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownGlyphForeground" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownGlyphForegroundFocused" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownGlyphForegroundFocusedPressed" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForeground" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundPressed" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPointerOver" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPressed" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundPressed" Color="{StaticResource AccentSoftHoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{StaticResource AccentSoftColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{StaticResource AccentSoftHoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{StaticResource AccentSoftHoverColor}" />
+    <SolidColorBrush x:Key="ButtonBackground" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{StaticResource AccentSoftColor}" />
+    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{StaticResource AccentSoftHoverColor}" />
+    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{StaticResource DisabledColor}" />
+    <SolidColorBrush x:Key="ButtonForeground" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{StaticResource DisabledInkColor}" />
+    <SolidColorBrush x:Key="ButtonBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemForegroundPointerOver" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemForegroundPressed" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPressed" Color="{StaticResource AccentSoftColor}" />
+    <SolidColorBrush x:Key="SystemControlForegroundBaseHighBrush" Color="{StaticResource InkColor}" />
+    <SolidColorBrush x:Key="SystemControlForegroundBaseMediumBrush" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="SystemControlBackgroundChromeMediumLowBrush" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="SystemControlBackgroundAltHighBrush" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="SystemControlBackgroundChromeWhiteBrush" Color="{StaticResource SurfaceColor}" />
+  </Application.Resources>
   <Application.Styles>
-    <FluentTheme />
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Light" Accent="#246B63" BaseHigh="#23373D" BaseMedium="#60747A" RegionColor="{StaticResource CanvasColor}" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
     <Style Selector="Window">
-      <Setter Property="Background" Value="#F7F8FA" />
+      <Setter Property="Background" Value="{DynamicResource CanvasBrush}" />
       <Setter Property="FontFamily" Value="Inter" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
     </Style>
     <Style Selector="TextBlock.title">
       <Setter Property="FontSize" Value="28" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="#172033" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
     </Style>
     <Style Selector="TextBlock.eyebrow">
       <Setter Property="FontSize" Value="11" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="#7D899E" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
       <Setter Property="LetterSpacing" Value="1.4" />
     </Style>
     <Style Selector="TextBlock.muted">
-      <Setter Property="Foreground" Value="#758096" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
     </Style>
     <Style Selector="TextBox, ComboBox">
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
       <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="BorderBrush" Value="#DDE1EA" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="MinHeight" Value="36" />
+    </Style>
+    <Style Selector="FlyoutPresenter">
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="18" />
     </Style>
     <Style Selector="ComboBox">
       <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
     <Style Selector="Border.card">
-      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
       <Setter Property="CornerRadius" Value="16" />
       <Setter Property="Padding" Value="20" />
-      <Setter Property="BorderBrush" Value="#E7EAF0" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
     <Style Selector="Button.primary">
-      <Setter Property="Background" Value="#5B5BEF" />
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
       <Setter Property="Foreground" Value="White" />
       <Setter Property="CornerRadius" Value="10" />
       <Setter Property="Padding" Value="16,10" />
@@ -45,83 +182,198 @@
     </Style>
     <Style Selector="Button.ghost">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="#58657B" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="10,8" />
     </Style>
     <Style Selector="Button.nav">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="#8D99AD" />
+      <Setter Property="Foreground" Value="{DynamicResource SidebarMutedBrush}" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Padding" Value="12,9" />
       <Setter Property="CornerRadius" Value="9" />
       <Setter Property="BorderThickness" Value="0" />
     </Style>
     <Style Selector="Button.nav:pointerover">
-      <Setter Property="Background" Value="#252B46" />
-      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource SurfaceBrush}" />
     </Style>
     <Style Selector="Button.icon">
-      <Setter Property="Background" Value="#F1F2FF" />
-      <Setter Property="Foreground" Value="#5B5BEF" />
+      <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="9" />
       <Setter Property="Padding" Value="10" />
     </Style>
     <Style Selector="Button.selected">
-      <Setter Property="Background" Value="#EAEAFF" />
-      <Setter Property="Foreground" Value="#4949CB" />
+      <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
     </Style>
     <Style Selector="Button.nav.selected">
-      <Setter Property="Background" Value="#353553" />
+      <Setter Property="Background" Value="{DynamicResource SidebarRaisedBrush}" />
       <Setter Property="Foreground" Value="White" />
     </Style>
     <!-- Fluent's pointer-over theme setters otherwise replace the colors above. Keep every
          interactive state visibly distinct, rather than allowing its content to disappear. -->
     <Style Selector="Button.primary:pointerover">
-      <Setter Property="Background" Value="#4848D6" />
+      <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
       <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="Button.ghost:pointerover">
-      <Setter Property="Background" Value="#E8EBF2" />
-      <Setter Property="Foreground" Value="#364258" />
+      <Setter Property="Background" Value="{DynamicResource SubtleBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
     </Style>
     <Style Selector="Button.sidebar-action">
-      <Setter Property="Foreground" Value="#D9DDF0" />
+      <Setter Property="Foreground" Value="{DynamicResource SidebarTextBrush}" />
     </Style>
     <Style Selector="Button.sidebar-action:pointerover">
-      <Setter Property="Background" Value="#454B67" />
-      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource SurfaceBrush}" />
     </Style>
     <Style Selector="Button.icon:pointerover">
-      <Setter Property="Background" Value="#DDDDF8" />
-      <Setter Property="Foreground" Value="#4040B8" />
+      <Setter Property="Background" Value="{DynamicResource AccentSoftHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
     </Style>
     <Style Selector="Button.selected:pointerover">
-      <Setter Property="Background" Value="#DDDDF8" />
-      <Setter Property="Foreground" Value="#4040B8" />
+      <Setter Property="Background" Value="{DynamicResource AccentSoftHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
     </Style>
     <Style Selector="Button.nav.selected:pointerover">
-      <Setter Property="Background" Value="#454568" />
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
       <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="TextBox:pointerover, ComboBox:pointerover">
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#9BA7C4" />
-      <Setter Property="Foreground" Value="#172033" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
     </Style>
     <Style Selector="CheckBox:pointerover">
-      <Setter Property="Foreground" Value="#172033" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
     </Style>
     <Style Selector="Expander:pointerover">
-      <Setter Property="Foreground" Value="#172033" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+    </Style>
+    <!-- Fluent applies its hover colors to the template's ContentPresenter, not the Button
+         itself. Set that part directly so these states cannot be replaced by white-on-white. -->
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SubtleBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+    </Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SubtleBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource SurfaceBrush}" />
+    </Style>
+    <Style Selector="Button.icon:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
+    </Style>
+    <Style Selector="Button.selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
+    </Style>
+    <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource SurfaceBrush}" />
+    </Style>
+    <Style Selector="Button.nav.selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
+      <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="Expander">
-      <Setter Property="BorderBrush" Value="#E7EAF0" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
-    <Style Selector="WrapPanel.editor > Control">
+    <Style Selector="WrapPanel.editor > :is(Control)">
       <Setter Property="Margin" Value="0,0,8,8" />
+    </Style>
+    <Style Selector="Button.activity">
+      <Setter Property="Background" Value="{DynamicResource SubtleBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="RenderTransform" Value="translate(0px, 0px)" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.12" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Border.project-lane">
+      <Setter Property="Background" Value="{DynamicResource SubtleBrush}" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="Border.project-lane.drop-target">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource RunningBrush}" />
+    </Style>
+    <Style Selector="Border.task-card">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BoxShadow" Value="0 2 3 0 #0C20263D" />
+      <Setter Property="RenderTransform" Value="translate(0px, 0px)" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.14" />
+          <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.14" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Border.task-card:pointerover">
+      <Setter Property="RenderTransform" Value="translate(0px, -2px)" />
+      <Setter Property="BoxShadow" Value="0 5 12 0 #1820263D" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}" />
+    </Style>
+    <Style Selector="Border.task-card.dragging">
+      <Setter Property="Opacity" Value="0.6" />
+      <Setter Property="BorderBrush" Value="{DynamicResource RunningBrush}" />
+    </Style>
+    <Style Selector="Button.activity:pointerover">
+      <Setter Property="RenderTransform" Value="translate(0px, -2px)" />
+    </Style>
+    <Style Selector="Button.activity.selected">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="Button.activity:pressed">
+      <Setter Property="RenderTransform" Value="translate(0px, 1px)" />
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+    </Style>
+    <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentPressedBrush}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.nav:pressed /template/ ContentPresenter#PART_ContentPresenter, Button.sidebar-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SidebarHoverBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource SidebarTextBrush}" />
+    </Style>
+    <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource DisabledBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource DisabledInkBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    </Style>
+    <Style Selector="Button.session-action">
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="12,9" />
     </Style>
   </Application.Styles>
 </Application>

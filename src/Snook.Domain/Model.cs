@@ -292,6 +292,14 @@ public enum SummaryGrouping
 
 public static class TimeMath
 {
+    public static (DateTimeOffset Start, DateTimeOffset End) LocalDayRangeUtc(DateTimeOffset instant, TimeZoneInfo zone)
+    {
+        var date = TimeZoneInfo.ConvertTime(instant, zone).Date;
+        var next = date.AddDays(1);
+        return (new DateTimeOffset(date, zone.GetUtcOffset(date)).ToUniversalTime(),
+            new DateTimeOffset(next, zone.GetUtcOffset(next)).ToUniversalTime());
+    }
+
     public static long DurationMilliseconds(
         IEnumerable<TimeInterval> intervals,
         DateTimeOffset asOfUtc)

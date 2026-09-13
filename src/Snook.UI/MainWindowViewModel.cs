@@ -55,14 +55,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private string _newEventTitle = string.Empty;
     private string _newEventDescription = string.Empty;
     private string _newEventLocation = string.Empty;
-    private string _newEventColor = "#6767F2";
+    private string _newEventColor = "#246B63";
     private string _newEventRecurrence = string.Empty;
     private string _newEventRecurrenceEnd = string.Empty;
     private bool _newEventAllDay;
     private string _newEventStart = string.Empty;
     private string _newEventEnd = string.Empty;
     private string _newCalendarName = string.Empty;
-    private string _newCalendarColor = "#6767F2";
+    private string _newCalendarColor = "#246B63";
     private string _newActivityGroupName = string.Empty;
     private Guid? _manualTaskId;
     private Guid? _manualActivityId;
@@ -72,11 +72,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private bool _allowConcurrentForeground;
     private long _settingsRevision = 1;
     private long _todayMilliseconds;
+    private TodaySnapshot? _todayClockSnapshot;
+    private DateTimeOffset _nextDayRefresh;
     private TaskDetailsPanelViewModel? _selectedTaskDetails;
 
     public MainWindowViewModel(IBackendClient backend)
     {
         _backend = backend;
+        InitializeCalendarCommands();
+        InitializeTaskWorkspaceCommands();
         _backend.Changed += OnBackendChanged;
         RefreshCommand = new AsyncCommand(_ => RefreshAsync());
         CreateTaskCommand = new AsyncCommand(_ => CreateTaskAsync(), _ => !string.IsNullOrWhiteSpace(TaskTitle) && SelectedProjectId != Guid.Empty);
@@ -181,6 +185,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             RaisePropertyChanged(nameof(IsCalendarAgenda));
             RaisePropertyChanged(nameof(IsCalendarGridVisible));
             RaisePropertyChanged(nameof(CalendarGridColumns));
+            RaisePropertyChanged(nameof(IsCalendarTimelineVisible));
         }
     }
     public bool IsCalendarDay => CalendarView == "Day";
@@ -277,31 +282,22 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 _settingsRevision = bootstrap.Settings.Revision;
             }
             _todayMilliseconds = bootstrap.Today.TrackedTodayMilliseconds;
+            _todayClockSnapshot = bootstrap.Today;
             TrackedToday = FormatDuration(_todayMilliseconds);
             OpenTaskCount = bootstrap.Today.OpenTaskCount;
 
-            Projects.Clear();
-            Boards.Clear();
-            foreach (var board in bootstrap.Boards.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null))
-            {
-                Boards.Add(new BoardOption(board.Id, board.Name));
-            }
-
-            foreach (var project in bootstrap.Projects.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null))
-            {
-                Projects.Add(new ProjectOption(project.Id, project.Name));
-            }
+            ReconcileOptions(Boards, bootstrap.Boards.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null)
+                .Select(item => new BoardOption(item.Id, item.Name)), item => item.Id);
+            ReconcileOptions(Projects, bootstrap.Projects.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null)
+                .Select(item => new ProjectOption(item.Id, item.Name)), item => item.Id);
 
             if (!Boards.Any(board => board.Id == SelectedBoardId))
             {
                 SelectedBoardId = Boards.Count == 0 ? Guid.Empty : Boards[0].Id;
             }
 
-            Activities.Clear();
-            foreach (var activity in bootstrap.Activities.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null))
-            {
-                Activities.Add(new ActivityOption(activity.Id, activity.Name, activity.DefaultLane));
-            }
+            ReconcileOptions(Activities, bootstrap.Activities.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null)
+                .Select(item => new ActivityOption(item.Id, item.Name, item.DefaultLane)), item => item.Id);
             if (!Activities.Any(activity => activity.Id == SelectedTrackingActivityId))
             {
                 SelectedTrackingActivityId = Activities.Count == 0 ? Guid.Empty : Activities[0].Id;
@@ -327,11 +323,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             CalendarAdminRows.Clear();
-            CalendarOptions.Clear();
-            foreach (var calendar in bootstrap.Calendars.Where(item => item.Visible && item.DeletedAtUtc is null))
-            {
-                CalendarOptions.Add(new CalendarOption(calendar.Id, calendar.Name));
-            }
+            ReconcileOptions(CalendarOptions, bootstrap.Calendars.Where(item => item.Visible && item.DeletedAtUtc is null)
+                .Select(item => new CalendarOption(item.Id, item.Name)), item => item.Id);
 
             foreach (var calendar in bootstrap.Calendars.Concat(bootstrap.DeletedItems?.Calendars ?? []))
             {
@@ -380,6 +373,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 ActiveSessions.Add(new ActiveSessionRowViewModel(item, PauseResumeAsync, StopAsync));
             }
             HasNoActiveSessions = ActiveSessions.Count == 0;
+            RefreshTracker(bootstrap);
 
             RecoverySessions.Clear();
             foreach (var session in bootstrap.Today.RecoverySessions ?? [])
@@ -394,7 +388,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 await LoadTodayReviewAsync();
             }
 
-            StatusMessage = "All changes are saved locally.";
+            if (!IsTaskEditorOpen) StatusMessage = "All changes are saved locally.";
             if (IsHistoryVisible)
             {
                 await LoadHistoryAsync();
@@ -905,6 +899,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         RaisePropertyChanged(nameof(IsTodayVisible));
         RaisePropertyChanged(nameof(IsTasksVisible));
         RaisePropertyChanged(nameof(IsTimeTrackerVisible));
+        RaisePropertyChanged(nameof(HasPageSearch));
+        RaisePropertyChanged(nameof(SearchHint));
         RaisePropertyChanged(nameof(IsTaskListVisible));
         RaisePropertyChanged(nameof(IsTaskBoardVisible));
         RaisePropertyChanged(nameof(IsHistoryVisible));
@@ -933,10 +929,13 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     // select a deterministic variant without reaching into private state.
     public async Task SelectSectionForScreenshotAsync(string section, string? variant)
     {
+        CloseTaskEditorCommand.Execute(null);
         await SelectSectionAsync(section);
         if (section == "Tasks")
         {
             await SelectTaskViewAsync(variant == "board" ? "Board" : "List");
+            if (variant?.StartsWith("details", StringComparison.Ordinal) == true && Tasks.Count > 0)
+                await ShowTaskDetailsAsync(Tasks[0]);
         }
         else if (section == "Calendar" && variant is "day" or "week" or "month" or "agenda")
         {
@@ -949,14 +948,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private async Task LoadTodayReviewAsync()
     {
         var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.Local);
-        var localStart = new DateTimeOffset(localNow.Date, localNow.Offset).ToUniversalTime();
-        var localEnd = localStart.AddDays(7);
+        var localStart = LocalDateToUtc(localNow.Date);
+        var localEnd = LocalDateToUtc(localNow.Date.AddDays(7));
+        var upcoming = new List<(DateTimeOffset At, ReviewRowViewModel Row)>();
         TodayRecentRows.Clear();
         TodayUpcomingRows.Clear();
 
         foreach (var task in Tasks.Where(item => item.Task.DueDate is not null).OrderBy(item => item.Task.DueDate).Take(5))
         {
-            TodayUpcomingRows.Add(new ReviewRowViewModel(task.Title, $"Deadline · {task.DueLabel}"));
+            upcoming.Add((LocalDateToUtc(task.Task.DueDate!.Value.ToDateTime(TimeOnly.MaxValue)), new ReviewRowViewModel(task.Title, $"Deadline · {task.DueLabel}")));
         }
 
         var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
@@ -964,20 +964,23 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         var activityNames = Activities.ToDictionary(item => item.Id, item => item.Name);
         foreach (var block in await _backend.GetCalendarRangeAsync(new CalendarRangeQuery(localStart, localEnd)))
         {
+            if (block.EndAtUtc <= DateTimeOffset.UtcNow) continue;
             var label = block.TaskId is { } taskId && taskNames.TryGetValue(taskId, out var taskName)
                 ? taskName
                 : block.ActivityId is { } activityId && activityNames.TryGetValue(activityId, out var activityName)
                     ? activityName
                     : block.TitleOverride ?? "Planned work";
-            TodayUpcomingRows.Add(new ReviewRowViewModel(label, $"Scheduled · {block.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}"));
+            upcoming.Add((block.StartAtUtc, new ReviewRowViewModel(label, $"Scheduled · {block.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}")));
         }
 
         foreach (var item in await _backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(localStart, localEnd)))
         {
-            TodayUpcomingRows.Add(new ReviewRowViewModel(item.Title, item.AllDay
+            if (item.EndAtUtc <= DateTimeOffset.UtcNow) continue;
+            upcoming.Add((item.StartAtUtc, new ReviewRowViewModel(item.Title, item.AllDay
                 ? $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d} all day"
-                : $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}"));
+                : $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}")));
         }
+        foreach (var item in upcoming.OrderBy(item => item.At)) TodayUpcomingRows.Add(item.Row);
 
         var history = await _backend.GetHistoryAsync(new HistoryQuery(localStart.AddDays(-7), DateTimeOffset.UtcNow, PageSize: 5));
         foreach (var item in history.Items)
@@ -988,6 +991,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         HasNoTodayRecentRows = TodayRecentRows.Count == 0;
         HasNoTodayUpcomingRows = TodayUpcomingRows.Count == 0;
+        RaisePropertyChanged(nameof(TodayAgendaPreview));
     }
 
     private async Task LoadHistoryAsync(bool append = false)
@@ -1046,16 +1050,21 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             rows.Add(row);
         }
 
-        foreach (var group in rows.GroupBy(row => row.ProjectName).OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (var project in Projects.OrderBy(project => project.Name, StringComparer.OrdinalIgnoreCase))
         {
-            TaskGroups.Add(new ProjectTaskGroupViewModel(group.Key, group.ToArray()));
+            TaskGroups.Add(new ProjectTaskGroupViewModel(project.Id, project.Name, rows.Where(row => row.Task.ProjectId == project.Id).ToArray()));
         }
+        // Search can explicitly include tasks whose project has been archived or deleted.
+        foreach (var group in rows.Where(row => !Projects.Any(project => project.Id == row.Task.ProjectId)).GroupBy(row => row.Task.ProjectId))
+            TaskGroups.Add(new ProjectTaskGroupViewModel(group.Key, group.First().ProjectName, group.ToArray()));
         HasNoTasks = Tasks.Count == 0;
+        RaisePropertyChanged(nameof(TodayNextTasks));
+        RaisePropertyChanged(nameof(HasNoTodayNextTasks));
     }
 
     private async Task LoadCalendarAsync(BootstrapSnapshot bootstrap)
     {
-        var localNow = DateTimeOffset.Now;
+        var localNow = _calendarAnchor;
         var localStart = CalendarView switch
         {
             "Day" => localNow.Date,
@@ -1071,6 +1080,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             _ => localStart.AddDays(7)
         };
         var gridStart = localStart;
+        CalendarRangeLabel = IsCalendarMonth ? localStart.ToString("MMMM yyyy", CultureInfo.CurrentCulture)
+            : IsCalendarDay ? localStart.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture)
+            : $"{localStart:MMM d} – {localEnd.AddDays(-1):MMM d, yyyy}";
         var gridEnd = localEnd;
         if (IsCalendarMonth)
         {
@@ -1091,6 +1103,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         var blocks = await _backend.GetCalendarRangeAsync(range);
         var events = await _backend.GetCalendarEventsRangeAsync(range);
         var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
+        ReconcileOptions(CalendarPlanTasks, taskItems.Where(item => item.Task.Status != TaskState.Completed && item.Task.ArchivedAtUtc is null && item.Task.DeletedAtUtc is null)
+            .Select(item => new TaskOption(item.Task.Id, item.Task.Title)), item => item.Id);
         CalendarBlocks.Clear();
         CalendarEvents.Clear();
         foreach (var block in blocks)
@@ -1130,12 +1144,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
             foreach (var block in blockRows.Where(item => item.Block.StartAtUtc < dayEnd && item.Block.EndAtUtc > dayStart))
             {
-                items.Add(CalendarGridItemViewModel.ForBlock(block.Label, block.Block.StartAtUtc, block.Block.EndAtUtc));
+                items.Add(CalendarGridItemViewModel.ForBlock(block, InspectCalendarItem));
             }
 
             foreach (var item in eventRows.Where(item => item.Event.StartAtUtc < dayEnd && item.Event.EndAtUtc > dayStart))
             {
-                items.Add(CalendarGridItemViewModel.ForEvent(item.Label, item.Event.StartAtUtc, item.Event.EndAtUtc, item.Event.AllDay));
+                items.Add(CalendarGridItemViewModel.ForEvent(item, InspectCalendarItem));
             }
 
             CalendarDayColumns.Add(new CalendarDayColumnViewModel(
@@ -1179,18 +1193,24 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
 
         var tasks = await _backend.SearchTasksAsync(includeCompleted: false);
-        var task = tasks.Count == 0 ? null : tasks[0];
+        var task = tasks.FirstOrDefault(item => item.Task.Id == CalendarPlanTaskId);
         if (task is null)
         {
-            StatusMessage = "Capture an open task before planning time.";
+            StatusMessage = "Choose an open task to plan.";
+            return;
+        }
+        if (!TryParseLocalDateTime(CalendarPlanStartText, out var start) || !TryParseLocalDateTime(CalendarPlanEndText, out var end) || end <= start)
+        {
+            StatusMessage = "Enter a valid local start and end, with the end after the start.";
             return;
         }
 
         try
         {
-            var start = DateTimeOffset.UtcNow.AddHours(1);
-            await _backend.CreateScheduleBlockAsync(SelectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, start.AddHours(1), TimeZoneInfo.Local.Id);
-            StatusMessage = "Planned one hour for your next task.";
+            await _backend.CreateScheduleBlockAsync(SelectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, end, TimeZoneInfo.Local.Id);
+            _calendarAnchor = start.ToLocalTime().Date;
+            RaisePropertyChanged(nameof(CalendarAnchor));
+            StatusMessage = $"Planned {task.Task.Title} for {start.ToLocalTime():MMM d, h:mm tt}.";
             await LoadCalendarAsync(await _backend.GetBootstrapAsync());
         }
         catch (Exception exception)
@@ -1201,6 +1221,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task SelectCalendarViewAsync(string view)
     {
+        SelectedCalendarItem = null;
         CalendarView = view is "Day" or "Week" or "Month" or "Agenda" ? view : "Week";
         if (IsCalendarVisible)
         {
@@ -1260,7 +1281,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 end.ToUniversalTime(),
                 NewEventDescription.Trim(),
                 string.IsNullOrWhiteSpace(NewEventLocation) ? null : NewEventLocation.Trim(),
-                string.IsNullOrWhiteSpace(NewEventColor) ? "#6767F2" : NewEventColor.Trim(),
+                string.IsNullOrWhiteSpace(NewEventColor) ? "#246B63" : NewEventColor.Trim(),
                 NewEventAllDay,
                 TimeZoneInfo.Local.Id,
                 string.IsNullOrWhiteSpace(NewEventRecurrence) ? null : NewEventRecurrence.Trim(),
@@ -1268,7 +1289,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             NewEventTitle = string.Empty;
             NewEventDescription = string.Empty;
             NewEventLocation = string.Empty;
-            NewEventColor = "#6767F2";
+            NewEventColor = "#246B63";
             NewEventRecurrence = string.Empty;
             NewEventRecurrenceEnd = string.Empty;
             NewEventAllDay = false;
@@ -1330,7 +1351,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                     row.TitleEditor.Trim(),
                     row.DescriptionEditor.Trim(),
                     string.IsNullOrWhiteSpace(row.LocationEditor) ? null : row.LocationEditor.Trim(),
-                    string.IsNullOrWhiteSpace(row.ColorEditor) ? "#6767F2" : row.ColorEditor.Trim(),
+                    string.IsNullOrWhiteSpace(row.ColorEditor) ? "#246B63" : row.ColorEditor.Trim(),
                     start.ToUniversalTime(),
                     end.ToUniversalTime(),
                     row.AllDayEditor,
@@ -1646,8 +1667,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.UpdateTaskAsync(row.Task.Id, new TaskUpdate(row.DraftTitle, row.DraftDescription, row.DraftPriority, dueDate, row.DraftActivityId, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            var updated = await _backend.UpdateTaskAsync(row.Task.Id, new TaskUpdate(row.DraftTitle, row.DraftDescription, row.DraftPriority, dueDate, row.DraftActivityId, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            row.AcceptTask(updated);
             await RefreshAsync();
+            if (ReferenceEquals(TaskEditor, row)) CloseTaskEditorCommand.Execute(null);
+            StatusMessage = "Task saved.";
         }
         catch (Exception exception)
         {
@@ -1665,8 +1689,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.MoveTaskAsync(row.Task.Id, row.TargetProjectId, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            var updated = await _backend.MoveTaskAsync(row.Task.Id, row.TargetProjectId, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            row.AcceptTask(updated);
             await RefreshAsync();
+            StatusMessage = $"Moved to {Projects.FirstOrDefault(project => project.Id == updated.ProjectId)?.Name ?? "project"}.";
         }
         catch (Exception exception)
         {
@@ -1686,6 +1712,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             await _backend.AddTaskTagAsync(row.Task.Id, row.TagText.Trim());
             row.TagText = string.Empty;
             await RefreshAsync();
+            await RefreshTaskEditorDetailsAsync(row);
         }
         catch (Exception exception)
         {
@@ -1707,6 +1734,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             row.PrerequisiteTaskId = null;
             StatusMessage = "Task dependency added.";
             await RefreshAsync();
+            await RefreshTaskEditorDetailsAsync(row);
         }
         catch (Exception exception)
         {
@@ -1729,6 +1757,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             row.LinkUriText = string.Empty;
             StatusMessage = "Task reference added.";
             await RefreshAsync();
+            await RefreshTaskEditorDetailsAsync(row);
         }
         catch (Exception exception)
         {
@@ -1740,7 +1769,13 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            SelectedTaskDetails = new TaskDetailsPanelViewModel(await _backend.GetTaskDetailsAsync(row.Task.Id));
+            var details = await _backend.GetTaskDetailsAsync(row.Task.Id);
+            SelectedTaskDetails = new TaskDetailsPanelViewModel(details);
+            TaskEditor = new TaskRowViewModel(row.Item with { Task = details.Task }, Projects, Activities,
+                Tasks.Select(task => new TaskOption(task.Task.Id, task.Title)),
+                StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync,
+                DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
+            StatusMessage = "Editing task details.";
         }
         catch (Exception exception)
         {
@@ -1763,6 +1798,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             await RefreshAsync();
+            if (ReferenceEquals(TaskEditor, row)) CloseTaskEditorCommand.Execute(null);
         }
         catch (Exception exception)
         {
@@ -1787,6 +1823,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             await RefreshAsync();
+            if (ReferenceEquals(TaskEditor, row)) CloseTaskEditorCommand.Execute(null);
         }
         catch (Exception exception)
         {
@@ -1852,6 +1889,19 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         foreach (var session in ActiveSessions)
         {
             session.UpdateElapsed();
+        }
+        if (_todayClockSnapshot is not { } snapshot) return;
+        var now = DateTimeOffset.UtcNow;
+        var displayed = FormatDuration(LiveTodayClock.Milliseconds(snapshot, now, TimeZoneInfo.Local));
+        if (TrackedToday != displayed)
+        {
+            TrackedToday = displayed;
+            RaisePropertyChanged(nameof(TodayOverview));
+        }
+        if (snapshot.CapturedAtUtc.ToLocalTime().Date != now.ToLocalTime().Date && now >= _nextDayRefresh)
+        {
+            _nextDayRefresh = now.AddMinutes(1);
+            _ = RefreshAsync();
         }
     }
 
@@ -2074,13 +2124,17 @@ public sealed class ActivityAdminRowViewModel
 
 public sealed class ProjectTaskGroupViewModel
 {
-    public ProjectTaskGroupViewModel(string projectName, IReadOnlyList<TaskRowViewModel> tasks)
+    public ProjectTaskGroupViewModel(Guid projectId, string projectName, IReadOnlyList<TaskRowViewModel> tasks)
     {
+        ProjectId = projectId;
         ProjectName = projectName;
         Tasks = tasks;
     }
 
     public string ProjectName { get; }
+    public Guid ProjectId { get; }
+    public string CountLabel => Tasks.Count.ToString(CultureInfo.InvariantCulture);
+    public bool IsEmpty => Tasks.Count == 0;
     public IReadOnlyList<TaskRowViewModel> Tasks { get; }
 }
 
@@ -2135,9 +2189,10 @@ public sealed class TaskRowViewModel
     }
 
     public TaskListItem Item { get; private set; }
+    public void AcceptTask(TaskItem task) => Item = Item with { Task = task };
     public TaskItem Task => Item.Task;
     public string Title => Task.Title;
-    public string DraftTitle { get => _draftTitle; set { if (!string.IsNullOrWhiteSpace(value)) _draftTitle = value; } }
+    public string DraftTitle { get => _draftTitle; set => _draftTitle = value; }
     public string DraftDescription { get; set; } = string.Empty;
     public IReadOnlyList<ProjectOption> ProjectOptions { get; }
     public IReadOnlyList<ActivityOption> ActivityOptions { get; }
@@ -2203,6 +2258,8 @@ public sealed class ActiveSessionRowViewModel : INotifyPropertyChanged
     public string Label => TaskTitle ?? ActivityName ?? "General focus";
     public string LaneLabel => Session.Lane == SessionLane.Background ? "Background" : "Focus";
     public string StateLabel => Session.State == SessionState.Running ? "Running" : "Paused";
+    public string AccentColor => Session.State == SessionState.Paused ? "#91692E" : Session.Lane == SessionLane.Background ? "#566C87" : "#287667";
+    public string SurfaceColor => Session.State == SessionState.Paused ? "#FBF5E9" : Session.Lane == SessionLane.Background ? "#EFF3F7" : "#EDF5F0";
     public string ElapsedLabel => MainWindowViewModel.FormatForRow(_displayedMilliseconds);
     public string ToggleLabel => Session.State == SessionState.Running ? "Pause" : "Resume";
     public ICommand ToggleCommand { get; }
@@ -2337,13 +2394,17 @@ public sealed class CalendarDayColumnViewModel
 
 public sealed class CalendarGridItemViewModel
 {
-    private CalendarGridItemViewModel(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool isEvent, bool allDay)
+    private CalendarGridItemViewModel(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool isEvent, bool allDay,
+        string details, ICommand? startCommand, Action<CalendarGridItemViewModel> inspect)
     {
         Label = label;
         StartAtUtc = startAtUtc;
         EndAtUtc = endAtUtc;
         IsEvent = isEvent;
         AllDay = allDay;
+        Details = details;
+        StartCommand = startCommand;
+        InspectCommand = new AsyncCommand(_ => { inspect(this); return Task.CompletedTask; });
     }
 
     public string Label { get; }
@@ -2351,16 +2412,23 @@ public sealed class CalendarGridItemViewModel
     public DateTimeOffset EndAtUtc { get; }
     public bool IsEvent { get; }
     public bool AllDay { get; }
+    public string Details { get; }
+    public bool CanStart => StartCommand is not null;
+    public ICommand? StartCommand { get; }
+    public ICommand InspectCommand { get; }
+    public string IntervalLabel => AllDay ? $"{StartAtUtc.ToLocalTime():MMM d} · All day"
+        : $"{StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt} – {EndAtUtc.ToLocalTime():MMM d h:mm tt} · {(EndAtUtc - StartAtUtc).TotalMinutes:0} min";
     public string KindLabel => IsEvent ? "Event" : "Plan";
     public string TimeLabel => AllDay ? "All day" : StartAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.CurrentCulture);
-    public string Background => IsEvent ? "#FFF4DF" : "#ECECFF";
-    public string Foreground => IsEvent ? "#6D5127" : "#39398C";
+    public string Background => IsEvent ? "#FBF5E9" : "#E6F0EC";
+    public string Foreground => IsEvent ? "#91692E" : "#246B63";
 
-    public static CalendarGridItemViewModel ForBlock(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc)
-        => new(label, startAtUtc, endAtUtc, false, false);
+    public static CalendarGridItemViewModel ForBlock(CalendarBlockRowViewModel row, Action<CalendarGridItemViewModel> inspect)
+        => new(row.Label, row.Block.StartAtUtc, row.Block.EndAtUtc, false, false, "Planned work · Start when you are ready.", row.StartCommand, inspect);
 
-    public static CalendarGridItemViewModel ForEvent(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool allDay)
-        => new(label, startAtUtc, endAtUtc, true, allDay);
+    public static CalendarGridItemViewModel ForEvent(CalendarEventRowViewModel row, Action<CalendarGridItemViewModel> inspect)
+        => new(row.Label, row.Event.StartAtUtc, row.Event.EndAtUtc, true, row.Event.AllDay,
+            string.Join(" · ", new[] { row.LocationLabel, row.DescriptionLabel }.Where(value => !string.IsNullOrWhiteSpace(value))), null, inspect);
 }
 
 public sealed class CalendarAdminRowViewModel

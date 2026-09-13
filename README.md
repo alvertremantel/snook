@@ -90,9 +90,8 @@ explicit directory for a disposable development profile.
 
 Build the solution, then run `scripts/capture-ui-screenshots.sh` to render the
 main UI screens into `artifacts/ui-screenshots/`. The harness uses a disposable
-SQLite profile in `artifacts/ui-screenshot-data/` and captures Today, Tasks,
-Time Tracker
-(list and board), Calendar (day/week/month/agenda), History, Summary, and
+SQLite profile in `artifacts/ui-screenshot-data/` and captures Today, Tasks
+(list and board), Time Tracker, Calendar (day/week/month/agenda), History, Summary, and
 Settings at 1280×820. Set `SNOOK_SCREENSHOT_SECTIONS` to a comma-separated
 subset such as `tasks-list,settings` when iterating on a smaller area.
 The default run also includes expanded task, activity, history, and calendar
@@ -100,9 +99,34 @@ editors (`tasks-details`, `tracker-details-bottom`, `history-details`,
 `calendar-details`) and the bottom of Today and Settings (`today-bottom`,
 `settings-bottom`), for 17 images total.
 An empty screenshot profile is seeded with three sample tasks, a 45-minute
-session, a planned block, and two events. Existing tasks prevent repeat seeding;
+session, a planned block, two events, grouped activities, and running/paused/background
+timers. Existing tasks prevent repeat seeding;
 set `SNOOK_SCREENSHOT_SEED=0` to capture an empty profile without sample data.
 This data is confined to the screenshot profile, not the desktop workspace.
+
+For an isolated review, set `SNOOK_DATA_DIR` to a fresh disposable directory and
+`SNOOK_SCREENSHOT_DIR` to the desired image directory. Set
+`SNOOK_SCREENSHOT_SIZE=980x640` to review the minimum window size. With a seeded
+disposable profile, `SNOOK_SCREENSHOT_VERIFY_INTERACTIONS=1` additionally exercises
+task dragging, Escape cancellation, and timer pause/resume/stop/start through pointer
+input, then checks persisted state. The `calendar-week` section also checks date
+navigation, keyboard inspection, planned-task starts, and explicit planning. This
+option intentionally changes the capture profile. Include `tasks-board,tracker,calendar-week`
+to run all checks. On a fresh profile, `SNOOK_SCREENSHOT_CALENDAR_STRESS=1` adds
+overlapping, all-day, and overnight events for calendar layout review.
+`SNOOK_SCREENSHOT_BOARD_STRESS=1` adds a wide board and long project lane; the
+board interaction checks then include edge scrolling to an offscreen project.
+Task-drawer checks cover preserved drafts, saves, keyboard focus, and revision
+conflicts. `settings-details` and `settings-details-bottom` capture expanded
+maintenance forms when included in `SNOOK_SCREENSHOT_SECTIONS`.
+`SNOOK_SCREENSHOT_VERIFY_PALETTE=1` adds focused-input, open-dropdown, and
+hover/pressed-button captures when `tasks-details` is included.
+`SNOOK_SCREENSHOT_VERIFY_WORKSPACE=1` checks the dashboard column order and,
+with `tasks-board`, captures and exercises the board/project creation popup
+against the disposable profile, including Escape and outside-click dismissal.
+
+The workspace redesign and its verification are documented in `docs/ui-design.md`.
+Backup, export, and restore actions are under Settings → Your data.
 
 ## Legacy reference integrity
 

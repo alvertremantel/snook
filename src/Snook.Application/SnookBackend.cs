@@ -756,10 +756,9 @@ public sealed class SnookBackend : IBackendClient
             })
             .ToArray();
         var recoverySessions = state.Sessions.Where(session => session.State == SessionState.RecoveryRequired).ToArray();
-        var localNow = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.Local);
-        var dayStart = new DateTimeOffset(localNow.Date, localNow.Offset).ToUniversalTime();
+        var (dayStart, dayEnd) = TimeMath.LocalDayRangeUtc(now, TimeZoneInfo.Local);
         var today = taskItems;
-        var trackedToday = state.Sessions.SelectMany(session => session.Intervals).Sum(interval => TimeMath.OverlapMilliseconds(interval, dayStart, dayStart.AddDays(1), now));
+        var trackedToday = state.Sessions.SelectMany(session => session.Intervals).Sum(interval => TimeMath.OverlapMilliseconds(interval, dayStart, dayEnd, now));
         return new BootstrapSnapshot(
             state.Workspace,
             liveBoards,

@@ -34,7 +34,7 @@ resuming push notifications.
 
 ## Backup and restore
 
-Use the desktop Backup action or the CLI/backend backup operation while the
+Use Settings → Your data → Create backup, or the CLI/backend backup operation while the
 owner is running. Backups use SQLite's online backup API and create a matching
 `.manifest.json` containing byte count, SHA-256, and verification status.
 

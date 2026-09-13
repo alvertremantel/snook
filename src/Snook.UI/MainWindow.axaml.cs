@@ -11,6 +11,7 @@ namespace Snook.UI;
 public partial class MainWindow : Window, IAsyncDisposable
 {
     private readonly MainWindowViewModel _viewModel;
+    private Control? _editorReturnFocus;
 
     public MainWindow()
         : this(App.ConfiguredBackend ?? throw new InvalidOperationException("The desktop backend was not configured."))
@@ -22,8 +23,38 @@ public partial class MainWindow : Window, IAsyncDisposable
         InitializeComponent();
         _viewModel = new MainWindowViewModel(backend);
         DataContext = _viewModel;
+        _viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(MainWindowViewModel.IsTaskEditorOpen)) return;
+            if (_viewModel.IsTaskEditorOpen)
+            {
+                _editorReturnFocus = FocusManager?.GetFocusedElement() as Control;
+                Dispatcher.UIThread.Post(() => TaskEditorTitle.Focus());
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_editorReturnFocus?.IsEffectivelyVisible == true && TopLevel.GetTopLevel(_editorReturnFocus) is not null)
+                        _editorReturnFocus.Focus();
+                    else if (_viewModel.IsTasksVisible) TaskListViewButton.Focus();
+                });
+            }
+        };
+        SizeChanged += (_, _) =>
+        {
+            TrackerActivitiesScroll.MaxHeight = Math.Max(260, Bounds.Height - 240);
+            TrackerSessionsScroll.MaxHeight = Math.Max(260, Bounds.Height - 240);
+            BoardScroll.Height = Math.Max(260, Bounds.Height - 380);
+        };
         Opened += OnOpened;
         Closed += OnClosed;
+    }
+
+    private void OnBoardCreationOpened(object? sender, EventArgs e)
+    {
+        if (sender is Flyout { Content: Control content })
+            Dispatcher.UIThread.Post(() => content.GetVisualDescendants().OfType<TextBox>().FirstOrDefault()?.Focus());
     }
 
     private async void OnOpened(object? sender, EventArgs e)
@@ -40,6 +71,15 @@ public partial class MainWindow : Window, IAsyncDisposable
     private async Task CaptureScreenshotsAsync(string outputDirectory)
     {
         Directory.CreateDirectory(outputDirectory);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_SIZE") is { } size)
+        {
+            var dimensions = size.Split('x');
+            if (dimensions.Length != 2 || !int.TryParse(dimensions[0], out var width) || !int.TryParse(dimensions[1], out var height)
+                || width < MinWidth || height < MinHeight)
+                throw new InvalidOperationException("SNOOK_SCREENSHOT_SIZE must be WIDTHxHEIGHT at or above the window minimum.");
+            Width = width;
+            Height = height;
+        }
         var requestedSections = Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_SECTIONS")
             ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(section => section.Length > 0)
@@ -94,6 +134,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private async void OnClosed(object? sender, EventArgs e)
     {
+        ClearBoardDrag();
         await DisposeAsync();
     }
 

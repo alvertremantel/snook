@@ -5,6 +5,20 @@ namespace Snook.Domain.Tests;
 
 public sealed class TimeMathTests
 {
+    [Theory]
+    [InlineData(3, 8, 23)]
+    [InlineData(11, 1, 25)]
+    [InlineData(9, 12, 24)]
+    public void LocalDayUsesBothMidnightOffsets(int month, int day, int hours)
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
+        var instant = new DateTimeOffset(2026, month, day, 18, 0, 0, TimeSpan.Zero);
+        var range = TimeMath.LocalDayRangeUtc(instant, zone);
+        Assert.Equal(TimeSpan.FromHours(hours), range.End - range.Start);
+        Assert.Equal(TimeSpan.Zero, TimeZoneInfo.ConvertTime(range.Start, zone).TimeOfDay);
+        Assert.Equal(TimeSpan.Zero, TimeZoneInfo.ConvertTime(range.End, zone).TimeOfDay);
+    }
+
     [Fact]
     public void OverlapSplitsAnIntervalAtAReportBoundaryWithoutMutatingIt()
     {

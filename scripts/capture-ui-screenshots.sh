@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-output_dir="${repo_root}/artifacts/ui-screenshots"
-data_dir="${repo_root}/artifacts/ui-screenshot-data"
+output_dir="${SNOOK_SCREENSHOT_DIR:-${repo_root}/artifacts/ui-screenshots}"
+data_dir="${SNOOK_DATA_DIR:-${repo_root}/artifacts/ui-screenshot-data}"
 
 mkdir -p "${output_dir}" "${data_dir}"
 
