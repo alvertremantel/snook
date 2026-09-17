@@ -63,12 +63,16 @@ internal static partial class InteractionChecks
             await UntilAsync(() => Task.FromResult(vm.CalendarPlanTasks.Count > 0));
             var taskId = vm.CalendarPlanTasks[0].Id;
             var planStart = new DateTimeOffset(DateTime.Today.AddDays(3).AddHours(9)).ToUniversalTime();
+            Click(window, Named("Open task planning"));
+            await UntilAsync(() => Task.FromResult(vm.IsPlanEditor));
+            await Task.Delay(60);
+            if (Visible<ComboBox>(window).Single(combo => AutomationProperties.GetName(combo) == "Calendar for planned task").SelectedItem is null)
+                throw new InvalidOperationException("Planning did not visibly select the current calendar.");
             vm.CalendarPlanTaskId = taskId;
             vm.CalendarPlanStartText = planStart.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
             vm.CalendarPlanEndText = vm.CalendarPlanStartText;
-            Visible<Expander>(window).Single(e => Equals(e.Header, "Add an event or plan a task")).IsExpanded = true;
             window.UpdateLayout();
-            var planButton = Named("Plan selected task");
+            var planButton = Named("Save workspace editor");
             planButton.BringIntoView();
             window.UpdateLayout();
             Click(window, planButton);

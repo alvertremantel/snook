@@ -24,6 +24,36 @@ remaining release-gate/accessibility matrix are still later milestones.
 
 Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-snook/README.md).
 
+## Desktop workspace
+
+- **Quick capture:** type a task title and press Enter (or click Add task).
+  The field clears after saving and stays ready for the next task.
+- **Tasks:** use compact List or Board views, the completion circle, Start, and
+  Edit. Completed, archived, and deleted tasks are available through **Filters**.
+  Board/project creation stays in the toolbar. The Board selector includes empty
+  boards and an All boards view; creating a board selects it and shows how to add
+  its first project. Drag tasks between projects or
+  use the task editor's explicit Move action.
+- **Time Tracker:** launch grouped activities alongside running, paused, and
+  background timers. **Manual time** and **New activity** open focused editors;
+  **Activity library** opens their organization settings.
+- **History:** scan sessions, start times, duration, and state in a ledger. **Edit**
+  opens a correction drawer with a required reason and retained provenance.
+- **Summary:** choose a grouping to compare attributed time and clock coverage.
+  Bars compare attributed duration with the largest group; overlapping sessions
+  are counted once per group in clock coverage.
+- **Settings:** switch between **General & data**, **Boards & projects**,
+  **Activities**, and **Calendars**. Edit a record from its row; the **•••** menu
+  contains ordering, archive, delete, and restore actions where supported. Project
+  and activity editors also provide an explicitly labeled immediate Add tag action.
+- **Calendar:** use **Plan a task** or **New event** above the time grid. The
+  **Agenda** view provides event and planned-block editing.
+
+Editors retain drafts across workspace refreshes. Save commits the edit; Cancel
+or Escape discards it; tags already added through the immediate action remain.
+Conflicting saves keep the draft visible with recovery
+instructions. Times are entered in local time as `YYYY-MM-DD HH:MM`.
+
 ## Repository layout
 
 - `Snook.slnx` — .NET solution.
@@ -147,10 +177,12 @@ SQLite profile in `artifacts/ui-screenshot-data/` and captures Today, Tasks
 (list and board), Time Tracker, Calendar (day/week/month/agenda), History, Summary, and
 Settings at 1280×820. Set `SNOOK_SCREENSHOT_SECTIONS` to a comma-separated
 subset such as `tasks-list,settings` when iterating on a smaller area.
-The default run also includes expanded task, activity, history, and calendar
-editors (`tasks-details`, `tracker-details-bottom`, `history-details`,
-`calendar-details`) and the bottom of Today and Settings (`today-bottom`,
-`settings-bottom`), for 17 images total.
+The default run produces 22 images, including task and utility drawers
+(`tasks-details`, `tracker-new-activity`, `tracker-manual`, `history-details`,
+`calendar-details`), the lower Today section (`today-bottom`), and Settings
+categories (`settings-organization`, `settings-activities`,
+`settings-activities-bottom`, `settings-calendars`, `settings-activity-editor`).
+`calendar-plan` and `settings-board-editor` provide additional drawer captures.
 An empty screenshot profile is seeded with three sample tasks, a 45-minute
 session, a planned block, two events, grouped activities, and running/paused/background
 timers. Existing tasks prevent repeat seeding;
@@ -170,16 +202,25 @@ overlapping, all-day, and overnight events for calendar layout review.
 `SNOOK_SCREENSHOT_BOARD_STRESS=1` adds a wide board and long project lane; the
 board interaction checks then include edge scrolling to an offscreen project.
 Task-drawer checks cover preserved drafts, saves, keyboard focus, and revision
-conflicts. `settings-details` and `settings-details-bottom` capture expanded
-maintenance forms when included in `SNOOK_SCREENSHOT_SECTIONS`.
+conflicts. The older `settings-details` / `settings-details-bottom` section names
+now select the organization catalog; `tracker-details-bottom` opens new activity
+creation. `settings-bottom` captures the lower General & data page.
 `SNOOK_SCREENSHOT_VERIFY_PALETTE=1` adds focused-input, open-dropdown, and
 hover/pressed-button captures when `tasks-details` is included.
-`SNOOK_SCREENSHOT_VERIFY_WORKSPACE=1` checks the dashboard column order and,
+`SNOOK_SCREENSHOT_VERIFY_WORKSPACE=1` checks the dashboard column order, Enter
+capture (including blank/duplicate protection and retained focus), and,
 with `tasks-board`, captures and exercises the board/project creation popup
-against the disposable profile, including Escape and outside-click dismissal.
+against the disposable profile, including rendered empty boards, their first
+project lane, board selection, and Escape/outside-click dismissal.
+`SNOOK_SCREENSHOT_VERIFY_EDITORS=1` adds persisted checks for the utility editors.
+Include `tracker,history,settings`: these verify activity/manual-time creation,
+picker preservation across refresh, correction validation and provenance, exact
+timestamp preservation, category navigation, board/activity/calendar saves,
+keyboard focus, Cancel, and stale revision rejection. Use a fresh seeded profile;
+these checks intentionally mutate its disposable data.
 
 The workspace redesign and its verification are documented in `docs/ui-design.md`.
-Backup, export, and restore actions are under Settings → Your data.
+Backup, export, and restore actions are under Settings → General & data.
 
 ## Legacy reference integrity
 

@@ -112,5 +112,7 @@ internal static class Program
             await InteractionChecks.CheckPaletteAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_INTERACTIONS") == "1")
             await InteractionChecks.RunAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_EDITORS") == "1")
+            await InteractionChecks.CheckEditorsAsync(window, path);
     }
 }

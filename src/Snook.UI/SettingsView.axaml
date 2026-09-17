@@ -1,0 +1,154 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.SettingsView"
+             x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
+  <StackPanel Spacing="22">
+    <Border Classes="toolbar">
+      <WrapPanel>
+        <Button Classes="tab" Classes.selected="{Binding IsGeneralSettings}" Content="General &amp; data" Command="{Binding SelectSettingsPageCommand}" CommandParameter="General" />
+        <Button Classes="tab" Classes.selected="{Binding IsOrganizationSettings}" Content="Boards &amp; projects" Command="{Binding SelectSettingsPageCommand}" CommandParameter="Organization" />
+        <Button Classes="tab" Classes.selected="{Binding IsActivitySettings}" Content="Activities" Command="{Binding SelectSettingsPageCommand}" CommandParameter="Activities" />
+        <Button Classes="tab" Classes.selected="{Binding IsCalendarSettings}" Content="Calendars" Command="{Binding SelectSettingsPageCommand}" CommandParameter="Calendars" />
+      </WrapPanel>
+    </Border>
+    <StackPanel Spacing="20" IsVisible="{Binding IsGeneralSettings}">
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="20">
+          <StackPanel Spacing="6"><TextBlock Text="YOUR DATA" Classes="eyebrow" /><TextBlock Text="A workspace you can keep." Classes="section-heading" /><TextBlock Text="Create a verified copy, or take your work with you." Classes="muted" /></StackPanel>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Back up &amp; recover" FontWeight="SemiBold" />
+              <TextBlock Text="Save a checked copy of your workspace. Restore the latest backup when you need it." Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="Create backup" AutomationProperties.Name="Create verified backup" Command="{Binding BackupCommand}" />
+              <Button Classes="ghost" Content="Restore latest backup" AutomationProperties.Name="Restore latest backup" Command="{Binding RestoreCommand}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="10">
+              <TextBlock Text="Export your work" FontWeight="SemiBold" />
+              <TextBlock Text="Keep a full JSON export, or use your last 30 days of time entries in a spreadsheet." Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="secondary" Content="Export workspace JSON" AutomationProperties.Name="Export workspace JSON" Command="{Binding ExportCommand}" />
+              <Button Classes="ghost" Content="Export worklog CSV" AutomationProperties.Name="Export CSV worklog" Command="{Binding ExportCsvCommand}" />
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="12">
+          <TextBlock Text="FOCUS TIMERS" Classes="eyebrow" />
+          <TextBlock Text="One thing at a time, or a few." Classes="section-heading" />
+          <TextBlock Text="By default, starting a focus timer pauses the previous one. Background activities can keep running alongside it." Classes="muted" TextWrapping="Wrap" />
+          <CheckBox Content="Allow more than one focus timer to run" IsChecked="{Binding AllowConcurrentForeground}" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Classes="secondary" Content="Save timer preference" Command="{Binding SaveSettingsCommand}" />
+            <Button Classes="ghost" Content="Reset to saved" Command="{Binding ResetTimerPreferenceCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+    <StackPanel Spacing="20" IsVisible="{Binding IsOrganizationSettings}">
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="5"><TextBlock Text="BOARDS" Classes="eyebrow" /><TextBlock Text="The bigger picture" Classes="section-heading" /><TextBlock Text="Boards hold the projects that belong together." Classes="muted" /></StackPanel>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><TextBox Text="{Binding NewBoardName}" PlaceholderText="New board name" AutomationProperties.Name="New board name" /><Button Grid.Column="1" Classes="secondary" Content="Add board" Command="{Binding CreateBoardCommand}" /></Grid>
+          <ItemsControl ItemsSource="{Binding BoardAdminRows}">
+            <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:BoardAdminRowViewModel">
+              <Border Classes="catalog-row">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                  <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Board.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LifecycleLabel}" Classes="muted" FontSize="12" /></StackPanel>
+                  <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit board" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                  <Button Grid.Column="2" Classes="ghost" Content="•••" AutomationProperties.Name="Board actions">
+                    <Button.Flyout><Flyout><StackPanel Spacing="4" MinWidth="180">
+                      <Button Classes="ghost" Content="Move earlier" Command="{Binding MoveEarlierCommand}" /><Button Classes="ghost" Content="Move later" Command="{Binding MoveLaterCommand}" />
+                      <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" /><Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
+                    </StackPanel></Flyout></Button.Flyout>
+                  </Button>
+                </Grid>
+              </Border>
+            </DataTemplate></ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="5"><TextBlock Text="PROJECTS" Classes="eyebrow" /><TextBlock Text="A place for each next step" Classes="section-heading" /></StackPanel>
+          <Grid ColumnDefinitions="180,*,Auto" ColumnSpacing="8">
+            <ComboBox ItemsSource="{Binding Boards}" SelectedValue="{Binding SelectedBoardId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="New project board" />
+            <TextBox Grid.Column="1" Text="{Binding NewProjectName}" PlaceholderText="New project name" AutomationProperties.Name="New project name" /><Button Grid.Column="2" Classes="secondary" Content="Add project" Command="{Binding CreateProjectCommand}" />
+          </Grid>
+          <ItemsControl ItemsSource="{Binding ProjectAdminRows}">
+            <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:ProjectAdminRowViewModel">
+              <Border Classes="catalog-row"><Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Project.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LifecycleLabel}" Classes="muted" FontSize="12" /></StackPanel>
+                <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit project" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                <Button Grid.Column="2" Classes="ghost" Content="•••" AutomationProperties.Name="Project actions"><Button.Flyout><Flyout><StackPanel Spacing="6" Width="220">
+                  <Button Classes="ghost" Content="Move earlier" Command="{Binding MoveEarlierCommand}" /><Button Classes="ghost" Content="Move later" Command="{Binding MoveLaterCommand}" /><Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" /><Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
+                </StackPanel></Flyout></Button.Flyout></Button>
+              </Grid></Border>
+            </DataTemplate></ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+    <StackPanel Spacing="20" IsVisible="{Binding IsActivitySettings}">
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="16">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="5"><TextBlock Text="ACTIVITY LIBRARY" Classes="eyebrow" /><TextBlock Text="The things you spend time on" Classes="section-heading" /></StackPanel>
+            <Button Grid.Column="1" Classes="primary" Content="+ New activity" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="activity" />
+          </Grid>
+          <TextBlock Text="Start activities in Time Tracker. Organize and maintain them here." Classes="muted" TextWrapping="Wrap" />
+          <ItemsControl ItemsSource="{Binding ActivityAdminRows}">
+            <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:ActivityAdminRowViewModel">
+              <Border Classes="catalog-row"><Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Activity.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding CatalogLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" /></StackPanel>
+                <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit activity" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                <Button Grid.Column="2" Classes="ghost" Content="•••" AutomationProperties.Name="Activity actions"><Button.Flyout><Flyout><StackPanel Spacing="6" Width="220">
+                  <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" /><Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
+                </StackPanel></Flyout></Button.Flyout></Button>
+              </Grid></Border>
+            </DataTemplate></ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="No activities yet. Create one to start tracking your routines." Classes="muted" IsVisible="{Binding HasNoActivities}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="16">
+          <TextBlock Text="ACTIVITY GROUPS" Classes="eyebrow" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><TextBox Text="{Binding NewActivityGroupName}" PlaceholderText="New group name" AutomationProperties.Name="New activity group name" /><Button Grid.Column="1" Classes="secondary" Content="Add group" Command="{Binding CreateActivityGroupCommand}" /></Grid>
+          <ItemsControl ItemsSource="{Binding ActivityGroupAdminRows}">
+            <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:ActivityGroupAdminRowViewModel">
+              <Border Classes="catalog-row"><Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Group.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LifecycleLabel}" Classes="muted" FontSize="12" /></StackPanel>
+                <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit activity group" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                <Button Grid.Column="2" Classes="ghost" Content="•••" AutomationProperties.Name="Group actions"><Button.Flyout><Flyout><StackPanel Spacing="4" MinWidth="180"><Button Classes="ghost" Content="Move earlier" Command="{Binding MoveEarlierCommand}" /><Button Classes="ghost" Content="Move later" Command="{Binding MoveLaterCommand}" /><Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" /></StackPanel></Flyout></Button.Flyout></Button>
+              </Grid></Border>
+            </DataTemplate></ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+    <StackPanel Spacing="20" IsVisible="{Binding IsCalendarSettings}">
+      <Border Classes="card" Padding="24">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="5"><TextBlock Text="CALENDARS" Classes="eyebrow" /><TextBlock Text="Give your plans a home" Classes="section-heading" /><TextBlock Text="Choose which calendars appear in your schedule." Classes="muted" /></StackPanel>
+          <Grid ColumnDefinitions="*,120,Auto" ColumnSpacing="8"><TextBox Text="{Binding NewCalendarName}" PlaceholderText="New calendar name" AutomationProperties.Name="New calendar name" /><TextBox Grid.Column="1" Text="{Binding NewCalendarColor}" AutomationProperties.Name="New calendar color" /><Button Grid.Column="2" Classes="secondary" Content="Add calendar" Command="{Binding CreateCalendarCommand}" /></Grid>
+          <ItemsControl ItemsSource="{Binding CalendarAdminRows}">
+            <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:CalendarAdminRowViewModel">
+              <Border Classes="catalog-row"><Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+                <Border Background="{Binding Calendar.Color}" Width="12" Height="12" CornerRadius="6" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Calendar.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding CatalogLabel}" Classes="muted" FontSize="12" /></StackPanel>
+                <Button Grid.Column="2" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit calendar" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                <Button Grid.Column="3" Classes="ghost" Content="•••" AutomationProperties.Name="Calendar actions"><Button.Flyout><Flyout><Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" /></Flyout></Button.Flyout></Button>
+              </Grid></Border>
+            </DataTemplate></ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" IsVisible="{Binding HasDeletedCalendarEvents}">
+        <StackPanel Spacing="16"><TextBlock Text="DELETED EVENTS" Classes="eyebrow" /><TextBlock Text="Bring an event back to its calendar." Classes="muted" />
+          <ItemsControl ItemsSource="{Binding DeletedCalendarEvents}"><ItemsControl.ItemTemplate><DataTemplate x:DataType="local:DeletedCalendarEventRowViewModel">
+            <Border Classes="catalog-row"><Grid ColumnDefinitions="*,Auto" ColumnSpacing="12"><StackPanel Spacing="4"><TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding DetailLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Classes="secondary" Content="Restore" Command="{Binding RestoreCommand}" /></Grid></Border>
+          </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

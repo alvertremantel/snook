@@ -12,6 +12,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 {
     private readonly MainWindowViewModel _viewModel;
     private Control? _editorReturnFocus;
+    private Control? _utilityReturnFocus;
 
     public MainWindow()
         : this(App.ConfiguredBackend ?? throw new InvalidOperationException("The desktop backend was not configured."))
@@ -25,6 +26,27 @@ public partial class MainWindow : Window, IAsyncDisposable
         DataContext = _viewModel;
         _viewModel.PropertyChanged += (_, e) =>
         {
+            if (e.PropertyName is nameof(MainWindowViewModel.CurrentSection) or nameof(MainWindowViewModel.SettingsPage))
+                PageScroll.Offset = default;
+            if (e.PropertyName == nameof(MainWindowViewModel.IsUtilityEditorOpen))
+            {
+                if (_viewModel.IsUtilityEditorOpen)
+                {
+                    _utilityReturnFocus = FocusManager?.GetFocusedElement() as Control;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        UtilityDrawer.GetVisualDescendants().OfType<ScrollViewer>().First().Offset = default;
+                        UtilityDrawer.GetVisualDescendants().OfType<Control>()
+                            .FirstOrDefault(control => control.IsEffectivelyVisible && control is TextBox or ComboBox)?.Focus();
+                    });
+                }
+                else Dispatcher.UIThread.Post(() =>
+                {
+                    if (_utilityReturnFocus?.IsEffectivelyVisible == true && TopLevel.GetTopLevel(_utilityReturnFocus) is not null)
+                        _utilityReturnFocus.Focus();
+                    else this.GetVisualDescendants().OfType<Button>().FirstOrDefault(button => button.Classes.Contains("nav") && button.Classes.Contains("selected"))?.Focus();
+                });
+            }
             if (e.PropertyName != nameof(MainWindowViewModel.IsTaskEditorOpen)) return;
             if (_viewModel.IsTaskEditorOpen)
             {
@@ -43,8 +65,8 @@ public partial class MainWindow : Window, IAsyncDisposable
         };
         SizeChanged += (_, _) =>
         {
-            TrackerActivitiesScroll.MaxHeight = Math.Max(260, Bounds.Height - 240);
-            TrackerSessionsScroll.MaxHeight = Math.Max(260, Bounds.Height - 240);
+            TrackerActivitiesScroll.MaxHeight = Math.Max(260, Bounds.Height - 270);
+            TrackerSessionsScroll.MaxHeight = Math.Max(260, Bounds.Height - 270);
             BoardScroll.Height = Math.Max(260, Bounds.Height - 380);
         };
         Opened += OnOpened;
@@ -84,7 +106,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(section => section.Length > 0)
             .ToArray()
-            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "tracker", "tracker-details-bottom", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "history", "history-details", "summary", "settings", "settings-bottom"];
+            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "tracker", "tracker-new-activity", "tracker-manual", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "history", "history-details", "summary", "settings", "settings-organization", "settings-activities", "settings-activities-bottom", "settings-calendars", "settings-activity-editor"];
 
         foreach (var section in requestedSections)
         {

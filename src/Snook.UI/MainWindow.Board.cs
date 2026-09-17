@@ -109,11 +109,24 @@ public partial class MainWindow
 
     private void OnCardCaptureLost(object? sender, PointerCaptureLostEventArgs e) => ClearBoardDrag();
 
+    private void OnTaskCaptureKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None) return;
+        if (_viewModel.CreateTaskCommand.CanExecute(null))
+            _viewModel.CreateTaskCommand.Execute(null);
+        e.Handled = true;
+    }
+
     protected override void OnKeyDown(KeyEventArgs e)
     {
         if (e.Key == Key.Escape && _dragCard is not null)
         {
             ClearBoardDrag();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && _viewModel.IsUtilityEditorOpen)
+        {
+            _viewModel.CloseUtilityEditorCommand.Execute(null);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape && _viewModel.IsTaskEditorOpen)

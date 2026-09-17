@@ -1,0 +1,153 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.UtilityEditorView"
+             x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
+  <UserControl.DataTemplates>
+    <DataTemplate DataType="local:BoardAdminRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Board name" Classes="field-label" />
+        <TextBox Text="{Binding DraftName}" AutomationProperties.Name="Board name" />
+        <TextBlock Text="Projects in this board keep their tasks and history." Classes="muted" TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:ProjectAdminRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Project name" Classes="field-label" />
+        <TextBox Text="{Binding DraftName}" AutomationProperties.Name="Project name" />
+        <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,18,0,6" />
+        <TextBlock Text="Add a tag · applies immediately" Classes="field-label" />
+        <TextBox Text="{Binding TagText}" AutomationProperties.Name="Project tag" PlaceholderText="Tag name" />
+        <Button Classes="secondary" Content="Add tag" Command="{Binding AddTagCommand}" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:ActivityGroupAdminRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Group name" Classes="field-label" />
+        <TextBox Text="{Binding DraftName}" AutomationProperties.Name="Group name" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:ActivityAdminRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Activity name" Classes="field-label" />
+        <TextBox Text="{Binding DraftName}" AutomationProperties.Name="Activity name" />
+        <TextBlock Text="Description" Classes="field-label" />
+        <TextBox Text="{Binding DraftDescription}" AutomationProperties.Name="Activity description" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="90" />
+        <TextBlock Text="Track as" Classes="field-label" />
+        <ComboBox ItemsSource="{Binding LaneOptions}" SelectedValue="{Binding DraftLane}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="Activity tracking lane" />
+        <TextBlock Text="Group" Classes="field-label" />
+        <ComboBox ItemsSource="{Binding GroupOptions}" SelectedValue="{Binding GroupId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="Activity group" />
+        <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,18,0,6" />
+        <TextBlock Text="Add a tag · applies immediately" Classes="field-label" />
+        <TextBox Text="{Binding TagText}" AutomationProperties.Name="Activity tag" PlaceholderText="Tag name" />
+        <Button Classes="secondary" Content="Add tag" Command="{Binding AddTagCommand}" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:CalendarAdminRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Calendar name" Classes="field-label" />
+        <TextBox Text="{Binding DraftName}" AutomationProperties.Name="Calendar name" />
+        <TextBlock Text="Color · hex code" Classes="field-label" />
+        <TextBox Text="{Binding DraftColor}" AutomationProperties.Name="Calendar color" />
+        <CheckBox Content="Show this calendar" IsChecked="{Binding IsVisible}" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:HistoryRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="{Binding Title}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Context}" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,12" />
+        <TextBlock Text="Task" Classes="field-label" />
+        <ComboBox ItemsSource="{Binding TaskOptions}" SelectedValue="{Binding SelectedTaskId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="Correction task" PlaceholderText="No task" />
+        <TextBlock Text="Activity" Classes="field-label" />
+        <ComboBox ItemsSource="{Binding ActivityOptions}" SelectedValue="{Binding SelectedActivityId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="Correction activity" PlaceholderText="No activity" />
+        <TextBlock Text="Start · local time" Classes="field-label" />
+        <TextBox Text="{Binding StartText}" AutomationProperties.Name="Correction start" PlaceholderText="YYYY-MM-DD HH:MM" />
+        <TextBlock Text="End · local time" Classes="field-label" />
+        <TextBox Text="{Binding EndText}" AutomationProperties.Name="Correction end" PlaceholderText="Leave blank for an open interval" />
+        <TextBlock Text="Notes" Classes="field-label" />
+        <TextBox Text="{Binding NotesEditor}" AutomationProperties.Name="Correction notes" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="72" />
+        <TextBlock Text="Reason for correction" Classes="field-label" />
+        <TextBox Text="{Binding ReasonText}" AutomationProperties.Name="Correction reason" PlaceholderText="What changed?" />
+        <TextBlock Text="The original entry and your correction are retained in the history." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:CalendarBlockRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Block title" Classes="field-label" />
+        <TextBox Text="{Binding TitleEditor}" AutomationProperties.Name="Block title" />
+        <TextBlock Text="Start · local time" Classes="field-label" />
+        <TextBox Text="{Binding StartText}" AutomationProperties.Name="Block start" />
+        <TextBlock Text="End · local time" Classes="field-label" />
+        <TextBox Text="{Binding EndText}" AutomationProperties.Name="Block end" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:CalendarEventRowViewModel">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Title" Classes="field-label" /><TextBox Text="{Binding TitleEditor}" AutomationProperties.Name="Event title" />
+        <TextBlock Text="Start · local time" Classes="field-label" /><TextBox Text="{Binding StartText}" AutomationProperties.Name="Event start" />
+        <TextBlock Text="End · local time" Classes="field-label" /><TextBox Text="{Binding EndText}" AutomationProperties.Name="Event end" />
+        <CheckBox Content="All day" IsChecked="{Binding AllDayEditor}" />
+        <TextBlock Text="Description" Classes="field-label" /><TextBox Text="{Binding DescriptionEditor}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="72" AutomationProperties.Name="Event description" />
+        <TextBlock Text="Location" Classes="field-label" /><TextBox Text="{Binding LocationEditor}" AutomationProperties.Name="Event location" />
+        <TextBlock Text="Color · hex code" Classes="field-label" /><TextBox Text="{Binding ColorEditor}" AutomationProperties.Name="Event color" />
+        <TextBlock Text="Recurrence rule · optional" Classes="field-label" /><TextBox Text="{Binding RecurrenceEditor}" AutomationProperties.Name="Event recurrence" PlaceholderText="FREQ=WEEKLY" />
+        <TextBlock Text="Recurrence end · local time, optional" Classes="field-label" /><TextBox Text="{Binding RecurrenceEndText}" AutomationProperties.Name="Event recurrence end" />
+      </StackPanel>
+    </DataTemplate>
+  </UserControl.DataTemplates>
+  <Grid RowDefinitions="Auto,*,Auto" RowSpacing="20">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+      <StackPanel Spacing="7">
+        <TextBlock Text="{Binding CurrentSection}" Classes="eyebrow" />
+        <TextBlock Text="{Binding UtilityTitle}" FontSize="24" FontWeight="SemiBold" TextWrapping="Wrap" />
+      </StackPanel>
+      <Button Grid.Column="1" Classes="ghost" Content="Cancel" AutomationProperties.Name="Cancel editor" Command="{Binding CloseUtilityEditorCommand}" VerticalAlignment="Top" />
+    </Grid>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="12" Margin="0,0,8,0">
+        <ContentControl Content="{Binding UtilityDraft}" HorizontalContentAlignment="Stretch" />
+        <StackPanel Spacing="8" IsVisible="{Binding IsManualEditor}">
+          <TextBlock Text="Record work that already happened." Classes="muted" Margin="0,0,0,12" />
+          <TextBlock Text="Task · optional" Classes="field-label" />
+          <ComboBox ItemsSource="{Binding UtilityManualTasks}" SelectedValue="{Binding ManualTaskId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose a task" AutomationProperties.Name="Manual task" />
+          <TextBlock Text="Activity · optional" Classes="field-label" />
+          <ComboBox ItemsSource="{Binding UtilityActivities}" SelectedValue="{Binding ManualActivityId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose an activity" AutomationProperties.Name="Manual activity" />
+          <TextBlock Text="Start · local time" Classes="field-label" /><TextBox Text="{Binding ManualStartText}" AutomationProperties.Name="Manual start" />
+          <TextBlock Text="End · local time" Classes="field-label" /><TextBox Text="{Binding ManualEndText}" AutomationProperties.Name="Manual end" />
+          <TextBlock Text="Notes · optional" Classes="field-label" /><TextBox Text="{Binding ManualNotes}" AutomationProperties.Name="Manual notes" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="96" />
+          <TextBlock Text="Choose at least a task or an activity. Times use YYYY-MM-DD HH:MM." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Spacing="8" IsVisible="{Binding IsNewActivityEditor}">
+          <TextBlock Text="A repeatable activity, with or without a task." Classes="muted" TextWrapping="Wrap" Margin="0,0,0,12" />
+          <TextBlock Text="Name" Classes="field-label" /><TextBox Text="{Binding NewActivityName}" AutomationProperties.Name="New standalone activity name" PlaceholderText="e.g. Design exploration" />
+          <TextBlock Text="Description · optional" Classes="field-label" /><TextBox Text="{Binding NewActivityDescription}" AutomationProperties.Name="New standalone activity description" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="90" />
+          <TextBlock Text="Track as" Classes="field-label" /><ComboBox ItemsSource="{Binding SessionLaneOptions}" SelectedValue="{Binding NewActivityLane}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="New activity lane" />
+          <TextBlock Text="Group" Classes="field-label" /><ComboBox ItemsSource="{Binding UtilityGroups}" SelectedValue="{Binding NewActivityGroupId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="No group" AutomationProperties.Name="New activity group" />
+        </StackPanel>
+        <StackPanel Spacing="8" IsVisible="{Binding IsPlanEditor}">
+          <TextBlock Text="Task" Classes="field-label" /><ComboBox ItemsSource="{Binding UtilityPlanTasks}" SelectedValue="{Binding CalendarPlanTaskId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose a task" AutomationProperties.Name="Task to plan" />
+          <TextBlock Text="Calendar" Classes="field-label" /><ComboBox ItemsSource="{Binding UtilityCalendars}" SelectedValue="{Binding SelectedCalendarId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="Calendar for planned task" />
+          <TextBlock Text="Start · local time" Classes="field-label" /><TextBox Text="{Binding CalendarPlanStartText}" AutomationProperties.Name="Planned task start" />
+          <TextBlock Text="End · local time" Classes="field-label" /><TextBox Text="{Binding CalendarPlanEndText}" AutomationProperties.Name="Planned task end" />
+          <TextBlock Text="Times use YYYY-MM-DD HH:MM. A plan reserves time; start the timer when you begin." Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Spacing="8" IsVisible="{Binding IsNewEventEditor}">
+          <TextBlock Text="Title" Classes="field-label" /><TextBox Text="{Binding NewEventTitle}" AutomationProperties.Name="New event title" />
+          <TextBlock Text="Calendar" Classes="field-label" /><ComboBox ItemsSource="{Binding UtilityCalendars}" SelectedValue="{Binding SelectedCalendarId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" AutomationProperties.Name="New event calendar" />
+          <TextBlock Text="Start · local time" Classes="field-label" /><TextBox Text="{Binding NewEventStart}" AutomationProperties.Name="New event start" />
+          <TextBlock Text="End · local time" Classes="field-label" /><TextBox Text="{Binding NewEventEnd}" AutomationProperties.Name="New event end" />
+          <CheckBox Content="All day" IsChecked="{Binding NewEventAllDay}" />
+          <TextBlock Text="Description" Classes="field-label" /><TextBox Text="{Binding NewEventDescription}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="72" AutomationProperties.Name="New event description" />
+          <TextBlock Text="Location" Classes="field-label" /><TextBox Text="{Binding NewEventLocation}" AutomationProperties.Name="New event location" />
+          <TextBlock Text="Color · hex code" Classes="field-label" /><TextBox Text="{Binding NewEventColor}" AutomationProperties.Name="New event color" />
+          <TextBlock Text="Recurrence rule · optional" Classes="field-label" /><TextBox Text="{Binding NewEventRecurrence}" PlaceholderText="FREQ=WEEKLY" AutomationProperties.Name="New event recurrence" />
+          <TextBlock Text="Recurrence end · local time, optional" Classes="field-label" /><TextBox Text="{Binding NewEventRecurrenceEnd}" AutomationProperties.Name="New event recurrence end" />
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+    <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource BorderBrush}" Padding="0,16,0,0">
+      <StackPanel Spacing="12">
+        <TextBlock Text="{Binding StatusMessage}" Classes="muted" FontSize="12" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+        <Button Classes="primary" Content="{Binding UtilitySaveLabel}" AutomationProperties.Name="Save workspace editor" Command="{Binding UtilitySaveCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

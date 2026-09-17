@@ -1,5 +1,40 @@
 # Workspace redesign
 
+## Current direction: September 2026 modernization
+
+The [intensive review and implementation plan](ui-modernization.md) supersedes the
+earlier disclosure-based maintenance layouts described below. The Dashboard split,
+calendar time grid, sidebar, and state colors remain the foundation.
+
+Page-wide expanders no longer serve as workspace navigation. Settings has four
+explicit categories and readable record rows, with Edit plus a contextual actions
+menu. Tracker puts activity creation and manual time above its two scrolling panes;
+maintenance lives in the Settings activity library. Tasks uses compact rows,
+functional completion controls, a filter popup, and inline card actions. History
+uses aligned ledger columns and a correction drawer. Summary highlights the active
+grouping, compares attributed durations with bars, and labels clock coverage
+separately. Calendar creation uses drawers and detailed editing belongs to Agenda.
+
+Task capture accepts Enter as well as its button. Tasks has an explicit Board
+selector in both views, including All boards. New boards are immediately selected
+and displayed even before they contain projects, with a prompt to add the first
+project. Project lanes and task rows follow that selection; dashboard next tasks
+remain workspace-wide.
+
+The shared utility drawer is 480 pixels wide, with a scrolling form between a
+fixed title/Cancel area and a fixed Save/status area. New controls use compiled
+bindings and persistent field labels. Record drafts and picker choices are isolated
+from backend refreshes; Cancel/Escape discard them; stale saves preserve them with
+actionable feedback. Focus cycles inside the editor and returns to the workspace.
+The task editor retains its bounded secondary disclosures for relationships and
+lifecycle actions; those are local to the drawer, rather than page navigation.
+
+Notes-only History corrections preserve precise stored timestamps even though the
+form displays minutes. This matters for sessions shorter than a minute. Timer
+preferences also preserve unsaved changes across background refreshes.
+
+The sections below record earlier design passes and their verification history.
+
 The target is a desktop workspace worth leaving open: a legible place to choose work,
 keep several activities in view, and move between tasks, time, and the calendar.
 Summary charts are secondary to those daily interactions.

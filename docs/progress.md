@@ -1,12 +1,35 @@
 # Snook implementation progress
 
-Updated: 2026-09-12
+Updated: 2026-09-16
 
 ## Current state
 
 Snook is a working desktop vertical slice for local work organization and time tracking. It builds as a .NET 10 Avalonia application, persists to SQLite, and can optionally use an authenticated local daemon. The UI is ready for a human visual pass; this is not yet a finished multi-platform release.
 
 ## Implemented surface
+
+- Quick task capture accepts Enter on Dashboard and Tasks, using the same guarded
+  create command as the button. Tasks now renders board selection independently
+  of project lanes: creating a board selects it, shows an empty-board prompt,
+  and renders its first project as soon as it is added. All boards remains
+  available; selecting a board filters both List and Board views.
+  Verified with persisted keyboard/creation/drag/editor checks at 1280×820 and
+  980×640, inspected seeded and empty captures, a clean full build, and 33 passing
+  domain/application tests. Captures are in `artifacts/ui-capture-board-fix*`.
+- Desktop modernization after an intensive rendered/code review: Settings categories
+  and readable catalogs replace page-wide maintenance expanders; Tasks has compact
+  rows, completion controls, inline board actions, and a filter popup; Tracker has
+  toolbar creation/manual-time actions and a route to its activity library; History
+  uses a ledger and correction drawer; Summary has selected groupings and proportional
+  time bars. Dashboard composition and Calendar's time grid are preserved, with
+  calendar creation/editing moved into focused drawers. The written review and plan
+  are in `docs/ui-modernization.md`.
+- Shared utility editors use compiled bindings, isolated record/picker drafts,
+  fixed Save/Cancel areas, scrolling forms, keyboard focus containment/return, and
+  actionable revision-conflict feedback. Project/activity tags remain explicit
+  immediate actions inside the editor. Notes-only history corrections preserve
+  precise interval timestamps; unsaved timer preferences survive refresh and can
+  be reset to their saved value.
 
 - Refined light palette: warm neutral surfaces, dark slate text, and deep teal actions; shared Fluent resources align dropdowns, text entry, menus, and interaction states with the workspace. The light variant is explicit rather than mixing system-dark controls with light page surfaces.
 
@@ -31,6 +54,24 @@ Snook is a working desktop vertical slice for local work organization and time t
 - Capture and tracking workflows: Tasks now creates boards, projects, and tasks in place; Time Tracker is a dedicated sidebar workspace for standalone activity creation, editing, lifecycle management, manual entries, and timer controls; Today can select and switch activities while keeping paused foreground sessions resumable.
 
 ## Verification completed
+
+- Modernization: full solution build with zero warnings/errors and all 33 tests
+  passing (28 application, 5 domain). VSTest required loopback access outside the
+  filesystem sandbox. Seeded and empty captures at 1280×820 and 980×640 were
+  rendered and visually reviewed, including catalogs, sparse states, drawers,
+  bottom-of-page reachability, and Calendar's Agenda. Artifacts are in
+  `artifacts/ui-modernized`, `ui-modernized-narrow`, `ui-modernized-empty`, and
+  `ui-modernized-empty-narrow`.
+- Combined headless checks passed at standard and minimum sizes: board creation,
+  dragging/edge scrolling, task draft and stale-save handling, timers, calendar
+  navigation/planning, manual time, activity creation, History validation/provenance
+  and exact timestamp preservation, Settings categories, board/activity/calendar
+  editing, focus containment/return, and cancellation. Further minimum-size checks
+  cover timer-preference drafts/reset, immediate tags without draft loss, and
+  calendar soft-delete/restore through the contextual menu. Interaction images are
+  in `artifacts/ui-modernized-interactions` and `ui-modernized-interactions-narrow`.
+  These are development checks; native human and assistive-technology review remain
+  separate release work.
 
 - Dashboard alignment and scrollbar refinement: the lower Today cards now share the upper row's column proportions. Scrollbars use muted gray-green thumbs, neutral tracks, and darker hover/pressed feedback. Verified with a clean solution build, all 33 tests, and persisted board/drawer/timer/calendar interaction checks. Seeded and empty dashboard captures were inspected at 1280×820 and 980×640, alongside tracker and board scrollbars (`/tmp/snook-alignment-images`).
 

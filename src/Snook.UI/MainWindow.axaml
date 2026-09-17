@@ -106,7 +106,7 @@
                   </StackPanel>
 
                 </Grid>
-                <TextBox AutomationProperties.Name="New task title" Text="{Binding TaskTitle, Mode=TwoWay}" PlaceholderText="What needs doing?" CornerRadius="9" Padding="12" />
+                <TextBox AutomationProperties.Name="New task title" Text="{Binding TaskTitle, Mode=TwoWay}" KeyDown="OnTaskCaptureKeyDown" PlaceholderText="What needs doing?" CornerRadius="9" Padding="12" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                   <ComboBox AutomationProperties.Name="Task project" ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose a project" Padding="10" />
                   <Button Grid.Column="1" Classes="primary" AutomationProperties.Name="Add task" Content="Add task" Command="{Binding CreateTaskCommand}" />
@@ -246,54 +246,27 @@
               </StackPanel>
             </Border>
           </Grid>
-                <Expander Header="Add manual time" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                  <StackPanel Spacing="8">
-                    <TextBlock Text="MANUAL ENTRY" Classes="eyebrow" />
-                    <Button Classes="ghost" AutomationProperties.Name="Add thirty minutes of manual time" Content="Quick entry: add the last 30 minutes" Command="{Binding QuickManualTimeCommand}" />
-                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                      <ComboBox AutomationProperties.Name="Manual time task" ItemsSource="{Binding ManualTaskOptions}" SelectedValue="{Binding ManualTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Task (optional)" />
-                      <ComboBox Grid.Column="1" AutomationProperties.Name="Manual time activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding ManualActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity (optional)" />
-                    </Grid>
-                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                      <TextBox AutomationProperties.Name="Manual time start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (local, YYYY-MM-DD HH:MM)" />
-                      <TextBox Grid.Column="1" AutomationProperties.Name="Manual time end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (local, YYYY-MM-DD HH:MM)" />
-                    </Grid>
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                      <TextBox AutomationProperties.Name="Manual time notes" Text="{Binding ManualNotes, Mode=TwoWay}" PlaceholderText="Notes (optional)" />
-                      <Button Grid.Column="1" Classes="primary" Content="Save manual time" Command="{Binding ManualTimeCommand}" />
-                    </Grid>
-                  </StackPanel>
-                </Expander>
+                <Button Classes="secondary" Content="+ Add manual time" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="manual" />
         </StackPanel>
 
         <StackPanel Spacing="22" IsVisible="{Binding IsTasksVisible}">
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <StackPanel Spacing="12">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <WrapPanel Classes="editor" Orientation="Horizontal">
                   <Button x:Name="TaskListViewButton" Classes="ghost" Classes.selected="{Binding IsTaskListVisible}" AutomationProperties.Name="Show tasks as list" Content="List" Command="{Binding SelectTaskViewCommand}" CommandParameter="List" />
                   <Button Classes="ghost" Classes.selected="{Binding IsTaskBoardVisible}" AutomationProperties.Name="Show tasks as board" Content="Board" Command="{Binding SelectTaskViewCommand}" CommandParameter="Board" />
                   <ComboBox ItemsSource="{Binding TaskSortOptions}" SelectedValue="{Binding TaskSortMode, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" Width="130" PlaceholderText="Sort" />
-                  <CheckBox Content="Show completed" IsChecked="{Binding ShowCompleted, Mode=TwoWay}" />
-                  <CheckBox Content="Show archived" IsChecked="{Binding ShowArchived, Mode=TwoWay}" />
-                  <CheckBox Content="Show deleted" IsChecked="{Binding ShowDeleted, Mode=TwoWay}" />
+                  <Button Classes="ghost" Content="{Binding TaskFilterLabel}" AutomationProperties.Name="Task filters">
+                    <Button.Flyout><Flyout><StackPanel Spacing="10" MinWidth="200">
+                      <TextBlock Text="INCLUDE IN THIS VIEW" Classes="eyebrow" />
+                      <CheckBox Content="Completed tasks" IsChecked="{Binding ShowCompleted, Mode=TwoWay}" />
+                      <CheckBox Content="Archived tasks" IsChecked="{Binding ShowArchived, Mode=TwoWay}" />
+                      <CheckBox Content="Deleted tasks" IsChecked="{Binding ShowDeleted, Mode=TwoWay}" />
+                    </StackPanel></Flyout></Button.Flyout>
+                  </Button>
                 </WrapPanel>
-               </StackPanel>
-               <Border Background="{DynamicResource SubtleBrush}" CornerRadius="12" Padding="12">
-                 <StackPanel Spacing="12">
-
-                   <Grid ColumnDefinitions="*,240,Auto" ColumnSpacing="8">
-                     <TextBox AutomationProperties.Name="Tasks screen new task title" Text="{Binding TaskTitle, Mode=TwoWay}" PlaceholderText="What needs doing?" Padding="9" />
-                     <ComboBox Grid.Column="1" AutomationProperties.Name="Tasks screen task project" ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Project" Padding="9" />
-                     <Button Grid.Column="2" Classes="primary" AutomationProperties.Name="Create task from Tasks" Content="Add task" Command="{Binding CreateTaskCommand}" />
-                   </Grid>
-                 </StackPanel>
-               </Border>
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
-                <ComboBox x:Name="BoardProjectJump" IsVisible="{Binding IsTaskBoardVisible}" ItemsSource="{Binding TaskGroups}" DisplayMemberBinding="{Binding ProjectName}" PlaceholderText="Jump to a project" SelectionChanged="OnBoardProjectSelected" AutomationProperties.Name="Jump to board project" MaxWidth="280" HorizontalAlignment="Left" />
-                <Button Grid.Column="1" IsVisible="{Binding IsTaskBoardVisible}" Classes="ghost" Content="←" Click="OnBoardPrevious" AutomationProperties.Name="Previous project lanes" />
-                <Button Grid.Column="2" IsVisible="{Binding IsTaskBoardVisible}" Classes="ghost" Content="→" Click="OnBoardNext" AutomationProperties.Name="Next project lanes" />
-                <Button x:Name="BoardCreationButton" Grid.Column="3" Classes="icon" Content="+ New board / project" AutomationProperties.Name="New board or project">
+                <Button x:Name="BoardCreationButton" Grid.Column="1" Classes="icon" Content="+ New board / project" AutomationProperties.Name="New board or project">
                   <Button.Flyout>
                     <Flyout Placement="BottomEdgeAlignedRight" Opened="OnBoardCreationOpened">
                       <StackPanel Width="340" Spacing="16" KeyboardNavigation.TabNavigation="Cycle">
@@ -315,24 +288,41 @@
                   </Button.Flyout>
                 </Button>
               </Grid>
-              <ItemsControl ItemsSource="{Binding Tasks}" IsVisible="{Binding IsTaskListVisible}">
+               <Border Background="{DynamicResource SubtleBrush}" CornerRadius="12" Padding="12">
+                 <StackPanel Spacing="12">
+
+                   <Grid ColumnDefinitions="*,180,Auto" ColumnSpacing="8">
+                     <TextBox AutomationProperties.Name="Tasks screen new task title" Text="{Binding TaskTitle, Mode=TwoWay}" KeyDown="OnTaskCaptureKeyDown" PlaceholderText="What needs doing?" Padding="9" />
+                     <ComboBox Grid.Column="1" AutomationProperties.Name="Tasks screen task project" ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Project" Padding="9" />
+                     <Button Grid.Column="2" Classes="primary" AutomationProperties.Name="Create task from Tasks" Content="Add task" Command="{Binding CreateTaskCommand}" />
+                   </Grid>
+                 </StackPanel>
+               </Border>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <TextBlock Text="Board" Classes="muted" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1" AutomationProperties.Name="Task board" ItemsSource="{Binding TaskBoardOptions}" SelectedValue="{Binding TaskBoardId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" MaxWidth="360" HorizontalAlignment="Left" />
+              </Grid>
+              <TextBlock Text="This board has no projects yet. Use + New board / project to add its first project." Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasEmptyTaskBoard}" />
+              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" IsVisible="{Binding IsTaskBoardVisible}">
+                <ComboBox x:Name="BoardProjectJump" IsVisible="{Binding IsTaskBoardVisible}" ItemsSource="{Binding TaskGroups}" DisplayMemberBinding="{Binding ProjectName}" PlaceholderText="Jump to a project" SelectionChanged="OnBoardProjectSelected" AutomationProperties.Name="Jump to board project" MaxWidth="280" HorizontalAlignment="Left" />
+                <Button Grid.Column="1" IsVisible="{Binding IsTaskBoardVisible}" Classes="ghost" Content="←" Click="OnBoardPrevious" AutomationProperties.Name="Previous project lanes" />
+                <Button Grid.Column="2" IsVisible="{Binding IsTaskBoardVisible}" Classes="ghost" Content="→" Click="OnBoardNext" AutomationProperties.Name="Next project lanes" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding WorkspaceTasks}" IsVisible="{Binding IsTaskListVisible}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,10">
-                      <Grid RowDefinitions="Auto,Auto" RowSpacing="8" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="13">
-                        <Border Background="{DynamicResource SubtleBrush}" CornerRadius="6" Width="22" Height="22" VerticalAlignment="Center">
-                          <TextBlock Text="○" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                    <Border Classes="catalog-row" Padding="0,16">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+                        <Button Classes="ghost" Content="{Binding CompletionGlyph}" AutomationProperties.Name="{Binding ActionLabel}" ToolTip.Tip="{Binding ActionLabel}" Command="{Binding CompleteCommand}" VerticalAlignment="Center" Padding="8" />
                         <StackPanel Grid.Column="1" Spacing="4">
                           <TextBlock Text="{Binding Title}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" TextWrapping="Wrap" />
                           <TextBlock Classes="muted" FontSize="11" ><Run Text="{Binding ProjectName}" />  ·  <Run Text="{Binding DueLabel}" />  ·  <Run Text="{Binding TrackedLabel}" /></TextBlock>
                         </StackPanel>
                         <TextBlock Grid.Column="2" Text="{Binding PriorityLabel}" Foreground="{DynamicResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="5">
-                          <Button Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
-                          <Button Classes="ghost" Content="{Binding ActionLabel}" Command="{Binding CompleteCommand}" />
+                          <Button Classes="icon" Content="Start" Command="{Binding StartCommand}" />
+                          <Button Classes="ghost" Content="Edit" AutomationProperties.Name="Edit task" Command="{Binding ShowDetailsCommand}" />
                         </StackPanel>
-                        <Button Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Classes="ghost" Content="Edit &amp; details" Command="{Binding ShowDetailsCommand}" />
                       </Grid>
                     </Border>
                   </DataTemplate>
@@ -354,7 +344,7 @@
                           <ItemsControl.ItemTemplate>
                             <DataTemplate>
                               <Border Classes="task-card" Padding="14" Margin="0,0,0,12">
-                              <StackPanel Spacing="12">
+                              <StackPanel Spacing="10">
                                 <Border Classes="drag-handle" Background="Transparent" Cursor="Hand" PointerPressed="OnCardPressed" PointerMoved="OnCardMoved" PointerReleased="OnCardReleased" PointerCaptureLost="OnCardCaptureLost" ToolTip.Tip="Drag to another project. You can also use Move below.">
                                 <StackPanel Spacing="8">
                                   <Grid ColumnDefinitions="*,Auto">
@@ -365,11 +355,11 @@
                                   <TextBlock Classes="muted" FontSize="11" ><Run Text="{Binding DueLabel}" />  ·  <Run Text="{Binding TrackedLabel}" /></TextBlock>
                                 </StackPanel>
                                 </Border>
-                                <Grid ColumnDefinitions="*,Auto">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4">
                                   <Button Classes="icon" Content="Start" Command="{Binding StartCommand}" />
-                                  <Button Grid.Column="1" Classes="ghost" Content="{Binding ActionLabel}" Command="{Binding CompleteCommand}" />
+                                  <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit task" Command="{Binding ShowDetailsCommand}" />
+                                  <Button Grid.Column="2" Classes="ghost" Content="{Binding CompletionGlyph}" AutomationProperties.Name="{Binding ActionLabel}" ToolTip.Tip="{Binding ActionLabel}" Command="{Binding CompleteCommand}" />
                                 </Grid>
-                                <Button Classes="ghost" Content="Edit &amp; details" Command="{Binding ShowDetailsCommand}" />
                               </StackPanel>
                               </Border>
                             </DataTemplate>
@@ -382,13 +372,18 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
               </ScrollViewer>
-              <TextBlock Text="No tasks match this view." Classes="muted" IsVisible="{Binding HasNoTasks}" />
+              <TextBlock Text="No tasks match this view." Classes="muted" IsVisible="{Binding HasNoWorkspaceTasks}" />
 
             </StackPanel>
           </Border>
         </StackPanel>
 
-        <StackPanel Spacing="22" IsVisible="{Binding IsTimeTrackerVisible}">
+        <StackPanel Spacing="18" IsVisible="{Binding IsTimeTrackerVisible}">
+          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+            <Button Classes="ghost" Content="Activity library →" Command="{Binding OpenActivityLibraryCommand}" HorizontalAlignment="Left" />
+            <Button Grid.Column="1" Classes="secondary" Content="+ Manual time" AutomationProperties.Name="Add manual time" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="manual" />
+            <Button Grid.Column="2" Classes="primary" Content="+ New activity" AutomationProperties.Name="New activity" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="activity" />
+          </Grid>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
             <ScrollViewer x:Name="TrackerActivitiesScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="16">
@@ -425,7 +420,7 @@
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-              <TextBlock Text="No available activities. Add one below, or restore one in Manage activities." TextWrapping="Wrap" Classes="muted" IsVisible="{Binding HasNoTrackerActivities}" />
+              <TextBlock Text="No activities here yet. Create an activity above, or restore one in the activity library." TextWrapping="Wrap" Classes="muted" IsVisible="{Binding HasNoTrackerActivities}" />
             </StackPanel>
             </ScrollViewer>
             <ScrollViewer x:Name="TrackerSessionsScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -484,178 +479,83 @@
             </ScrollViewer>
           </Grid>
 
-          <Expander Header="Add time you already worked" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-            <Border Classes="card">
-              <StackPanel Spacing="12">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="MANUAL TIME" Classes="eyebrow" />
-                  <TextBlock Text="Record work that already happened." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" />
-                </StackPanel>
-                <ComboBox AutomationProperties.Name="Tracker manual task" ItemsSource="{Binding ManualTaskOptions}" SelectedValue="{Binding ManualTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Task (optional)" />
-                <ComboBox AutomationProperties.Name="Tracker manual activity" ItemsSource="{Binding Activities}" SelectedValue="{Binding ManualActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity (optional)" />
-                <TextBox AutomationProperties.Name="Tracker manual start" Text="{Binding ManualStartText, Mode=TwoWay}" PlaceholderText="Start (local, YYYY-MM-DD HH:MM)" />
-                <TextBox AutomationProperties.Name="Tracker manual end" Text="{Binding ManualEndText, Mode=TwoWay}" PlaceholderText="End (local, YYYY-MM-DD HH:MM)" />
-                <TextBox AutomationProperties.Name="Tracker manual notes" Text="{Binding ManualNotes, Mode=TwoWay}" PlaceholderText="Notes (optional)" />
-                <Button Classes="primary" Content="Save manual time" HorizontalAlignment="Left" Command="{Binding ManualTimeCommand}" />
-              </StackPanel>
-            </Border>
-          </Expander>
-
-          <Expander Header="New activity or group" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="4">
-                <TextBlock Text="NEW ACTIVITY" Classes="eyebrow" />
-                <TextBlock Text="Track routines and work that do not need a task." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" />
-              </StackPanel>
-              <Grid ColumnDefinitions="*,*,120,140,Auto" ColumnSpacing="8">
-                <TextBox AutomationProperties.Name="New standalone activity name" Text="{Binding NewActivityName, Mode=TwoWay}" PlaceholderText="Activity name" />
-                <TextBox Grid.Column="1" AutomationProperties.Name="New standalone activity description" Text="{Binding NewActivityDescription, Mode=TwoWay}" PlaceholderText="Description (optional)" />
-                <ComboBox Grid.Column="2" AutomationProperties.Name="New activity lane" ItemsSource="{Binding SessionLaneOptions}" SelectedValue="{Binding NewActivityLane, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" />
-                <ComboBox Grid.Column="3" AutomationProperties.Name="New activity group" ItemsSource="{Binding ActivityGroups}" SelectedValue="{Binding NewActivityGroupId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Group (optional)" />
-                <Button Grid.Column="4" Classes="primary" AutomationProperties.Name="Create standalone activity" Content="Add activity" Command="{Binding CreateActivityCommand}" />
-              </Grid>
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBox AutomationProperties.Name="New tracker activity group" Text="{Binding NewActivityGroupName, Mode=TwoWay}" PlaceholderText="New activity group" />
-                <Button Grid.Column="1" Classes="ghost" Content="Add group" Command="{Binding CreateActivityGroupCommand}" />
-              </Grid>
-            </StackPanel>
-          </Border>
-          </Expander>
-
-          <Expander Header="Manage activities" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="4">
-                <TextBlock Text="ACTIVITIES" Classes="eyebrow" />
-                <TextBlock Text="Start, organize, and maintain every trackable activity." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" />
-              </StackPanel>
-              <ItemsControl ItemsSource="{Binding ActivityAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,10">
-                      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="8">
-                        <StackPanel Spacing="3">
-                          <TextBlock Text="{Binding DraftName}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" />
-                          <TextBlock Text="{Binding ActivityContextLabel}" Classes="muted" FontSize="11" />
-                        </StackPanel>
-                        <Button Grid.Column="1" Classes="primary" Content="Start" Command="{Binding StartCommand}" />
-                        <Expander Grid.Row="1" Grid.ColumnSpan="2" Header="Manage" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                          <WrapPanel Classes="editor" Orientation="Horizontal" MaxWidth="850">
-                            <StackPanel Spacing="5"><TextBlock Text="Name" Classes="muted" FontSize="11" /><TextBox Text="{Binding DraftName, Mode=TwoWay}" Width="220" /></StackPanel>
-                            <StackPanel Spacing="5"><TextBlock Text="Description" Classes="muted" FontSize="11" /><TextBox Text="{Binding DraftDescription, Mode=TwoWay}" Width="280" /></StackPanel>
-                            <StackPanel Spacing="5"><TextBlock Text="Lane" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding LaneOptions}" SelectedValue="{Binding DraftLane, Mode=TwoWay}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" Width="150" /></StackPanel>
-                            <StackPanel Spacing="5"><TextBlock Text="Group" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding GroupOptions}" SelectedValue="{Binding GroupId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="No group" Width="180" /></StackPanel>
-                            <Button Classes="ghost" Content="Save" Command="{Binding SaveCommand}" VerticalAlignment="Bottom" />
-                            <StackPanel Spacing="5"><TextBlock Text="Tag" Classes="muted" FontSize="11" /><TextBox Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Add tag" Width="160" /></StackPanel>
-                            <Button Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" VerticalAlignment="Bottom" />
-                            <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" VerticalAlignment="Bottom" />
-                            <Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" VerticalAlignment="Bottom" />
-                          </WrapPanel>
-                        </Expander>
-                      </Grid>
-                    </Border>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-              <TextBlock Text="Create an activity above to start tracking standalone work." Classes="muted" IsVisible="{Binding HasNoActivities}" />
-            </StackPanel>
-          </Border>
-          </Expander>
-
-          <Expander Header="Manage groups" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <TextBlock Text="ACTIVITY GROUPS" Classes="eyebrow" />
-              <ItemsControl ItemsSource="{Binding ActivityGroupAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
-                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" />
-                      <Button Grid.Column="1" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
-                      <Button Grid.Column="2" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
-                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
-                      <Button Grid.Column="4" Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
-          </Expander>
         </StackPanel>
 
-        <StackPanel Spacing="22" IsVisible="{Binding IsHistoryVisible}">
-          <Border Classes="card">
-            <StackPanel Spacing="16">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="RECENTLY TRACKED" Classes="eyebrow" />
-                  <TextBlock Text="A record of time well spent." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-                </StackPanel>
-                <TextBlock Grid.Column="1" Text="Last 30 days" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+        <StackPanel Spacing="18" IsVisible="{Binding IsHistoryVisible}">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="5"><TextBlock Text="SESSION LOG" Classes="eyebrow" /><TextBlock Text="Last 30 days · most recent first" Classes="muted" FontSize="12" /></StackPanel>
+            <Button Grid.Column="1" Classes="secondary" Content="+ Manual time" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="manual" />
+          </Grid>
+          <Border Classes="card" Padding="24,12">
+            <StackPanel Spacing="4">
+              <Grid ColumnDefinitions="*,110,100,64" ColumnSpacing="12" Margin="0,12">
+                <TextBlock Text="WORK / ACTIVITY" Classes="eyebrow" /><TextBlock Grid.Column="1" Text="STARTED" Classes="eyebrow" /><TextBlock Grid.Column="2" Text="DURATION" Classes="eyebrow" HorizontalAlignment="Right" />
               </Grid>
               <ItemsControl ItemsSource="{Binding HistoryItems}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,12">
-                      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="18" RowSpacing="9">
-                        <StackPanel Spacing="4">
-                          <TextBlock Text="{Binding Title}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                          <TextBlock Classes="muted" FontSize="11" ><Run Text="{Binding Context}" />  ·  <Run Text="{Binding DateLabel}" /></TextBlock>
-                        </StackPanel>
-                        <TextBlock Grid.Column="1" Text="{Binding LaneLabel}" Classes="muted" FontSize="11" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="2" Text="{Binding TimeLabel}" FontFamily="monospace" Foreground="{DynamicResource InkBrush}" FontSize="12" VerticalAlignment="Center" />
-                        <Expander Grid.Row="1" Grid.ColumnSpan="3" Header="Correct entry" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                        <WrapPanel Classes="editor" Orientation="Horizontal">
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Task" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding TaskOptions}" SelectedValue="{Binding SelectedTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Task" Width="360" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Activity" Classes="muted" FontSize="11" /><ComboBox ItemsSource="{Binding ActivityOptions}" SelectedValue="{Binding SelectedActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity" Width="200" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Notes" Classes="muted" FontSize="11" /><TextBox Text="{Binding NotesEditor, Mode=TwoWay}" PlaceholderText="Notes" Width="360" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Correction reason" Classes="muted" FontSize="11" /><TextBox Text="{Binding ReasonText, Mode=TwoWay}" PlaceholderText="Reason" Width="200" /></StackPanel>
-                          <Button VerticalAlignment="Bottom" Margin="0,0,8,12" Classes="ghost" Content="Save correction" Command="{Binding CorrectCommand}" />
-                        </WrapPanel>
-                        </Expander>
-                      </Grid>
-                    </Border>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
+                <ItemsControl.ItemTemplate><DataTemplate>
+                  <Border Classes="catalog-row" Padding="0,18">
+                    <Grid ColumnDefinitions="*,110,100,64" ColumnSpacing="12">
+                      <StackPanel Spacing="5" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Context}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding StateLabel}" Foreground="{DynamicResource AccentBrush}" FontSize="11" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center"><TextBlock Text="{Binding ShortDateLabel}" FontSize="12" /><TextBlock Text="{Binding StartLabel}" Classes="muted" FontSize="12" /></StackPanel>
+                      <TextBlock Grid.Column="2" Text="{Binding DurationLabel}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                      <Button Grid.Column="3" Classes="ghost" Content="Edit" AutomationProperties.Name="Correct time entry" Command="{Binding $parent[Window].DataContext.OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                    </Grid>
+                  </Border>
+                </DataTemplate></ItemsControl.ItemTemplate>
               </ItemsControl>
-              <Button Classes="ghost" Content="Load more history" HorizontalAlignment="Left" IsVisible="{Binding HistoryHasMore}" Command="{Binding LoadMoreHistoryCommand}" />
-              <TextBlock Text="No tracked work in this range yet." Classes="muted" IsVisible="{Binding HasNoHistory}" />
+              <Button Classes="secondary" Content="Load more history" HorizontalAlignment="Left" Margin="0,16" IsVisible="{Binding HistoryHasMore}" Command="{Binding LoadMoreHistoryCommand}" />
+              <StackPanel Spacing="12" Margin="0,32" IsVisible="{Binding HasNoHistory}">
+                <TextBlock Text="Your work will leave a trail here." Classes="section-heading" />
+                <TextBlock Text="Start a timer or add manual time. Sessions matching your search will appear here." Classes="muted" TextWrapping="Wrap" />
+                <Button Classes="secondary" Content="Open time tracker →" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker" />
+              </StackPanel>
             </StackPanel>
           </Border>
         </StackPanel>
 
-        <StackPanel Spacing="22" IsVisible="{Binding IsSummaryVisible}">
-          <Border Classes="card">
-            <StackPanel Spacing="16">
-              <StackPanel Spacing="4">
-                <TextBlock Text="TIME SUMMARY" Classes="eyebrow" />
-                <TextBlock Text="Your time, from a different perspective." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              </StackPanel>
-              <WrapPanel Orientation="Horizontal" >
-                <Button Classes="ghost" Content="Day" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Day" />
-                <Button Classes="ghost" Content="Task" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Task" />
-                <Button Classes="ghost" Content="Project" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Project" />
-                <Button Classes="ghost" Content="Activity" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Activity" />
-                <Button Classes="ghost" Content="Activity group" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="ActivityGroup" />
-                <Button Classes="ghost" Content="Tag" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Tag" />
-                <Button Classes="ghost" Content="Lane" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Lane" />
-              </WrapPanel>
+        <StackPanel Spacing="20" IsVisible="{Binding IsSummaryVisible}">
+          <Border Classes="toolbar">
+            <WrapPanel>
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryDay}" Content="Day" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Day" />
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryTask}" Content="Task" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Task" />
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryProject}" Content="Project" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Project" />
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryActivity}" Content="Activity" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Activity" />
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryActivityGroup}" Content="Activity group" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="ActivityGroup" />
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryTag}" Content="Tag" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Tag" />
+              <Button Classes="tab" Classes.selected="{Binding IsSummaryLane}" Content="Lane" Command="{Binding SelectSummaryGroupingCommand}" CommandParameter="Lane" />
+            </WrapPanel>
+          </Border>
+          <Border Classes="card" Padding="24">
+            <StackPanel Spacing="22">
+              <Grid ColumnDefinitions="*,120,120" ColumnSpacing="16">
+                <StackPanel Spacing="5"><TextBlock Text="TIME BREAKDOWN" Classes="eyebrow" /><TextBlock Text="{Binding SummaryGroupingLabel}" Classes="section-heading" /></StackPanel>
+                <TextBlock Grid.Column="1" Text="Attributed time" Classes="muted" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+                <TextBlock Grid.Column="2" Text="Clock coverage" Classes="muted" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+              </Grid>
               <ItemsControl ItemsSource="{Binding SummaryItems}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="18" Margin="0,6">
-                      <TextBlock Text="{Binding Label}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" />
-                      <TextBlock Grid.Column="1" Text="{Binding DurationLabel}" Classes="muted" FontFamily="monospace" />
-                      <TextBlock Grid.Column="2" Text="{Binding CoverageLabel}" Foreground="{DynamicResource AccentBrush}" FontFamily="monospace" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
+                <ItemsControl.ItemTemplate><DataTemplate>
+                  <Grid ColumnDefinitions="*,120,120" ColumnSpacing="16" Margin="0,0,0,22">
+                    <StackPanel Spacing="10">
+                      <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <ProgressBar Value="{Binding BarPercent}" Maximum="100" Height="6" MinHeight="6" Foreground="{DynamicResource AccentBrush}" Background="{DynamicResource SubtleBrush}" AutomationProperties.Name="{Binding Label}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding DurationLabel}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding CoverageLabel}" Classes="muted" FontSize="16" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                  </Grid>
+                </DataTemplate></ItemsControl.ItemTemplate>
               </ItemsControl>
-              <TextBlock Text="No tracked time in this range yet." Classes="muted" IsVisible="{Binding HasNoSummary}" />
+              <StackPanel Spacing="12" Margin="0,16" IsVisible="{Binding HasNoSummary}">
+                <TextBlock Text="A little time makes a bigger picture." Classes="section-heading" />
+                <TextBlock Text="Track your first session to see how your time adds up." Classes="muted" />
+                <Button Classes="secondary" Content="Start tracking →" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker" />
+              </StackPanel>
+              <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <TextBlock Text="Attributed time adds up every session. Clock coverage counts overlapping time once within each group. Bars compare attributed time with the largest group." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              </Border>
             </StackPanel>
           </Border>
         </StackPanel>
@@ -694,32 +594,10 @@
                   </StackPanel>
                 </Grid>
               </Border>
-              <Expander Header="Add an event or plan a task" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="PLAN A TASK" Classes="eyebrow" />
-                  <WrapPanel Classes="editor">
-                    <ComboBox AutomationProperties.Name="Task to plan" ItemsSource="{Binding CalendarPlanTasks}" SelectedValue="{Binding CalendarPlanTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose a task" Width="260" />
-                    <ComboBox AutomationProperties.Name="Calendar for planned task" ItemsSource="{Binding CalendarOptions}" SelectedValue="{Binding SelectedCalendarId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" Width="180" />
-                    <TextBox AutomationProperties.Name="Planned task start" Text="{Binding CalendarPlanStartText, Mode=TwoWay}" PlaceholderText="Start (local)" Width="180" />
-                    <TextBox AutomationProperties.Name="Planned task end" Text="{Binding CalendarPlanEndText, Mode=TwoWay}" PlaceholderText="End (local)" Width="180" />
-                    <Button Classes="primary" AutomationProperties.Name="Plan selected task" Content="Plan task" Command="{Binding PlanNextTaskCommand}" />
-                  </WrapPanel>
-                  <TextBlock Text="ADD EVENT" Classes="eyebrow" />
-                  <WrapPanel Classes="editor">
-                    <TextBox Text="{Binding NewEventTitle, Mode=TwoWay}" PlaceholderText="Event title" Width="260" />
-                    <ComboBox ItemsSource="{Binding CalendarOptions}" SelectedValue="{Binding SelectedCalendarId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Calendar" Width="180" />
-                    <TextBox Text="{Binding NewEventStart, Mode=TwoWay}" PlaceholderText="Start (local, YYYY-MM-DD HH:MM)" Width="230" />
-                    <TextBox Text="{Binding NewEventEnd, Mode=TwoWay}" PlaceholderText="End (local, YYYY-MM-DD HH:MM)" Width="230" />
-                    <TextBox Text="{Binding NewEventDescription, Mode=TwoWay}" PlaceholderText="Description" Width="260" />
-                    <TextBox Text="{Binding NewEventLocation, Mode=TwoWay}" PlaceholderText="Location" Width="180" />
-                    <TextBox Text="{Binding NewEventColor, Mode=TwoWay}" PlaceholderText="#246B63" Width="120" />
-                    <CheckBox Content="All day" IsChecked="{Binding NewEventAllDay, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBox Text="{Binding NewEventRecurrence, Mode=TwoWay}" PlaceholderText="Recurrence, e.g. FREQ=WEEKLY" Width="240" />
-                    <TextBox Text="{Binding NewEventRecurrenceEnd, Mode=TwoWay}" PlaceholderText="Recurrence end (local, optional)" Width="240" />
-                    <Button Classes="primary" Content="Add event" Command="{Binding CreateCalendarEventCommand}" />
-                  </WrapPanel>
-                </StackPanel>
-              </Expander>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="secondary" Content="+ Plan a task" AutomationProperties.Name="Open task planning" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="plan" />
+                <Button Classes="ghost" Content="+ New event" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="event" />
+              </StackPanel>
               <local:CalendarTimeline Days="{Binding CalendarDayColumns}" IsVisible="{Binding IsCalendarTimelineVisible}" />
               <Border Background="{DynamicResource SubtleBrush}" CornerRadius="12" Padding="8" IsVisible="{Binding IsCalendarMonth}">
                 <ItemsControl ItemsSource="{Binding CalendarDayColumns}">
@@ -754,7 +632,7 @@
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
               </Border>
-              <Expander Header="Detailed list &amp; editing" IsExpanded="{Binding IsCalendarAgenda, Mode=OneWay}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+              <Border IsVisible="{Binding IsCalendarAgenda}">
               <StackPanel Spacing="10">
               <ItemsControl ItemsSource="{Binding CalendarBlocks}">
                 <ItemsControl.ItemTemplate>
@@ -772,15 +650,11 @@
                           <TextBlock Text="{Binding TimeLabel}" Foreground="{DynamicResource InkBrush}" FontSize="12" />
                           <TextBlock Text="{Binding DurationLabel}" Classes="muted" FontSize="11" HorizontalAlignment="Right" />
                         </StackPanel>
-                        <Expander Grid.Row="1" Grid.ColumnSpan="3" Header="Edit planned block" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                        <WrapPanel Classes="editor">
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Block title" Classes="muted" FontSize="11" /><TextBox Text="{Binding TitleEditor, Mode=TwoWay}" PlaceholderText="Title" Width="360" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding StartText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
-                          <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (local time)" Classes="muted" FontSize="11" /><TextBox Text="{Binding EndText, Mode=TwoWay}" PlaceholderText="YYYY-MM-DD HH:MM" Width="300" /></StackPanel>
-                          <Button VerticalAlignment="Bottom" Margin="0,0,8,12" Classes="ghost" Content="Start" Command="{Binding StartCommand}" />
-                          <Button VerticalAlignment="Bottom" Margin="0,0,8,12" Classes="ghost" Content="Save block" Command="{Binding UpdateCommand}" />
-                        </WrapPanel>
-                        </Expander>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+                          <Button Classes="ghost" Content="Edit plan" Command="{Binding $parent[Window].DataContext.OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+                          <Button Classes="secondary" Content="Start" Command="{Binding StartCommand}" />
+                        </StackPanel>
+
                       </Grid>
                     </Border>
                   </DataTemplate>
@@ -796,20 +670,8 @@
                         <TextBlock Text="{Binding DetailLabel}" Foreground="{DynamicResource PausedBrush}" FontSize="12" />
                         <TextBlock Text="{Binding LocationLabel}" Foreground="{DynamicResource PausedBrush}" FontSize="12" />
                         <TextBlock Text="{Binding DescriptionLabel}" Foreground="{DynamicResource PausedBrush}" FontSize="12" TextWrapping="Wrap" />
-                        <Expander Header="Edit event" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                          <WrapPanel Classes="editor">
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Title" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event title" Text="{Binding TitleEditor, Mode=TwoWay}" Width="300" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Start (local time)" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event start" Text="{Binding StartText, Mode=TwoWay}" Width="300" PlaceholderText="YYYY-MM-DD HH:MM" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="End (local time)" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event end" Text="{Binding EndText, Mode=TwoWay}" Width="300" PlaceholderText="YYYY-MM-DD HH:MM" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Description" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event description" Text="{Binding DescriptionEditor, Mode=TwoWay}" Width="300" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Location" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event location" Text="{Binding LocationEditor, Mode=TwoWay}" Width="220" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Color" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event color" Text="{Binding ColorEditor, Mode=TwoWay}" Width="130" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Recurrence" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event recurrence" Text="{Binding RecurrenceEditor, Mode=TwoWay}" Width="240" /></StackPanel>
-                            <StackPanel Spacing="5" Margin="0,0,12,12"><TextBlock Text="Recurrence end" Classes="muted" FontSize="11" /><TextBox AutomationProperties.Name="Event recurrence end" Text="{Binding RecurrenceEndText, Mode=TwoWay}" Width="260" /></StackPanel>
-                            <CheckBox Content="All day" IsChecked="{Binding AllDayEditor, Mode=TwoWay}" VerticalAlignment="Bottom" Margin="0,0,12,20" />
-                            <Button Classes="ghost" Content="Save event" Command="{Binding UpdateCommand}" VerticalAlignment="Bottom" Margin="0,0,12,12" />
-                          </WrapPanel>
-                        </Expander>
+                        <Button Classes="ghost" Content="Edit event" HorizontalAlignment="Left" Command="{Binding $parent[Window].DataContext.OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
+
                         <Button Classes="ghost" AutomationProperties.Name="Delete calendar event" Content="Delete event" HorizontalAlignment="Left" Command="{Binding DeleteCommand}" />
                       </StackPanel>
                     </Border>
@@ -818,190 +680,12 @@
               </ItemsControl>
               <TextBlock Text="No planned blocks in this range." Classes="muted" IsVisible="{Binding HasNoCalendarBlocks}" />
               </StackPanel>
-              </Expander>
+              </Border>
             </StackPanel>
           </Border>
         </StackPanel>
 
-        <StackPanel Spacing="14" IsVisible="{Binding IsSettingsVisible}">
-          <Border Classes="card">
-            <StackPanel Spacing="12">
-              <TextBlock Text="YOUR DATA" Classes="eyebrow" />
-              <TextBlock Text="Back up, export, or recover your local workspace." Classes="muted" TextWrapping="Wrap" />
-              <WrapPanel Classes="editor">
-                <Button Classes="primary" AutomationProperties.Name="Create verified backup" Content="Create backup" Command="{Binding BackupCommand}" />
-                <Button Classes="ghost" AutomationProperties.Name="Export workspace JSON" Content="Export JSON" Command="{Binding ExportCommand}" />
-                <Button Classes="ghost" AutomationProperties.Name="Export CSV worklog" Content="Export worklog CSV" Command="{Binding ExportCsvCommand}" />
-                <Button Classes="ghost" AutomationProperties.Name="Restore latest backup" Content="Restore latest backup" Command="{Binding RestoreCommand}" />
-              </WrapPanel>
-            </StackPanel>
-          </Border>
-          <Expander Header="Boards" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="4">
-                <TextBlock Text="BOARDS" Classes="eyebrow" />
-                <TextBlock Text="Give each area of your life a home." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              </StackPanel>
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBox Text="{Binding NewBoardName, Mode=TwoWay}" PlaceholderText="New board name" Padding="9" />
-                <Button Grid.Column="1" Classes="primary" Content="Create board" Command="{Binding CreateBoardCommand}" />
-              </Grid>
-              <ItemsControl ItemsSource="{Binding BoardAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
-                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
-                      <Button Grid.Column="1" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
-                      <Button Grid.Column="2" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
-                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
-                      <Button Grid.Column="4" Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" />
-                      <Button Grid.Column="5" Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
-          </Expander>
-          <Expander Header="Projects" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="4">
-                <TextBlock Text="PROJECTS" Classes="eyebrow" />
-                <TextBlock Text="Create focused places for work, then move tasks between them." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              </StackPanel>
-              <Grid ColumnDefinitions="*,220,Auto" ColumnSpacing="8">
-                <ComboBox ItemsSource="{Binding Boards}" SelectedValue="{Binding SelectedBoardId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Board" Padding="9" />
-                <TextBox Grid.Column="1" Text="{Binding NewProjectName, Mode=TwoWay}" PlaceholderText="New project name" Width="220" Padding="9" />
-                <Button Grid.Column="2" Classes="primary" Content="Create project" Command="{Binding CreateProjectCommand}" />
-              </Grid>
-              <ItemsControl ItemsSource="{Binding ProjectAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,10">
-                    <WrapPanel Classes="editor">
-                      <TextBox Width="240" Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
-                      <TextBox Width="150" Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Add tag" Padding="8" />
-                      <Button Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" />
-                      <Button Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
-                      <Button Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
-                      <Button Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
-                      <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" />
-                      <Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
-                    </WrapPanel>
-                    </Border>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
-          </Expander>
-
-          <Expander Header="Activities &amp; groups" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="4">
-                <TextBlock Text="ACTIVITIES" Classes="eyebrow" />
-                <TextBlock Text="Name the kinds of work you want to track." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              </StackPanel>
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBox Text="{Binding NewActivityGroupName, Mode=TwoWay}" PlaceholderText="New activity group" Padding="9" />
-                <Button Grid.Column="1" Classes="ghost" Content="Create group" Command="{Binding CreateActivityGroupCommand}" />
-              </Grid>
-              <ItemsControl ItemsSource="{Binding ActivityGroupAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
-                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
-                      <Button Grid.Column="1" Classes="ghost" Content="↑" ToolTip.Tip="Move earlier" Command="{Binding MoveEarlierCommand}" />
-                      <Button Grid.Column="2" Classes="ghost" Content="↓" ToolTip.Tip="Move later" Command="{Binding MoveLaterCommand}" />
-                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
-                      <Button Grid.Column="4" Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBox Text="{Binding NewActivityName, Mode=TwoWay}" PlaceholderText="New activity name" Padding="9" />
-                <Button Grid.Column="1" Classes="primary" Content="Create activity" Command="{Binding CreateActivityCommand}" />
-              </Grid>
-              <ItemsControl ItemsSource="{Binding ActivityAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,10">
-                    <WrapPanel Classes="editor">
-                      <TextBox Width="240" Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
-                      <ComboBox Width="180" ItemsSource="{Binding GroupOptions}" SelectedValue="{Binding GroupId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Activity group" Padding="8" />
-                      <TextBox Width="150" Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Add tag" Padding="8" />
-                      <Button Classes="ghost" Content="Tag" Command="{Binding AddTagCommand}" />
-                      <Button Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
-                      <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" />
-                      <Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
-                    </WrapPanel>
-                    </Border>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
-          </Expander>
-          <Expander Header="Calendars" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <TextBlock Text="CALENDARS" Classes="eyebrow" />
-              <TextBlock Text="Keep planned blocks and user events in named, color-coded calendars." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="*,140,Auto" ColumnSpacing="8">
-                <TextBox Text="{Binding NewCalendarName, Mode=TwoWay}" PlaceholderText="New calendar name" />
-                <TextBox Grid.Column="1" Text="{Binding NewCalendarColor, Mode=TwoWay}" PlaceholderText="#246B63" />
-                <Button Grid.Column="2" Classes="primary" Content="Create" Command="{Binding CreateCalendarCommand}" />
-              </Grid>
-              <ItemsControl ItemsSource="{Binding CalendarAdminRows}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="*,140,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
-                      <TextBox Text="{Binding DraftName, Mode=TwoWay}" Padding="8" />
-                      <TextBox Grid.Column="1" Text="{Binding DraftColor, Mode=TwoWay}" Padding="8" />
-                      <CheckBox Grid.Column="2" Content="Visible" IsChecked="{Binding IsVisible, Mode=TwoWay}" VerticalAlignment="Center" />
-                      <Button Grid.Column="3" Classes="ghost" Content="Save" Command="{Binding SaveCommand}" />
-                      <Button Grid.Column="4" Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
-          </Expander>
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <TextBlock Text="TIMER BEHAVIOR" Classes="eyebrow" />
-              <TextBlock Text="Choose whether starting a focus timer may leave another focus timer running." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              <CheckBox Content="Allow concurrent foreground timers" IsChecked="{Binding AllowConcurrentForeground, Mode=TwoWay}" />
-              <Button Classes="primary" Content="Save timer setting" HorizontalAlignment="Left" Command="{Binding SaveSettingsCommand}" />
-            </StackPanel>
-          </Border>
-          <Expander Header="Deleted events" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsVisible="{Binding HasDeletedCalendarEvents}">
-          <Border Classes="card" IsVisible="{Binding HasDeletedCalendarEvents}">
-            <StackPanel Spacing="10">
-              <TextBlock Text="DELETED EVENTS" Classes="eyebrow" />
-              <TextBlock Text="Restore calendar events without changing their identity." Foreground="{DynamicResource InkBrush}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-              <ItemsControl ItemsSource="{Binding DeletedCalendarEvents}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,2">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="{Binding Title}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding DetailLabel}" Classes="muted" FontSize="11" />
-                      </StackPanel>
-                      <Button Grid.Column="1" Classes="ghost" Content="Restore" Command="{Binding RestoreCommand}" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
-          </Expander>
-        </StackPanel>
+        <local:SettingsView IsVisible="{Binding IsSettingsVisible}" />
         </StackPanel>
       </ScrollViewer>
       <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Classes="muted" FontSize="11" Margin="0,12,0,0" TextWrapping="Wrap" />
@@ -1072,6 +756,11 @@
             <Button Classes="primary" Content="Save task" AutomationProperties.Name="Save task editor" Command="{Binding TaskEditor.SaveCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
           </StackPanel>
         </Grid>
+      </Border>
+    </Grid>
+    <Grid Grid.ColumnSpan="2" Background="#4020263D" IsVisible="{Binding IsUtilityEditorOpen}">
+      <Border x:Name="UtilityDrawer" Background="{DynamicResource SurfaceBrush}" Width="480" HorizontalAlignment="Right" Padding="28" BoxShadow="-8 0 24 0 #1820263D" KeyboardNavigation.TabNavigation="Cycle">
+        <local:UtilityEditorView />
       </Border>
     </Grid>
     <Canvas x:Name="BoardDragOverlay" Grid.ColumnSpan="2" IsVisible="False" IsHitTestVisible="False">
