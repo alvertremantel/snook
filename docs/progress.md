@@ -8,6 +8,20 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Task-sidebar consistency: Tags and visible amber Archive/red Delete actions are
+  above Save task, with the immediately committed Move action below. The current
+  board/project path updates after moving, and Cancel preserves that move while
+  discarding unsaved fields. Move choices have non-selectable board headings;
+  prerequisites have board/project headings and contextual labels.
+- Task boards use a horizontally scrolling button row with separate arrows.
+  Contextual board and project-lane menus expose rename, soft delete, and saved
+  earlier/later ordering. Project lanes honor stored order, and board deletion
+  hides child lanes until restore. Persisted interaction checks cover menus,
+  ordering, recovery, overflow navigation, grouped pickers, and move/cancel behavior.
+  Seeded/empty layouts were rendered and inspected at 1280×820 and 980×640;
+  interaction checks passed at both sizes, including duplicate project/task names
+  across boards and capture selection after rename. Full build and all 33 tests
+  passed. Evidence is in `artifacts/ui-task-actions*`.
 - Quick task capture accepts Enter on Dashboard and Tasks, using the same guarded
   create command as the button. Tasks now renders board selection independently
   of project lanes: creating a board selects it, shows an empty-board prompt,

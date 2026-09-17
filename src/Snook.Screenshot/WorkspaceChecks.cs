@@ -68,8 +68,7 @@ internal static partial class InteractionChecks
         window.KeyRelease(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
         await UntilAsync(() => Task.FromResult(!flyout.IsOpen));
         await Task.Delay(100);
-        var selector = Visible<ComboBox>(window).Single(c => AutomationProperties.GetName(c) == "Task board");
-        if (selector.SelectedItem is not BoardOption { Name: "Popup board" } ||
+        if (!Visible<Button>(window).Any(button => button.DataContext is BoardTab { Name: "Popup board", IsSelected: true } && button.Classes.Contains("selected")) ||
             !Visible<TextBlock>(window).Any(text => text.Text?.StartsWith("This board has no projects yet", StringComparison.Ordinal) == true))
             throw new InvalidOperationException("The newly created empty board is not rendered.");
         Save(window, Path.Combine(Path.GetDirectoryName(path)!, "created-empty-board.png"));
@@ -87,7 +86,11 @@ internal static partial class InteractionChecks
         if (!Visible<TextBlock>(window).Any(text => text.Text == "Popup project"))
             throw new InvalidOperationException("The new board's project lane is not rendered.");
         Save(window, Path.Combine(Path.GetDirectoryName(path)!, "created-board-project.png"));
-        selector.SelectedValue = Guid.Empty;
+        await CheckBoardManagementAsync(window, path, created.Id);
+        var allBoards = Visible<Button>(window).Single(button => button.DataContext is BoardTab { Id: var id } && id == Guid.Empty);
+        allBoards.BringIntoView();
+        window.UpdateLayout();
+        Click(window, allBoards);
         await UntilAsync(() => Task.FromResult(viewModel.TaskGroups.Count > 1));
         Click(window, trigger);
         await UntilAsync(() => Task.FromResult(flyout.IsOpen));

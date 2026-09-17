@@ -17,6 +17,31 @@ public partial class MainWindow
     private Point _dragPosition;
     private DispatcherTimer? _boardDragTimer;
 
+    private void OnBoardTabsPrevious(object? sender, RoutedEventArgs e) => ScrollBoardTabs(-280);
+    private void OnBoardTabsNext(object? sender, RoutedEventArgs e) => ScrollBoardTabs(280);
+    private void ScrollBoardTabs(double delta) => BoardTabsScroll.Offset = new Vector(
+        Math.Clamp(BoardTabsScroll.Offset.X + delta, 0, Math.Max(0, BoardTabsScroll.Extent.Width - BoardTabsScroll.Viewport.Width)), 0);
+
+    private void OnRenameWorkspaceItem(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        var row = button.DataContext;
+        foreach (var trigger in this.GetVisualDescendants().OfType<Button>().Where(item => item.Flyout?.IsOpen == true))
+            trigger.Flyout!.Hide();
+        _viewModel.OpenUtilityEditorCommand.Execute(row);
+    }
+
+    private void OnWorkspaceActionClick(object? sender, RoutedEventArgs e)
+    {
+        var flyouts = this.GetVisualDescendants().OfType<Button>()
+            .Where(item => item.Flyout?.IsOpen == true).Select(item => item.Flyout!).ToArray();
+        // Let Button execute its command before detaching the popup's bindings.
+        Dispatcher.UIThread.Post(() =>
+        {
+            foreach (var flyout in flyouts) flyout.Hide();
+        });
+    }
+
     private void OnBoardPrevious(object? sender, RoutedEventArgs e) => ScrollBoard(-306, 0);
     private void OnBoardNext(object? sender, RoutedEventArgs e) => ScrollBoard(306, 0);
 

@@ -30,10 +30,17 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
   The field clears after saving and stays ready for the next task.
 - **Tasks:** use compact List or Board views, the completion circle, Start, and
   Edit. Completed, archived, and deleted tasks are available through **Filters**.
-  Board/project creation stays in the toolbar. The Board selector includes empty
+  Board/project creation stays in the toolbar. The board button row includes empty
   boards and an All boards view; creating a board selects it and shows how to add
-  its first project. Drag tasks between projects or
-  use the task editor's explicit Move action.
+  its first project. Use the row's arrows to scroll boards. The selected board's
+  **•••** menu and each project lane's **•••** menu provide rename, delete, and
+  Move earlier/later actions; your order is saved. Restore deleted boards/projects
+  in Settings → Boards & projects. Drag tasks between projects or use the task
+  editor's explicit Move action.
+- **Task details:** Tags and the visible amber Archive/red Delete actions sit
+  above Save task; Move sits below it. Save applies the editable task fields.
+  Move commits immediately and survives Cancel. Project choices are grouped by
+  board, and prerequisites by board/project, so repeated names have context.
 - **Time Tracker:** launch grouped activities alongside running, paused, and
   background timers. **Manual time** and **New activity** open focused editors;
   **Activity library** opens their organization settings.
@@ -50,7 +57,7 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
   **Agenda** view provides event and planned-block editing.
 
 Editors retain drafts across workspace refreshes. Save commits the edit; Cancel
-or Escape discards it; tags already added through the immediate action remain.
+or Escape discards it; completed immediate actions (including tags and moves) remain.
 Conflicting saves keep the draft visible with recovery
 instructions. Times are entered in local time as `YYYY-MM-DD HH:MM`.
 
@@ -211,7 +218,9 @@ hover/pressed-button captures when `tasks-details` is included.
 capture (including blank/duplicate protection and retained focus), and,
 with `tasks-board`, captures and exercises the board/project creation popup
 against the disposable profile, including rendered empty boards, their first
-project lane, board selection, and Escape/outside-click dismissal.
+project lane, board button selection/scrolling, rename/delete/restore, saved board
+and project ordering, and Escape/outside-click dismissal. Task interaction checks
+also cover sidebar action order, grouped pickers, and moves retained after Cancel.
 `SNOOK_SCREENSHOT_VERIFY_EDITORS=1` adds persisted checks for the utility editors.
 Include `tracker,history,settings`: these verify activity/manual-time creation,
 picker preservation across refresh, correction validation and provenance, exact

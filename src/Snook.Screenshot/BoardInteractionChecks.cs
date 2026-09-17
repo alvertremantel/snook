@@ -46,10 +46,22 @@ internal static partial class InteractionChecks
     {
         var vm = (MainWindowViewModel)window.DataContext!;
         var backend = App.ConfiguredBackend!;
+        var contextBoard = await backend.CreateBoardAsync("Personal context fixture");
+        var contextProject = await backend.CreateProjectAsync(contextBoard.Id, "Studio refresh");
+        await backend.CreateTaskAsync(contextProject.Id, "Review typography and color samples");
+        await UntilAsync(() => Task.FromResult(vm.Projects.Any(project => project.Id == contextProject.Id)));
         await vm.SelectSectionForScreenshotAsync("Tasks", "details");
         window.UpdateLayout();
         var editor = vm.TaskEditor!;
         var title = window.FindControl<TextBox>("TaskEditorTitle")!;
+        var saveButton = Visible<Button>(window).Single(button => AutomationProperties.GetName(button) == "Save task editor");
+        var archive = Visible<Button>(window).Single(button => AutomationProperties.GetName(button) == "Archive or restore task");
+        var tags = Visible<Expander>(window).Single(expander => Equals(expander.Header, "Tags, dependencies & references"));
+        var moveSection = Visible<Expander>(window).Single(expander => Equals(expander.Header, "Move to another project"));
+        if (archive.TranslatePoint(default, window)!.Value.Y >= saveButton.TranslatePoint(default, window)!.Value.Y
+            || tags.TranslatePoint(default, window)!.Value.Y >= saveButton.TranslatePoint(default, window)!.Value.Y
+            || saveButton.TranslatePoint(default, window)!.Value.Y >= moveSection.TranslatePoint(default, window)!.Value.Y)
+            throw new InvalidOperationException("The task editor action order is incorrect.");
         title.Focus();
         for (var tab = 0; tab < 20; tab++)
         {
@@ -68,15 +80,53 @@ internal static partial class InteractionChecks
         var moveTarget = vm.Projects.First(p => p.Id != editor.Task.ProjectId).Id;
         Visible<Expander>(window).Single(e => Equals(e.Header, "Move to another project")).IsExpanded = true;
         window.UpdateLayout();
-        Visible<ComboBox>(window).Single(c => AutomationProperties.GetName(c) == "Move task to project").SelectedValue = moveTarget;
+        var movePicker = Visible<ComboBox>(window).Single(c => AutomationProperties.GetName(c) == "Move task to project");
+        movePicker.BringIntoView();
+        window.UpdateLayout();
+        movePicker.IsDropDownOpen = true;
+        await Task.Delay(100);
+        if (editor.MoveOptions.Count(option => option.IsHeader && option.Name.Length > 0) < 2
+            || movePicker.GetRealizedContainers().OfType<ComboBoxItem>().Any(item => item.DataContext is TaskPickerEntry { IsHeader: true } && item.IsEnabled))
+            throw new InvalidOperationException("Project picker board headings are missing or selectable.");
+        Save(window, Path.Combine(Path.GetDirectoryName(path)!, "task-project-picker.png"));
+        movePicker.IsDropDownOpen = false;
+        movePicker.SelectedValue = moveTarget;
         var move = Visible<Button>(window).Single(b => Equals(b.Content, "Move to project"));
         move.BringIntoView();
         window.UpdateLayout();
         Click(window, move);
         await UntilAsync(async () => (await backend.GetTaskDetailsAsync(editor.Task.Id)).Task.ProjectId == moveTarget);
         if (title.Text != draftTitle) throw new InvalidOperationException("Moving a task discarded its unsaved title.");
+        await UntilAsync(() => Task.FromResult(Visible<TextBlock>(window).Any(text => AutomationProperties.GetName(text) == "Current task location"
+            && text.Text == editor.CurrentProjectPath)));
+        vm.CloseTaskEditorCommand.Execute(null);
+        var afterCancel = (await backend.GetTaskDetailsAsync(editor.Task.Id)).Task;
+        if (afterCancel.ProjectId != moveTarget || afterCancel.Title == draftTitle)
+            throw new InvalidOperationException("Cancel reverted an immediate move or saved unsaved task fields.");
+        vm.ShowTaskDetailsCommand.Execute(vm.Tasks.Single(task => task.Task.Id == editor.Task.Id));
+        await UntilAsync(() => Task.FromResult(vm.IsTaskEditorOpen));
+        editor = vm.TaskEditor!;
+        title.Text = draftTitle;
+        tags = Visible<Expander>(window).Single(expander => Equals(expander.Header, "Tags, dependencies & references"));
+        tags.IsExpanded = true;
+        window.UpdateLayout();
+        var prerequisite = Visible<ComboBox>(window).Single(combo => AutomationProperties.GetName(combo) == "Prerequisite task");
+        prerequisite.BringIntoView();
+        window.UpdateLayout();
+        prerequisite.IsDropDownOpen = true;
+        await Task.Delay(100);
+        if (editor.DependencyOptions.Count(option => option.IsHeader && option.Name.Contains(" / ", StringComparison.Ordinal)) < 2
+            || prerequisite.GetRealizedContainers().OfType<ComboBoxItem>().Any(item => item.DataContext is TaskPickerEntry { IsHeader: true } && item.IsEnabled))
+            throw new InvalidOperationException("Prerequisite picker is missing board/project headings or permits selecting them.");
+        Save(window, Path.Combine(Path.GetDirectoryName(path)!, "task-prerequisite-picker.png"));
+        prerequisite.IsDropDownOpen = false;
+        tags.IsExpanded = false;
         var save = Visible<Button>(window).Single(b => AutomationProperties.GetName(b) == "Save task editor");
         Save(window, Path.Combine(Path.GetDirectoryName(path)!, "tasks-editor-draft.png"));
+        save.BringIntoView();
+        window.UpdateLayout();
+        await Task.Delay(80);
+        Save(window, Path.Combine(Path.GetDirectoryName(path)!, "tasks-editor-actions.png"));
         Click(window, save);
         await UntilAsync(async () => (await backend.GetTaskDetailsAsync(editor.Task.Id)).Task.Title == draftTitle && !vm.IsTaskEditorOpen);
 
@@ -88,6 +138,8 @@ internal static partial class InteractionChecks
             new TaskUpdate("Updated in another view", original.Description, original.Priority, original.DueDate, original.DefaultActivityId, original.Starred),
             new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), original.Revision));
         await UntilAsync(() => Task.FromResult(vm.Tasks.Any(t => t.Task.Id == original.Id && t.Title == "Updated in another view")));
+        save.BringIntoView();
+        window.UpdateLayout();
         Click(window, save);
         await UntilAsync(() => Task.FromResult(vm.StatusMessage.Contains("changed", StringComparison.OrdinalIgnoreCase)));
         if (!vm.IsTaskEditorOpen || title.Text != "A draft that must not overwrite another edit"
@@ -106,6 +158,6 @@ internal static partial class InteractionChecks
         if (title.Text != persistedTitle)
             throw new InvalidOperationException("Reopening a task resurrected a canceled draft.");
         vm.CloseTaskEditorCommand.Execute(null);
-        Console.WriteLine("PASS: task drafts survive refresh, save to SQLite, reject stale revisions without discarding drafts, and cancel with Escape.");
+        Console.WriteLine("PASS: task action order, grouped pickers, immediate move retained after Cancel, draft survival, persisted save, stale revision rejection, and Escape cancellation.");
     }
 }

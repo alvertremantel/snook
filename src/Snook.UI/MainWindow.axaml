@@ -8,6 +8,24 @@
         Height="820"
         MinWidth="980"
         MinHeight="640">
+  <Window.Resources>
+    <DataTemplate x:Key="TaskPickerTemplate" x:DataType="local:TaskPickerEntry" x:CompileBindings="True">
+      <StackPanel Spacing="3" MaxWidth="330" Margin="0,3">
+        <TextBlock Text="{Binding Name}" Classes.picker-heading="{Binding IsHeader}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Context}" IsVisible="{Binding HasContext}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+  </Window.Resources>
+  <Window.Styles>
+    <Style Selector="ComboBox.structured-picker ComboBoxItem" x:DataType="local:TaskPickerEntry" x:CompileBindings="True">
+      <Setter Property="IsEnabled" Value="{Binding IsSelectable}" />
+    </Style>
+    <Style Selector="TextBlock.picker-heading">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Margin" Value="0,8,0,2" />
+    </Style>
+  </Window.Styles>
   <Grid ColumnDefinitions="196,*">
     <Border Grid.Column="0" Background="{DynamicResource SidebarBrush}" Padding="16,26">
       <Grid RowDefinitions="Auto,*,Auto">
@@ -298,9 +316,26 @@
                    </Grid>
                  </StackPanel>
                </Border>
-              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-                <TextBlock Text="Board" Classes="muted" VerticalAlignment="Center" />
-                <ComboBox Grid.Column="1" AutomationProperties.Name="Task board" ItemsSource="{Binding TaskBoardOptions}" SelectedValue="{Binding TaskBoardId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" MaxWidth="360" HorizontalAlignment="Left" />
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="4">
+                <ScrollViewer x:Name="BoardTabsScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                  <ItemsControl ItemsSource="{Binding BoardTabs}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:BoardTab" x:CompileBindings="True">
+                      <Button Classes="tab" Classes.selected="{Binding IsSelected}" Content="{Binding Name}" AutomationProperties.Name="{Binding Name}" ToolTip.Tip="{Binding Name}" MaxWidth="220" Command="{Binding $parent[Window].((local:MainWindowViewModel)DataContext).SelectTaskBoardCommand}" CommandParameter="{Binding Id}" />
+                    </DataTemplate></ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+                <Button Grid.Column="1" Classes="ghost" Content="•••" AutomationProperties.Name="Selected board actions" IsVisible="{Binding HasSelectedTaskBoard}">
+                  <Button.Flyout><Flyout><StackPanel Spacing="6" MinWidth="200" DataContext="{Binding SelectedTaskBoardAdmin}">
+                    <TextBlock Text="{Binding Board.Name}" Classes="eyebrow" TextWrapping="Wrap" />
+                    <Button Classes="ghost" Content="Rename board" Click="OnRenameWorkspaceItem" />
+                    <Button Classes="ghost" Content="Move board earlier" Command="{Binding MoveEarlierCommand}" Click="OnWorkspaceActionClick" />
+                    <Button Classes="ghost" Content="Move board later" Command="{Binding MoveLaterCommand}" Click="OnWorkspaceActionClick" />
+                    <Button Classes="danger" Content="Delete board" Command="{Binding DeleteCommand}" Click="OnWorkspaceActionClick" />
+                  </StackPanel></Flyout></Button.Flyout>
+                </Button>
+                <Button Grid.Column="2" Classes="ghost" Content="←" Click="OnBoardTabsPrevious" AutomationProperties.Name="Previous boards" />
+                <Button Grid.Column="3" Classes="ghost" Content="→" Click="OnBoardTabsNext" AutomationProperties.Name="Next boards" />
               </Grid>
               <TextBlock Text="This board has no projects yet. Use + New board / project to add its first project." Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasEmptyTaskBoard}" />
               <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" IsVisible="{Binding IsTaskBoardVisible}">
@@ -336,9 +371,18 @@
                   <DataTemplate>
                     <Border Classes="project-lane" CornerRadius="11" Padding="12" Width="292" MinHeight="330" Margin="0,0,14,12">
                       <StackPanel Spacing="14">
-                        <Grid ColumnDefinitions="*,Auto" Margin="4,4">
-                          <TextBlock Text="{Binding ProjectName}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" />
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6" Margin="4,4">
+                          <StackPanel Spacing="4"><TextBlock Text="{Binding BoardName}" Classes="eyebrow" FontSize="10" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding ProjectName}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" TextWrapping="Wrap" /></StackPanel>
                           <TextBlock Grid.Column="1" Text="{Binding CountLabel}" Classes="muted" />
+                          <Button Grid.Column="2" Classes="ghost" Content="•••" Padding="6" AutomationProperties.Name="Project lane actions" IsVisible="{Binding CanManage}">
+                            <Button.Flyout><Flyout><StackPanel Spacing="6" MinWidth="200" DataContext="{Binding Admin}">
+                              <TextBlock Text="{Binding Project.Name}" Classes="eyebrow" TextWrapping="Wrap" />
+                              <Button Classes="ghost" Content="Rename project" Click="OnRenameWorkspaceItem" />
+                              <Button Classes="ghost" Content="Move project earlier" Command="{Binding MoveEarlierCommand}" Click="OnWorkspaceActionClick" />
+                              <Button Classes="ghost" Content="Move project later" Command="{Binding MoveLaterCommand}" Click="OnWorkspaceActionClick" />
+                              <Button Classes="danger" Content="Delete project" Command="{Binding DeleteCommand}" Click="OnWorkspaceActionClick" />
+                            </StackPanel></Flyout></Button.Flyout>
+                          </Button>
                         </Grid>
                         <ItemsControl ItemsSource="{Binding Tasks}">
                           <ItemsControl.ItemTemplate>
@@ -717,29 +761,35 @@
                 </Grid>
                 <StackPanel Spacing="5"><TextBlock Text="Default activity" Classes="muted" FontSize="12" /><ComboBox ItemsSource="{Binding ActivityOptions}" SelectedValue="{Binding DraftActivityId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose activity" /></StackPanel>
                 <CheckBox Content="Star this task" IsChecked="{Binding DraftStarred, Mode=TwoWay}" />
-                <TextBlock Text="The actions below apply immediately. Save task stores your title, description, and options above." Classes="muted" FontSize="11" TextWrapping="Wrap" />
-                <Expander Header="Move to another project" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                  <StackPanel Spacing="10">
-                    <ComboBox AutomationProperties.Name="Move task to project" ItemsSource="{Binding ProjectOptions}" SelectedValue="{Binding TargetProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" />
-                    <Button Classes="ghost" Content="Move to project" Command="{Binding MoveCommand}" />
-                  </StackPanel>
-                </Expander>
                 <Expander Header="Tags, dependencies &amp; references" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                   <StackPanel Spacing="10">
+                    <TextBlock Text="These actions apply immediately." Classes="muted" FontSize="11" />
                     <TextBox Text="{Binding TagText, Mode=TwoWay}" PlaceholderText="Tag" />
                     <Button Classes="ghost" Content="Add tag" Command="{Binding AddTagCommand}" />
-                    <ComboBox ItemsSource="{Binding PrerequisiteOptions}" SelectedValue="{Binding PrerequisiteTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Prerequisite task" />
+                    <ComboBox Classes="structured-picker" AutomationProperties.Name="Prerequisite task" ItemsSource="{Binding DependencyOptions}" SelectedValue="{Binding PrerequisiteTaskId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" ItemTemplate="{StaticResource TaskPickerTemplate}" PlaceholderText="Prerequisite task" />
                     <Button Classes="ghost" Content="Add prerequisite" Command="{Binding AddDependencyCommand}" />
                     <TextBox Text="{Binding LinkLabelText, Mode=TwoWay}" PlaceholderText="Reference label" />
                     <TextBox Text="{Binding LinkUriText, Mode=TwoWay}" PlaceholderText="https:// or file://" />
                     <Button Classes="ghost" Content="Add reference" Command="{Binding AddLinkCommand}" />
                   </StackPanel>
                 </Expander>
-                <Expander Header="Archive &amp; recovery" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="ARCHIVE &amp; RECOVERY" Classes="eyebrow" />
+                  <TextBlock Text="Applies immediately. Restore from task filters." Classes="muted" FontSize="11" />
                   <WrapPanel Classes="editor">
-                    <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ArchiveCommand}" />
-                    <Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
+                    <Button Classes="caution" Content="{Binding ArchiveLabel}" Command="{Binding ArchiveCommand}" AutomationProperties.Name="Archive or restore task" />
+                    <Button Classes="danger" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" AutomationProperties.Name="Delete or restore task" />
                   </WrapPanel>
+                </StackPanel>
+                <TextBlock Text="Save title, description, priority, deadline, activity, and star." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                <Button Classes="primary" Content="Save task" AutomationProperties.Name="Save task editor" Command="{Binding SaveCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                <Expander Header="Move to another project" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                  <StackPanel Spacing="10">
+                    <TextBlock Text="{Binding CurrentProjectPath}" AutomationProperties.Name="Current task location" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <ComboBox Classes="structured-picker" AutomationProperties.Name="Move task to project" ItemsSource="{Binding MoveOptions}" SelectedValue="{Binding TargetProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" ItemTemplate="{StaticResource TaskPickerTemplate}" />
+                    <Button Classes="secondary" Content="Move to project" Command="{Binding MoveCommand}" />
+                    <TextBlock Text="Moves immediately. Cancel does not undo a move." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                  </StackPanel>
                 </Expander>
               </StackPanel>
               <StackPanel DataContext="{Binding SelectedTaskDetails}" Spacing="8">
@@ -751,9 +801,8 @@
             </StackPanel>
           </ScrollViewer>
           <StackPanel Grid.Row="2" Spacing="10">
-            <TextBlock Text="Save your edits, or Cancel to discard them." Classes="muted" FontSize="11" />
+            <TextBlock Text="Cancel discards unsaved task fields. Immediate actions are kept." Classes="muted" FontSize="11" TextWrapping="Wrap" />
             <TextBlock Text="{Binding StatusMessage}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-            <Button Classes="primary" Content="Save task" AutomationProperties.Name="Save task editor" Command="{Binding TaskEditor.SaveCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
           </StackPanel>
         </Grid>
       </Border>

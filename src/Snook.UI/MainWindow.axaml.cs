@@ -26,6 +26,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         DataContext = _viewModel;
         _viewModel.PropertyChanged += (_, e) =>
         {
+            if (e.PropertyName == nameof(MainWindowViewModel.BoardTabs))
+                Dispatcher.UIThread.Post(() => BoardTabsScroll.GetVisualDescendants().OfType<Button>()
+                    .FirstOrDefault(button => button.DataContext is BoardTab { IsSelected: true })?.BringIntoView());
             if (e.PropertyName is nameof(MainWindowViewModel.CurrentSection) or nameof(MainWindowViewModel.SettingsPage))
                 PageScroll.Offset = default;
             if (e.PropertyName == nameof(MainWindowViewModel.IsUtilityEditorOpen))

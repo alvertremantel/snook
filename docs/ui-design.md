@@ -15,11 +15,22 @@ uses aligned ledger columns and a correction drawer. Summary highlights the acti
 grouping, compares attributed durations with bars, and labels clock coverage
 separately. Calendar creation uses drawers and detailed editing belongs to Agenda.
 
-Task capture accepts Enter as well as its button. Tasks has an explicit Board
-selector in both views, including All boards. New boards are immediately selected
+Task capture accepts Enter as well as its button. Tasks has a horizontal board
+button row in both views, including All boards, with its own scroll arrows.
+The selected board and project lanes expose rename, delete, and saved ordering
+through contextual menus. Lanes follow saved project order within saved board order.
+New boards are immediately selected
 and displayed even before they contain projects, with a prompt to add the first
 project. Project lanes and task rows follow that selection; dashboard next tasks
 remain workspace-wide.
+
+The task sidebar places Tags and always-visible amber Archive/red Delete actions
+above Save task, with Move below Save. Save applies only editable task fields;
+Move commits immediately, updates the displayed board/project path, and survives
+Cancel. Project picker headings separate boards; prerequisite headings separate
+board/project groups. Headings cannot be selected, and each choice retains its
+context when the picker closes. Board deletion hides its project lanes and restore
+reveals them without deleting their data.
 
 The shared utility drawer is 480 pixels wide, with a scrolling form between a
 fixed title/Cancel area and a fixed Save/status area. New controls use compiled
@@ -27,7 +38,7 @@ bindings and persistent field labels. Record drafts and picker choices are isola
 from backend refreshes; Cancel/Escape discard them; stale saves preserve them with
 actionable feedback. Focus cycles inside the editor and returns to the workspace.
 The task editor retains its bounded secondary disclosures for relationships and
-lifecycle actions; those are local to the drawer, rather than page navigation.
+movement; those are local to the drawer, rather than page navigation.
 
 Notes-only History corrections preserve precise stored timestamps even though the
 form displays minutes. This matters for sessions shorter than a minute. Timer

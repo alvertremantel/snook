@@ -416,6 +416,32 @@
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Padding" Value="14,9" />
     </Style>
+    <Style Selector="Button.danger">
+      <Setter Property="Background" Value="#FBE9E7" />
+      <Setter Property="Foreground" Value="#9E302B" />
+      <Setter Property="BorderBrush" Value="#DA9F99" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.caution">
+      <Setter Property="Background" Value="#FBF1DC" />
+      <Setter Property="Foreground" Value="#805419" />
+      <Setter Property="BorderBrush" Value="#D6B67B" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#F5D2CE" /><Setter Property="Foreground" Value="#86231F" />
+    </Style>
+    <Style Selector="Button.danger:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#EAB4AD" /><Setter Property="Foreground" Value="#70201C" />
+    </Style>
+    <Style Selector="Button.caution:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#F4E2BA" /><Setter Property="Foreground" Value="#68420F" />
+    </Style>
+    <Style Selector="Button.caution:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#E9D19E" /><Setter Property="Foreground" Value="#56350B" />
+    </Style>
     <Style Selector="Border.catalog-row">
       <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />

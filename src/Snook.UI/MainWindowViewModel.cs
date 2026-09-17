@@ -138,6 +138,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 SelectedProjectId = Projects.FirstOrDefault(project => IsTaskBoardProject(project.Id))?.Id ?? Guid.Empty;
             }
             RebuildTaskWorkspace();
+            NotifyBoardNavigation();
         }
     }
     public IEnumerable<TaskRowViewModel> WorkspaceTasks => Tasks.Where(row => IsTaskBoardProject(row.Task.ProjectId));
@@ -345,14 +346,34 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             TrackedToday = FormatDuration(_todayMilliseconds);
             OpenTaskCount = bootstrap.Today.OpenTaskCount;
 
+            var selectedBoardOption = Boards.FirstOrDefault(board => board.Id == SelectedBoardId);
+            var selectedProjectOption = Projects.FirstOrDefault(project => project.Id == SelectedProjectId);
             ReconcileOptions(Boards, bootstrap.Boards.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null)
                 .Select(item => new BoardOption(item.Id, item.Name)), item => item.Id);
             _projectBoards = bootstrap.Projects.Concat(bootstrap.DeletedItems?.Projects ?? [])
                 .DistinctBy(project => project.Id).ToDictionary(project => project.Id, project => project.BoardId);
             ReconcileOptions(TaskBoardOptions, new[] { new BoardOption(Guid.Empty, "All boards") }.Concat(Boards), item => item.Id);
             if (!TaskBoardOptions.Any(board => board.Id == TaskBoardId)) TaskBoardId = Guid.Empty;
-            ReconcileOptions(Projects, bootstrap.Projects.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null)
-                .Select(item => new ProjectOption(item.Id, item.Name)), item => item.Id);
+            ReconcileOptions(Projects, bootstrap.Projects.Where(item => item.ArchivedAtUtc is null && item.DeletedAtUtc is null && Boards.Any(board => board.Id == item.BoardId))
+                .OrderBy(item => Array.FindIndex(bootstrap.Boards.ToArray(), board => board.Id == item.BoardId))
+                .ThenBy(item => item.SortKey)
+                .Select(item => new ProjectOption(item.Id, item.Name, item.BoardId,
+                    bootstrap.Boards.FirstOrDefault(board => board.Id == item.BoardId)?.Name ?? "Board")), item => item.Id);
+
+            // Replacing a renamed option can clear a ComboBox's displayed selection
+            // even when its selected ID has not changed. Reapply only replaced choices.
+            if (selectedBoardOption is not null && Boards.FirstOrDefault(board => board.Id == selectedBoardOption.Id) is { } renamedBoard
+                && !ReferenceEquals(selectedBoardOption, renamedBoard))
+            {
+                SelectedBoardId = Guid.Empty;
+                SelectedBoardId = renamedBoard.Id;
+            }
+            if (selectedProjectOption is not null && Projects.FirstOrDefault(project => project.Id == selectedProjectOption.Id) is { } renamedProject
+                && !ReferenceEquals(selectedProjectOption, renamedProject))
+            {
+                SelectedProjectId = Guid.Empty;
+                SelectedProjectId = renamedProject.Id;
+            }
 
             if (!Boards.Any(board => board.Id == SelectedBoardId))
             {
@@ -408,6 +429,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             {
                 BoardAdminRows.Add(new BoardAdminRowViewModel(board, SaveBoardAsync, ToggleBoardArchiveAsync, DeleteBoardAsync, ReorderBoardAsync));
             }
+            NotifyBoardNavigation();
 
             ActivityAdminRows.Clear();
             foreach (var activity in bootstrap.Activities.Concat(bootstrap.DeletedItems?.Activities ?? []))
@@ -1152,13 +1174,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         TaskGroups.Clear();
         var rows = WorkspaceTasks.ToArray();
-        foreach (var project in Projects.Where(project => IsTaskBoardProject(project.Id)).OrderBy(project => project.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var project in Projects.Where(project => IsTaskBoardProject(project.Id)))
         {
-            TaskGroups.Add(new ProjectTaskGroupViewModel(project.Id, project.Name, rows.Where(row => row.Task.ProjectId == project.Id).ToArray()));
+            TaskGroups.Add(new ProjectTaskGroupViewModel(project.Id, project.Name, rows.Where(row => row.Task.ProjectId == project.Id).ToArray(),
+                ProjectAdminRows.FirstOrDefault(row => row.Project.Id == project.Id), project.BoardName));
         }
         // Search can explicitly include tasks whose project has been archived or deleted.
         foreach (var group in rows.Where(row => !Projects.Any(project => project.Id == row.Task.ProjectId)).GroupBy(row => row.Task.ProjectId))
-            TaskGroups.Add(new ProjectTaskGroupViewModel(group.Key, group.First().ProjectName, group.ToArray()));
+            TaskGroups.Add(new ProjectTaskGroupViewModel(group.Key, group.First().ProjectName, group.ToArray(), boardName: group.First().Item.BoardName));
         RaisePropertyChanged(nameof(WorkspaceTasks));
         RaisePropertyChanged(nameof(HasEmptyTaskBoard));
         RaisePropertyChanged(nameof(HasNoWorkspaceTasks));
@@ -1818,7 +1841,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             var updated = await _backend.MoveTaskAsync(row.Task.Id, row.TargetProjectId, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
             row.AcceptTask(updated);
             await RefreshAsync();
-            StatusMessage = $"Moved to {Projects.FirstOrDefault(project => project.Id == updated.ProjectId)?.Name ?? "project"}.";
+            StatusMessage = $"Moved to {row.CurrentProjectPath}.";
         }
         catch (Exception exception)
         {
@@ -1898,7 +1921,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             var details = await _backend.GetTaskDetailsAsync(row.Task.Id);
             SelectedTaskDetails = new TaskDetailsPanelViewModel(details);
             TaskEditor = new TaskRowViewModel(row.Item with { Task = details.Task }, Projects, Activities,
-                Tasks.Select(task => new TaskOption(task.Task.Id, task.Title)),
+                (await _backend.SearchTasksAsync()).Select(TaskPickerOption),
                 StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync,
                 DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
             StatusMessage = "Editing task details.";
@@ -2059,12 +2082,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     }
 }
 
-public sealed record ProjectOption(Guid Id, string Name);
+public sealed record ProjectOption(Guid Id, string Name, Guid BoardId = default, string BoardName = "");
 public sealed record BoardOption(Guid Id, string Name);
 public sealed record ActivityOption(Guid Id, string Name, SessionLane DefaultLane = SessionLane.Foreground);
 public sealed record ActivityGroupOption(Guid Id, string Name);
 public sealed record CalendarOption(Guid Id, string Name);
-public sealed record TaskOption(Guid Id, string Name);
+public sealed record TaskOption(Guid Id, string Name, string Context = "");
 public sealed record PriorityOption(Priority Value, string Name);
 public sealed record TaskSortOption(string Value, string Name);
 public sealed record SessionLaneOption(SessionLane Value, string Name);
@@ -2266,21 +2289,26 @@ public sealed class ActivityAdminRowViewModel : INotifyPropertyChanged
 
 public sealed class ProjectTaskGroupViewModel
 {
-    public ProjectTaskGroupViewModel(Guid projectId, string projectName, IReadOnlyList<TaskRowViewModel> tasks)
+    public ProjectTaskGroupViewModel(Guid projectId, string projectName, IReadOnlyList<TaskRowViewModel> tasks, ProjectAdminRowViewModel? admin = null, string boardName = "")
     {
         ProjectId = projectId;
         ProjectName = projectName;
         Tasks = tasks;
+        Admin = admin;
+        BoardName = boardName;
     }
 
     public string ProjectName { get; }
+    public string BoardName { get; }
+    public ProjectAdminRowViewModel? Admin { get; }
+    public bool CanManage => Admin is not null;
     public Guid ProjectId { get; }
     public string CountLabel => Tasks.Count.ToString(CultureInfo.InvariantCulture);
     public bool IsEmpty => Tasks.Count == 0;
     public IReadOnlyList<TaskRowViewModel> Tasks { get; }
 }
 
-public sealed class TaskRowViewModel
+public sealed class TaskRowViewModel : INotifyPropertyChanged
 {
     private readonly Func<TaskRowViewModel, Task> _start;
     private readonly Func<TaskRowViewModel, Task> _complete;
@@ -2301,6 +2329,12 @@ public sealed class TaskRowViewModel
         ProjectOptions = projects.ToArray();
         ActivityOptions = activities.ToArray();
         PrerequisiteOptions = prerequisiteOptions.Where(option => option.Id != item.Task.Id).ToArray();
+        MoveOptions = ProjectOptions.GroupBy(project => project.BoardId).SelectMany(group =>
+            new[] { new TaskPickerEntry(Guid.Empty, group.First().BoardName, "", true) }
+                .Concat(group.Select(project => new TaskPickerEntry(project.Id, project.Name, project.BoardName)))).ToArray();
+        DependencyOptions = PrerequisiteOptions.GroupBy(task => task.Context).SelectMany(group =>
+            new[] { new TaskPickerEntry(Guid.Empty, group.Key, "", true) }
+                .Concat(group.Select(task => new TaskPickerEntry(task.Id, task.Name, task.Context)))).ToArray();
         _start = start;
         _complete = complete;
         _save = save;
@@ -2331,7 +2365,22 @@ public sealed class TaskRowViewModel
     }
 
     public TaskListItem Item { get; private set; }
-    public void AcceptTask(TaskItem task) => Item = Item with { Task = task };
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public void AcceptTask(TaskItem task)
+    {
+        Item = Item with { Task = task, ProjectName = ProjectOptions.FirstOrDefault(project => project.Id == task.ProjectId)?.Name ?? Item.ProjectName };
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentProjectPath)));
+    }
+    public string CurrentProjectPath
+    {
+        get
+        {
+            var project = ProjectOptions.FirstOrDefault(project => project.Id == Task.ProjectId);
+            return project is null ? ProjectName : $"{project.BoardName} / {project.Name}";
+        }
+    }
+    public IReadOnlyList<TaskPickerEntry> MoveOptions { get; }
+    public IReadOnlyList<TaskPickerEntry> DependencyOptions { get; }
     public TaskItem Task => Item.Task;
     public string Title => Task.Title;
     public string DraftTitle { get => _draftTitle; set => _draftTitle = value; }
