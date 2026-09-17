@@ -212,7 +212,7 @@
           </Grid>
 
 
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="22">
+          <Grid ColumnDefinitions="*,1.15*" ColumnSpacing="22">
             <Border Classes="card">
               <StackPanel Spacing="10">
                 <TextBlock Text="RECENTLY TRACKED" Classes="eyebrow" />

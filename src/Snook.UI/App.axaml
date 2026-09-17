@@ -29,6 +29,9 @@
     <Color x:Key="BackgroundSurfaceColor">#EFF3F7</Color>
     <Color x:Key="DisabledColor">#EDF0ED</Color>
     <Color x:Key="DisabledInkColor">#7A8987</Color>
+    <Color x:Key="ScrollThumbColor">#A6B3AD</Color>
+    <Color x:Key="ScrollThumbHoverColor">#84968D</Color>
+    <Color x:Key="ScrollThumbPressedColor">#657B70</Color>
     <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
     <SolidColorBrush x:Key="SubtleBrush" Color="{StaticResource SubtleColor}" />
@@ -122,6 +125,25 @@
     <SolidColorBrush x:Key="SystemControlBackgroundChromeMediumLowBrush" Color="{StaticResource SubtleColor}" />
     <SolidColorBrush x:Key="SystemControlBackgroundAltHighBrush" Color="{StaticResource SurfaceColor}" />
     <SolidColorBrush x:Key="SystemControlBackgroundChromeWhiteBrush" Color="{StaticResource SurfaceColor}" />
+    <!-- Keep scroll chrome neutral, with clearer feedback only during interaction. -->
+    <SolidColorBrush x:Key="ScrollBarPanningThumbBackground" Color="{StaticResource ScrollThumbColor}" />
+    <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="{StaticResource ScrollThumbHoverColor}" />
+    <SolidColorBrush x:Key="ScrollBarThumbFillPressed" Color="{StaticResource ScrollThumbPressedColor}" />
+    <SolidColorBrush x:Key="ScrollBarThumbFillDisabled" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ScrollBarBackground" Color="Transparent" />
+    <SolidColorBrush x:Key="ScrollBarBackgroundPointerOver" Color="Transparent" />
+    <SolidColorBrush x:Key="ScrollBarBorderBrush" Color="Transparent" />
+    <SolidColorBrush x:Key="ScrollBarTrackFill" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="ScrollBarTrackFillPointerOver" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="ScrollBarTrackStroke" Color="Transparent" />
+    <SolidColorBrush x:Key="ScrollBarTrackStrokePointerOver" Color="Transparent" />
+    <SolidColorBrush x:Key="ScrollBarButtonArrowForeground" Color="{StaticResource ScrollThumbColor}" />
+    <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundPointerOver" Color="{StaticResource ScrollThumbHoverColor}" />
+    <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundPressed" Color="{StaticResource ScrollThumbPressedColor}" />
+    <SolidColorBrush x:Key="ScrollBarButtonBackground" Color="Transparent" />
+    <SolidColorBrush x:Key="ScrollBarButtonBackgroundPointerOver" Color="{StaticResource SubtleColor}" />
+    <SolidColorBrush x:Key="ScrollBarButtonBackgroundPressed" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ScrollViewerScrollBarsSeparatorBackground" Color="Transparent" />
   </Application.Resources>
   <Application.Styles>
     <FluentTheme>
