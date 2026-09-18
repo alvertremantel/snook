@@ -108,6 +108,35 @@ multi-platform release audit.
 
 ## Calendar and Today pass
 
+### Event and History calendar modes
+
+Calendar now separates the Event schedule from a History usage view. Event retains
+Day/Week/Month/Agenda and its creation/editing actions. History exposes only Week
+and Flex, with recorded task and activity intervals through now and subdued gray
+task plans after now. It excludes calendar events and past plans. A plan spanning
+now displays only its future remainder. Recorded intervals are independently split
+at local midnight, so pauses remain gaps and overnight work belongs to each day.
+
+History uses elapsed minutes since each local midnight: 23- and 25-hour days keep
+correct duration proportions, with local hour/offset labels on the affected column.
+It has a one-pixel minimum mark instead of Event's 20-minute minimum hit area;
+short records retain keyboard controls, tooltips, and exact timestamp inspection.
+Recorded foreground/background sessions and running intervals have explicit state
+text in their inspection details and automation names. Daily totals sum interval
+durations, including simultaneous sessions, as their tooltip explains.
+
+Flex uses a 156-pixel minimum day width after the time gutter, bounded to 2–21 days,
+and distributes remaining width evenly. The selected date stays near the center;
+previous/next shifts by a full visible range. Mode-specific arrangements are kept
+for the app session. Width changes are debounced, obsolete calendar loads are
+discarded, and open history intervals advance locally every 15 seconds. Rebuilds
+preserve the time scroll and keyboard focus on the same interval. The timeline
+fits the remaining window height while keeping every hour reachable.
+
+History reads all pages up to 10,000 sessions per range and explicitly reports
+truncation. Both embedded and daemon clients use the existing shared history
+contract. The separate History ledger remains the correction workflow.
+
 The calendar now navigates day/week/month/agenda ranges and returns to today.
 Day and week use a full 24-hour local-time grid, with duration-sized controls,
 separate all-day rows, split overnight entries, and side-by-side overlap groups.

@@ -181,20 +181,43 @@ The desktop profile stores its workspace at the platform-private local
 application-data path under `Snook/workspace.db`. Set `SNOOK_DATA_DIR` to an
 explicit directory for a disposable development profile.
 
+## Calendar modes
+
+Calendar has two modes. **Event** keeps the existing Day, Week, Month, and Agenda
+arrangements for scheduled tasks and events. **History** offers Week and Flex:
+recorded task and activity intervals fill their actual time, pauses remain gaps,
+and future task plans appear in gray. Plans crossing the present are clipped at
+now; past plans and calendar events do not appear in History. Open intervals grow
+locally every 15 seconds, with timer changes refreshed from the backend.
+
+Flex fits days across the available width using a 156-pixel minimum day width,
+within a 2–21 day limit. It centers the selected date, and previous/next moves by
+the displayed day count. Each mode remembers its arrangement for the current app
+session. Daily tracked totals sum recorded intervals, including simultaneous
+sessions. Select a time mark with the pointer or keyboard for exact timestamps,
+duration, activity, and notes. Very short sessions remain thin marks instead of
+inflated cards. On clock-change days, History preserves real elapsed durations
+and labels that day's local hours and UTC offsets separately.
+
 ## UI screenshots
 
 Build the solution, then run `scripts/capture-ui-screenshots.sh` to render the
 main UI screens into `artifacts/ui-screenshots/`. The harness uses a disposable
 SQLite profile in `artifacts/ui-screenshot-data/` and captures Today, Tasks
-(list and board), Time Tracker, Calendar (day/week/month/agenda), History, Summary, and
+(list and board), Time Tracker, Calendar (Event and History modes), History, Summary, and
 Settings at 1280×820. Set `SNOOK_SCREENSHOT_SECTIONS` to a comma-separated
 subset such as `tasks-list,settings` when iterating on a smaller area.
-The default run produces 22 images, including task and utility drawers
+The default run produces 24 images, including task and utility drawers
 (`tasks-details`, `tracker-new-activity`, `tracker-manual`, `history-details`,
 `calendar-details`), the lower Today section (`today-bottom`), and Settings
 categories (`settings-organization`, `settings-activities`,
 `settings-activities-bottom`, `settings-calendars`, `settings-activity-editor`).
 `calendar-plan` and `settings-board-editor` provide additional drawer captures.
+`calendar-history-week` and `calendar-history-flex` capture calendar History.
+With `SNOOK_SCREENSHOT_VERIFY_INTERACTIONS=1`, `calendar-history-flex` checks
+persisted recorded intervals, the past/future boundary, keyboard inspection,
+resizing, date navigation, each mode's remembered arrangement, and timer
+pause/resume/stop refreshes.
 An empty screenshot profile is seeded with three sample tasks, a 45-minute
 session, a planned block, two events, grouped activities, and running/paused/background
 timers. Existing tasks prevent repeat seeding;
@@ -209,8 +232,10 @@ task dragging, Escape cancellation, and timer pause/resume/stop/start through po
 input, then checks persisted state. The `calendar-week` section also checks date
 navigation, keyboard inspection, planned-task starts, and explicit planning. This
 option intentionally changes the capture profile. Include `tasks-board,tracker,calendar-week`
-to run all checks. On a fresh profile, `SNOOK_SCREENSHOT_CALENDAR_STRESS=1` adds
-overlapping, all-day, and overnight events for calendar layout review.
+to run the existing checks; add `calendar-history-flex` for the new mode checks.
+On a fresh profile, `SNOOK_SCREENSHOT_CALENDAR_STRESS=1` adds
+overlapping, all-day, and overnight events, plus recorded sessions, short work,
+gaps, and past/future plans for calendar layout review.
 `SNOOK_SCREENSHOT_BOARD_STRESS=1` adds a wide board and long project lane; the
 board interaction checks then include edge scrolling to an offscreen project.
 Task-drawer checks cover preserved drafts, saves, keyboard focus, and revision

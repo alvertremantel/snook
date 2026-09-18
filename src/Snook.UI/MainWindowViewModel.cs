@@ -214,6 +214,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             RaisePropertyChanged(nameof(IsCalendarWeek));
             RaisePropertyChanged(nameof(IsCalendarMonth));
             RaisePropertyChanged(nameof(IsCalendarAgenda));
+            RaisePropertyChanged(nameof(IsCalendarFlex));
             RaisePropertyChanged(nameof(IsCalendarGridVisible));
             RaisePropertyChanged(nameof(CalendarGridColumns));
             RaisePropertyChanged(nameof(IsCalendarTimelineVisible));
@@ -1018,7 +1019,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Summary" => "A clearer picture of the last 30 days.",
             "Tasks" => "A clear place for everything you want to do.",
             "Time Tracker" => "Start tasks or standalone activities, then switch without losing your place.",
-            "Calendar" => "Planned blocks stay separate from deadlines.",
+            "Calendar" => "Plan your work or see how your days were spent.",
             "Settings" => "Make space for the way you work.",
             _ => "A little progress, thoughtfully recorded."
         };
@@ -1066,7 +1067,13 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         else if (section == "Calendar" && variant is "day" or "week" or "month" or "agenda")
         {
+            await SelectCalendarModeAsync("Event");
             await SelectCalendarViewAsync(CultureInfo.InvariantCulture.TextInfo.ToTitleCase(variant));
+        }
+        else if (section == "Calendar" && variant is "history-week" or "history-flex")
+        {
+            await SelectCalendarModeAsync("History");
+            await SelectCalendarViewAsync(variant == "history-week" ? "Week" : "Flex");
         }
         else if (section == "Calendar" && variant is "details" or "plan")
             OpenUtilityEditor(variant == "plan" ? "plan" : "event");
@@ -1218,12 +1225,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private async Task LoadCalendarAsync(BootstrapSnapshot bootstrap)
     {
+        var version = ++_calendarLoadVersion;
         var localNow = _calendarAnchor;
         var localStart = CalendarView switch
         {
             "Day" => localNow.Date,
             "Month" => new DateTime(localNow.Year, localNow.Month, 1),
             "Agenda" => localNow.Date,
+            "Flex" => localNow.Date.AddDays(-((_calendarFlexDays - 1) / 2)),
             _ => localNow.Date.AddDays(-(int)localNow.DayOfWeek + (localNow.DayOfWeek == DayOfWeek.Sunday ? -6 : 1))
         };
         var localEnd = CalendarView switch
@@ -1231,10 +1240,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Day" => localStart.AddDays(1),
             "Month" => localStart.AddMonths(1),
             "Agenda" => localStart.AddDays(14),
+            "Flex" => localStart.AddDays(_calendarFlexDays),
             _ => localStart.AddDays(7)
         };
         var gridStart = localStart;
-        CalendarRangeLabel = IsCalendarMonth ? localStart.ToString("MMMM yyyy", CultureInfo.CurrentCulture)
+        var rangeLabel = IsCalendarMonth ? localStart.ToString("MMMM yyyy", CultureInfo.CurrentCulture)
             : IsCalendarDay ? localStart.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture)
             : $"{localStart:MMM d} – {localEnd.AddDays(-1):MMM d, yyyy}";
         var gridEnd = localEnd;
@@ -1255,8 +1265,27 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         var rangeEnd = LocalDateToUtc(gridEnd);
         var range = new CalendarRangeQuery(rangeStart, rangeEnd);
         var blocks = await _backend.GetCalendarRangeAsync(range);
-        var events = await _backend.GetCalendarEventsRangeAsync(range);
+        var events = IsCalendarHistoryMode ? [] : await _backend.GetCalendarEventsRangeAsync(range);
         var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
+        var history = new List<HistoryItem>();
+        var historyTruncated = false;
+        if (IsCalendarHistoryMode && rangeStart < DateTimeOffset.UtcNow)
+        {
+            string? continuation = null;
+            // Bound work without silently presenting a partial day as complete.
+            for (var pageIndex = 0; pageIndex < 50; pageIndex++)
+            {
+                var page = await _backend.GetHistoryAsync(new HistoryQuery(rangeStart, rangeEnd, PageSize: 200, ContinuationToken: continuation));
+                if (version != _calendarLoadVersion) return;
+                history.AddRange(page.Items);
+                historyTruncated = page.HasMore;
+                if (!page.HasMore) break;
+                continuation = page.ContinuationToken;
+            }
+        }
+        if (version != _calendarLoadVersion) return;
+        CalendarRangeLabel = rangeLabel;
+        CalendarHistoryNotice = historyTruncated ? "This range exceeds 10,000 sessions. Some history is omitted; use a narrower Flex range." : string.Empty;
         ReconcileOptions(CalendarPlanTasks, taskItems.Where(item => item.Task.Status != TaskState.Completed && item.Task.ArchivedAtUtc is null && item.Task.DeletedAtUtc is null)
             .Select(item => new TaskOption(item.Task.Id, item.Task.Title)), item => item.Id);
         CalendarBlocks.Clear();
@@ -1271,7 +1300,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         {
             CalendarEvents.Add(new CalendarEventRowViewModel(item, UpdateCalendarEventAsync, DeleteCalendarEventAsync));
         }
-        BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents);
+        if (IsCalendarHistoryMode)
+        {
+            _calendarHistory = history;
+            _historyGridStart = gridStart;
+            _historyGridEnd = gridEnd;
+            _nextCalendarTick = DateTimeOffset.MinValue;
+            RefreshCalendarHistory(DateTimeOffset.UtcNow);
+        }
+        else BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents);
         HasNoCalendarBlocks = CalendarBlocks.Count == 0 && CalendarEvents.Count == 0;
     }
 
@@ -1377,10 +1414,13 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private async Task SelectCalendarViewAsync(string view)
     {
         SelectedCalendarItem = null;
-        CalendarView = view is "Day" or "Week" or "Month" or "Agenda" ? view : "Week";
+        CalendarView = IsCalendarHistoryMode ? (view == "Flex" ? "Flex" : "Week")
+            : view is "Day" or "Week" or "Month" or "Agenda" ? view : "Week";
+        if (IsCalendarHistoryMode) _historyCalendarView = CalendarView;
+        else _eventCalendarView = CalendarView;
         if (IsCalendarVisible)
         {
-            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+            await ReloadCalendarAsync();
         }
     }
 
@@ -2064,6 +2104,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private void UpdateDisplayTimes()
     {
+        RefreshCalendarHistory(DateTimeOffset.UtcNow);
         foreach (var session in ActiveSessions)
         {
             session.UpdateElapsed();
@@ -2605,11 +2646,14 @@ public sealed class CalendarBlockRowViewModel
 
 public sealed class CalendarDayColumnViewModel
 {
-    public CalendarDayColumnViewModel(DateTime date, bool outsideDisplayedMonth, IReadOnlyList<CalendarGridItemViewModel> items)
+    public CalendarDayColumnViewModel(DateTime date, bool outsideDisplayedMonth, IReadOnlyList<CalendarGridItemViewModel> items,
+        bool isHistory = false, TimeZoneInfo? timeZone = null)
     {
         Date = date;
         OutsideDisplayedMonth = outsideDisplayedMonth;
         Items = items;
+        IsHistory = isHistory;
+        TimeZone = timeZone ?? TimeZoneInfo.Local;
     }
 
     public DateTime Date { get; }
@@ -2619,12 +2663,27 @@ public sealed class CalendarDayColumnViewModel
     public string DateLabel => Date.ToString("MMM d", CultureInfo.CurrentCulture);
     public IReadOnlyList<CalendarGridItemViewModel> Items { get; }
     public bool HasItems => Items.Count > 0;
+    public bool IsHistory { get; }
+    public TimeZoneInfo TimeZone { get; }
+    public DateTimeOffset StartAtUtc => CalendarHistoryProjection.MidnightUtc(Date, TimeZone);
+    public DateTimeOffset EndAtUtc => CalendarHistoryProjection.MidnightUtc(Date.AddDays(1), TimeZone);
+    public double MinuteCount => IsHistory ? (EndAtUtc - StartAtUtc).TotalMinutes : 1440;
+    public string TrackedLabel
+    {
+        get
+        {
+            var duration = TimeSpan.FromTicks(Items.Where(item => item.IsActual).Sum(item => (item.EndAtUtc - item.StartAtUtc).Ticks));
+            return duration.TotalMinutes < 1 && duration > TimeSpan.Zero ? "<1m tracked"
+                : duration.TotalHours >= 1 ? $"{(int)duration.TotalHours}h {duration.Minutes:00}m tracked" : $"{(int)duration.TotalMinutes}m tracked";
+        }
+    }
 }
 
 public sealed class CalendarGridItemViewModel
 {
-    private CalendarGridItemViewModel(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool isEvent, bool allDay,
-        string details, ICommand? startCommand, Action<CalendarGridItemViewModel> inspect)
+    internal CalendarGridItemViewModel(string label, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, bool isEvent, bool allDay,
+        string details, ICommand? startCommand, Action<CalendarGridItemViewModel> inspect,
+        string key = "", bool isActual = false, bool isFuturePlan = false, bool isRunning = false, bool isBackground = false)
     {
         Label = label;
         StartAtUtc = startAtUtc;
@@ -2633,10 +2692,20 @@ public sealed class CalendarGridItemViewModel
         AllDay = allDay;
         Details = details;
         StartCommand = startCommand;
+        Key = key;
+        IsActual = isActual;
+        IsFuturePlan = isFuturePlan;
+        IsRunning = isRunning;
+        IsBackground = isBackground;
         InspectCommand = new AsyncCommand(_ => { inspect(this); return Task.CompletedTask; });
     }
 
     public string Label { get; }
+    public string Key { get; }
+    public bool IsActual { get; }
+    public bool IsFuturePlan { get; }
+    public bool IsRunning { get; }
+    public bool IsBackground { get; }
     public DateTimeOffset StartAtUtc { get; }
     public DateTimeOffset EndAtUtc { get; }
     public bool IsEvent { get; }
@@ -2646,14 +2715,19 @@ public sealed class CalendarGridItemViewModel
     public ICommand? StartCommand { get; }
     public ICommand InspectCommand { get; }
     public string IntervalLabel => AllDay ? $"{StartAtUtc.ToLocalTime():MMM d} · All day"
+        : IsActual || IsFuturePlan ? $"{StartAtUtc.ToLocalTime():ddd, MMM d HH:mm:ss zzz} – {EndAtUtc.ToLocalTime():MMM d HH:mm:ss zzz} · {DurationLabel}"
         : $"{StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt} – {EndAtUtc.ToLocalTime():MMM d h:mm tt} · {(EndAtUtc - StartAtUtc).TotalMinutes:0} min";
-    public string KindLabel => IsEvent ? "Event" : "Plan";
+    public string DurationLabel => EndAtUtc - StartAtUtc < TimeSpan.FromMinutes(1) ? $"{(EndAtUtc - StartAtUtc).TotalSeconds:0.#} sec"
+        : $"{(EndAtUtc - StartAtUtc).TotalMinutes:0.#} min";
+    public string KindLabel => IsActual ? (IsRunning ? "Running" : "Recorded") + (IsBackground ? " · Background" : string.Empty)
+        : IsFuturePlan ? "Planned" : IsEvent ? "Event" : "Plan";
     public string TimeLabel => AllDay ? "All day" : StartAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.CurrentCulture);
-    public string Background => IsEvent ? "#FBF5E9" : "#E6F0EC";
-    public string Foreground => IsEvent ? "#91692E" : "#246B63";
+    public string Background => IsFuturePlan ? "#EFF1F1" : IsActual && IsBackground ? "#E7EEF5" : IsEvent ? "#FBF5E9" : "#E6F0EC";
+    public string Foreground => IsFuturePlan ? "#606D72" : IsActual && IsBackground ? "#44647F" : IsEvent ? "#91692E" : "#246B63";
 
     public static CalendarGridItemViewModel ForBlock(CalendarBlockRowViewModel row, Action<CalendarGridItemViewModel> inspect)
-        => new(row.Label, row.Block.StartAtUtc, row.Block.EndAtUtc, false, false, "Planned work · Start when you are ready.", row.StartCommand, inspect);
+        => new(row.Label, row.Block.StartAtUtc, row.Block.EndAtUtc, false, false, "Planned work · Start when you are ready.", row.StartCommand, inspect,
+            $"plan:{row.Block.Id}:{row.Block.StartAtUtc:O}");
 
     public static CalendarGridItemViewModel ForEvent(CalendarEventRowViewModel row, Action<CalendarGridItemViewModel> inspect)
         => new(row.Label, row.Event.StartAtUtc, row.Event.EndAtUtc, true, row.Event.AllDay,

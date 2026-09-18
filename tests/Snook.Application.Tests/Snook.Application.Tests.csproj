@@ -8,6 +8,7 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <ProjectReference Include="../../src/Snook.Application/Snook.Application.csproj" />
+    <ProjectReference Include="../../src/Snook.UI/Snook.UI.csproj" />
     <ProjectReference Include="../../src/Snook.Daemon/Snook.Daemon.csproj" />
     <ProjectReference Include="../../src/Snook.Cli/Snook.Cli.csproj" />
     <ProjectReference Include="../../src/Snook.Persistence.Sqlite/Snook.Persistence.Sqlite.csproj" />

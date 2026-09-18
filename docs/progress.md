@@ -8,6 +8,20 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Calendar has Event and History modes. Event retains its existing arrangements;
+  History has Week and adaptive Flex, proportional recorded intervals through now,
+  gaps for pauses, per-day tracked totals, and gray future task plans clipped at now.
+  Flex uses a 156-pixel day-width target and keeps 2–21 days visible. Open intervals
+  advance locally; backend timer changes rebuild the view. Overnight splits,
+  short records, overlaps, 23/25-hour days, keyboard inspection, and paginated
+  history retrieval have dedicated coverage. Calendar events remain in Event mode.
+  Verification: full solution build has zero warnings/errors; all 47 tests pass,
+  including 14 calendar tests and a 205-session pagination case. Persisted Event
+  planning/navigation and History resize, mode memory, keyboard inspection, and
+  pause/resume/stop checks pass at 1280×820 and 980×640. Seeded and empty renders
+  were inspected in `artifacts/calendar-bimodal/{seeded,narrow,empty,empty-narrow}`.
+  `git diff --check` passes. This is headless development verification; native
+  human interaction and assistive-technology review remain separate release work.
 - Today separates Quick capture and On the horizon with a 14-pixel gap.
   Sidebar icons use larger, aligned glyphs within compact navigation rows.
   Today and Tasks capture pickers group projects under disabled board headings

@@ -92,6 +92,18 @@ internal static class Program
         var reading = await backend.CreateActivityAsync("Read & research", "Follow a thread worth understanding.", SessionLane.Foreground, work.Id);
         await backend.CreateActivityAsync("Inbox & admin", "Small things, cleared together.", SessionLane.Foreground, work.Id);
         var music = await backend.CreateActivityAsync("Listening", "Music alongside the work.", SessionLane.Background, life.Id);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_CALENDAR_STRESS") == "1")
+        {
+            var yesterday = new DateTimeOffset(DateTime.Today.AddDays(-1).AddHours(9)).ToUniversalTime();
+            await backend.CreateManualSessionAsync(first.Id, design.Id, yesterday, yesterday.AddMinutes(52), "First sketching session.");
+            await backend.CreateManualSessionAsync(first.Id, design.Id, yesterday.AddMinutes(75), yesterday.AddMinutes(110), "Returned after a break.");
+            await backend.CreateManualSessionAsync(null, reading.Id, yesterday.AddHours(2), yesterday.AddHours(3.25), "Research notes.");
+            await backend.CreateManualSessionAsync(null, music.Id, yesterday.AddMinutes(20), yesterday.AddMinutes(65), "Listening while sketching.");
+            await backend.CreateManualSessionAsync(first.Id, design.Id, yesterday.AddHours(3.5), yesterday.AddHours(3.5).AddMinutes(3), "A three-minute follow-up.");
+            await backend.CreateScheduleBlockAsync(snapshot.Calendars[0].Id, first.Id, design.Id, null, yesterday, yesterday.AddHours(3), TimeZoneInfo.Local.Id);
+            var tomorrow = yesterday.AddDays(2);
+            await backend.CreateScheduleBlockAsync(snapshot.Calendars[0].Id, first.Id, design.Id, null, tomorrow, tomorrow.AddMinutes(80), TimeZoneInfo.Local.Id);
+        }
         await backend.CreateActivityAsync("A little movement", "Step away and reset.", SessionLane.Foreground, life.Id);
         await backend.StartSessionAsync(null, reading.Id, SessionLane.Foreground, new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
         await backend.StartSessionAsync(first.Id, design.Id, SessionLane.Foreground, new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
@@ -111,7 +123,10 @@ internal static class Program
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_PALETTE") == "1")
             await InteractionChecks.CheckPaletteAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_INTERACTIONS") == "1")
+        {
             await InteractionChecks.RunAsync(window, path);
+            await InteractionChecks.CheckCalendarHistoryAsync(window, path);
+        }
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_EDITORS") == "1")
             await InteractionChecks.CheckEditorsAsync(window, path);
     }

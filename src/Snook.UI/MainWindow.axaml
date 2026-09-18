@@ -642,6 +642,10 @@
         <StackPanel Spacing="22" IsVisible="{Binding IsCalendarVisible}">
           <Border Classes="card">
             <StackPanel Spacing="16">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <Button Classes="ghost" Classes.selected="{Binding IsCalendarEventMode}" Content="Event" AutomationProperties.Name="Show calendar Event mode" Command="{Binding SelectCalendarModeCommand}" CommandParameter="Event" />
+                <Button Classes="ghost" Classes.selected="{Binding IsCalendarHistoryMode}" Content="History" AutomationProperties.Name="Show calendar History mode" Command="{Binding SelectCalendarModeCommand}" CommandParameter="History" />
+              </StackPanel>
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Spacing="4">
                   <TextBlock Text="{Binding CalendarRangeLabel}" Foreground="{DynamicResource InkBrush}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -653,12 +657,15 @@
                   <Button Classes="ghost" Content="›" AutomationProperties.Name="Next calendar range" Command="{Binding NavigateCalendarCommand}" CommandParameter="next" />
                 </StackPanel>
               </Grid>
-              <WrapPanel Classes="editor">
-                  <Button Classes="ghost" Classes.selected="{Binding IsCalendarDay}" AutomationProperties.Name="Show calendar day" Content="Day" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Day" />
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Classes="ghost" IsVisible="{Binding IsCalendarEventMode}" Classes.selected="{Binding IsCalendarDay}" AutomationProperties.Name="Show calendar day" Content="Day" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Day" />
                   <Button Classes="ghost" Classes.selected="{Binding IsCalendarWeek}" AutomationProperties.Name="Show calendar week" Content="Week" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Week" />
-                  <Button Classes="ghost" Classes.selected="{Binding IsCalendarMonth}" AutomationProperties.Name="Show calendar month" Content="Month" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Month" />
-                  <Button Classes="ghost" Classes.selected="{Binding IsCalendarAgenda}" AutomationProperties.Name="Show calendar agenda" Content="Agenda" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Agenda" />
-              </WrapPanel>
+                  <Button Classes="ghost" IsVisible="{Binding IsCalendarEventMode}" Classes.selected="{Binding IsCalendarMonth}" AutomationProperties.Name="Show calendar month" Content="Month" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Month" />
+                  <Button Classes="ghost" IsVisible="{Binding IsCalendarHistoryMode}" Classes.selected="{Binding IsCalendarFlex}" AutomationProperties.Name="Show calendar flex" Content="Flex" ToolTip.Tip="Fits as many days as the window comfortably allows" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Flex" />
+                </StackPanel>
+                <Button Grid.Column="2" Classes="ghost" IsVisible="{Binding IsCalendarEventMode}" Classes.selected="{Binding IsCalendarAgenda}" AutomationProperties.Name="Show calendar agenda" Content="Agenda" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Agenda" />
+              </Grid>
               <Border Background="{DynamicResource SubtleBrush}" CornerRadius="10" Padding="14" IsVisible="{Binding HasSelectedCalendarItem}">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                   <StackPanel Spacing="5" DataContext="{Binding SelectedCalendarItem}">
@@ -669,15 +676,19 @@
                   </StackPanel>
                   <StackPanel Grid.Column="1" Spacing="6">
                     <Button Classes="ghost" Content="Close" Command="{Binding CloseCalendarItemCommand}" />
-                    <Button Classes="ghost" Content="Edit in agenda" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Agenda" />
+                    <Button Classes="ghost" Content="Edit in agenda" IsVisible="{Binding CanEditCalendarItemInAgenda}" Command="{Binding SelectCalendarViewCommand}" CommandParameter="Agenda" />
                   </StackPanel>
                 </Grid>
               </Border>
-              <StackPanel Orientation="Horizontal" Spacing="8">
+              <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsCalendarEventMode}">
                 <Button Classes="secondary" Content="+ Plan a task" AutomationProperties.Name="Open task planning" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="plan" />
                 <Button Classes="ghost" Content="+ New event" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="event" />
               </StackPanel>
-              <local:CalendarTimeline Days="{Binding CalendarDayColumns}" IsVisible="{Binding IsCalendarTimelineVisible}" />
+              <StackPanel Spacing="4" IsVisible="{Binding IsCalendarHistoryMode}">
+                <TextBlock Text="{Binding CalendarHistoryLegend}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding CalendarHistoryNotice}" IsVisible="{Binding HasCalendarHistoryNotice}" Foreground="{DynamicResource PausedBrush}" FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
+              <local:CalendarTimeline x:Name="CalendarTimeGrid" Days="{Binding CalendarDayColumns}" IsVisible="{Binding IsCalendarTimelineVisible}" />
               <Border Background="{DynamicResource SubtleBrush}" CornerRadius="12" Padding="8" IsVisible="{Binding IsCalendarMonth}">
                 <ItemsControl ItemsSource="{Binding CalendarDayColumns}">
                   <ItemsControl.ItemsPanel>

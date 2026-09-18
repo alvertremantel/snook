@@ -24,6 +24,14 @@ public partial class MainWindow : Window, IAsyncDisposable
         InitializeComponent();
         _viewModel = new MainWindowViewModel(backend);
         DataContext = _viewModel;
+        var calendarResize = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        calendarResize.Tick += async (_, _) =>
+        {
+            calendarResize.Stop();
+            await _viewModel.SetCalendarViewportWidthAsync(CalendarTimeGrid.Bounds.Width);
+        };
+        CalendarTimeGrid.SizeChanged += (_, _) => { calendarResize.Stop(); calendarResize.Start(); };
+        Closed += (_, _) => calendarResize.Stop();
         _viewModel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainWindowViewModel.BoardTabs))
@@ -109,7 +117,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(section => section.Length > 0)
             .ToArray()
-            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "tracker", "tracker-new-activity", "tracker-manual", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "history", "history-details", "summary", "settings", "settings-organization", "settings-activities", "settings-activities-bottom", "settings-calendars", "settings-activity-editor"];
+            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "tracker", "tracker-new-activity", "tracker-manual", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "calendar-history-week", "calendar-history-flex", "history", "history-details", "summary", "settings", "settings-organization", "settings-activities", "settings-activities-bottom", "settings-calendars", "settings-activity-editor"];
 
         foreach (var section in requestedSections)
         {
@@ -140,7 +148,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (section.EndsWith("-bottom", StringComparison.Ordinal))
                 PageScroll.ScrollToEnd();
             await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render);
-            await Task.Delay(50);
+            await Task.Delay(section == "calendar-history-flex" ? 250 : 50);
 
             var safeName = string.Concat(section.Select(character => char.IsLetterOrDigit(character) || character == '-' ? character : '-'));
             var path = Path.Combine(outputDirectory, $"{safeName}.png");
