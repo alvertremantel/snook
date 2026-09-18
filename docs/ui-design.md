@@ -57,8 +57,12 @@ Summary charts are secondary to those daily interactions.
 
 ## Direction
 
-Dashboard capture sits on the left, with a soft green top section above its white
-schedule preview; tracking and next tasks sit on the right. Board/project creation
+Dashboard capture sits on the left, with a soft green card separated from its white
+schedule preview by a 14-pixel gap; tracking and next tasks sit on the right.
+Navigation glyphs use 22-pixel text in aligned slots beside the existing labels.
+Today and Tasks capture project pickers share the task editor's non-selectable
+board headings and retain board context beneath the selected project.
+Board/project creation
 is a right-aligned toolbar action above the lanes (also available in list view).
 Its light-dismiss popup keeps creation in place without expanding the page.
 

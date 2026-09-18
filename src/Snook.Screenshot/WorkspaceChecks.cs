@@ -14,6 +14,32 @@ internal static partial class InteractionChecks
     {
         var backend = App.ConfiguredBackend!;
         var viewModel = (MainWindowViewModel)window.DataContext!;
+        if (Path.GetFileName(path) == "tasks-list.png")
+        {
+            var fixtureBoard = await backend.CreateBoardAsync("Capture picker board");
+            await backend.CreateProjectAsync(fixtureBoard.Id, "Capture picker project");
+            await UntilAsync(() => Task.FromResult(viewModel.CaptureProjectOptions.Count(option => option.IsHeader) >= 2));
+            var picker = Visible<ComboBox>(window).Single(c => AutomationProperties.GetName(c) == "Tasks screen task project");
+            picker.IsDropDownOpen = true;
+            await Task.Delay(100);
+            if (viewModel.CaptureProjectOptions.Count(option => option.IsHeader) < 2
+                || picker.GetRealizedContainers().OfType<ComboBoxItem>().Any(item => item.DataContext is TaskPickerEntry { IsHeader: true } && item.IsEnabled))
+                throw new InvalidOperationException("Task capture project picker is missing disabled board headings.");
+            Save(window, Path.Combine(Path.GetDirectoryName(path)!, "tasks-list-project-picker.png"));
+            picker.IsDropDownOpen = false;
+            var target = viewModel.CaptureProjectOptions.Last(option => !option.IsHeader);
+            picker.SelectedValue = target.Id;
+            var capture = Visible<TextBox>(window).Single(c => AutomationProperties.GetName(c) == "Tasks screen new task title");
+            capture.Text = "Grouped project capture fixture";
+            capture.Focus();
+            window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+            window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+            await UntilAsync(async () => (await backend.SearchTasksAsync()).Any(task => task.Task.Title == "Grouped project capture fixture" && task.Task.ProjectId == target.Id));
+            if (picker.SelectedItem is not TaskPickerEntry selected || selected.Id != target.Id || selected.Context != target.Context)
+                throw new InvalidOperationException("Task capture lost the selected project's board context after refresh.");
+            Console.WriteLine("PASS: task list groups projects by board and captures into the selected project across refresh.");
+            return;
+        }
         if (Path.GetFileName(path) == "today.png")
         {
             var capture = Visible<TextBox>(window).Single(c => AutomationProperties.GetName(c) == "New task title");

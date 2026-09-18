@@ -220,7 +220,9 @@ creation. `settings-bottom` captures the lower General & data page.
 `SNOOK_SCREENSHOT_VERIFY_PALETTE=1` adds focused-input, open-dropdown, and
 hover/pressed-button captures when `tasks-details` is included.
 `SNOOK_SCREENSHOT_VERIFY_WORKSPACE=1` checks the dashboard column order, Enter
-capture (including blank/duplicate protection and retained focus), and,
+capture (including blank/duplicate protection and retained focus), and
+with `tasks-list`, grouped project choices and persisted capture into the selected
+project with board context preserved after refresh. It also
 with `tasks-board`, captures and exercises the board/project creation popup
 against the disposable profile, including rendered empty boards, their first
 project lane, board button selection/scrolling, rename/delete/restore, saved board

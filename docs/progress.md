@@ -8,6 +8,12 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Today separates Quick capture and On the horizon with a 14-pixel gap.
+  Sidebar icons use larger, aligned glyphs within compact navigation rows.
+  Today and Tasks capture pickers group projects under disabled board headings
+  and retain board labels on selected choices. Full build and all 33 tests pass;
+  persisted capture, board management, drag/drop, and task drawer checks pass.
+  Seeded and empty screenshots were inspected at normal and 980×640 sizes.
 - Settings hides deleted activities and boards by default with separate Show deleted
   checkboxes. Deleted rows use tinted backgrounds, accent borders, and struck-through
   names alongside their Deleted labels. Tracker suppresses blank description tooltips.

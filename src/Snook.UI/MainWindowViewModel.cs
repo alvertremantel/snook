@@ -124,6 +124,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ObservableCollection<ProjectTaskGroupViewModel> TaskGroups { get; } = [];
     public ObservableCollection<ActiveSessionRowViewModel> ActiveSessions { get; } = [];
     public ObservableCollection<ProjectOption> Projects { get; } = [];
+    public ObservableCollection<TaskPickerEntry> CaptureProjectOptions { get; } = [];
     public ObservableCollection<BoardOption> Boards { get; } = [];
     public ObservableCollection<BoardOption> TaskBoardOptions { get; } = [new(Guid.Empty, "All boards")];
     public Guid TaskBoardId
@@ -381,6 +382,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 .ThenBy(item => item.SortKey)
                 .Select(item => new ProjectOption(item.Id, item.Name, item.BoardId,
                     bootstrap.Boards.FirstOrDefault(board => board.Id == item.BoardId)?.Name ?? "Board")), item => item.Id);
+            ReconcileOptions(CaptureProjectOptions, Projects.GroupBy(project => project.BoardId).SelectMany(group =>
+                new[] { new TaskPickerEntry(group.Key, group.First().BoardName, "", true) }
+                    .Concat(group.Select(project => new TaskPickerEntry(project.Id, project.Name, project.BoardName)))),
+                item => item.Id);
 
             // Replacing a renamed option can clear a ComboBox's displayed selection
             // even when its selected ID has not changed. Reapply only replaced choices.

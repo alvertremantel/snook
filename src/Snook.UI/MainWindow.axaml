@@ -41,14 +41,49 @@
 
         <StackPanel Grid.Row="1" Margin="0,24,0,0" Spacing="2">
           <TextBlock Text="WORKSPACE" Classes="eyebrow" Foreground="{DynamicResource SidebarMutedBrush}" Margin="14,0,0,10" />
-          <Button Classes="nav" Classes.selected="{Binding IsTodayVisible}" AutomationProperties.Name="Today" Content="⌂   Today" Command="{Binding SelectSectionCommand}" CommandParameter="Today" />
-          <Button Classes="nav" Classes.selected="{Binding IsTasksVisible}" AutomationProperties.Name="Tasks" Content="▣   Tasks" Command="{Binding SelectSectionCommand}" CommandParameter="Tasks" />
-          <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Content="◷   Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker" />
-          <Button Classes="nav" Classes.selected="{Binding IsCalendarVisible}" AutomationProperties.Name="Calendar" Content="□   Calendar" Command="{Binding SelectSectionCommand}" CommandParameter="Calendar" />
-          <Button Classes="nav" Classes.selected="{Binding IsHistoryVisible}" AutomationProperties.Name="History" Content="▤   History" Command="{Binding SelectSectionCommand}" CommandParameter="History" />
-          <Button Classes="nav" Classes.selected="{Binding IsSummaryVisible}" AutomationProperties.Name="Summary" Content="⌁   Summary" Command="{Binding SelectSectionCommand}" CommandParameter="Summary" />
+          <Button Classes="nav" Classes.selected="{Binding IsTodayVisible}" AutomationProperties.Name="Today" Command="{Binding SelectSectionCommand}" CommandParameter="Today">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="⌂" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="Today" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Classes.selected="{Binding IsTasksVisible}" AutomationProperties.Name="Tasks" Command="{Binding SelectSectionCommand}" CommandParameter="Tasks">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="▣" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="Tasks" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="◷" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="Time Tracker" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Classes.selected="{Binding IsCalendarVisible}" AutomationProperties.Name="Calendar" Command="{Binding SelectSectionCommand}" CommandParameter="Calendar">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="□" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="Calendar" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Classes.selected="{Binding IsHistoryVisible}" AutomationProperties.Name="History" Command="{Binding SelectSectionCommand}" CommandParameter="History">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="▤" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="History" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Classes.selected="{Binding IsSummaryVisible}" AutomationProperties.Name="Summary" Command="{Binding SelectSectionCommand}" CommandParameter="Summary">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="⌁" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="Summary" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
           <TextBlock Text="MANAGE" Classes="eyebrow" Foreground="{DynamicResource SidebarMutedBrush}" Margin="14,12,0,8" />
-          <Button Classes="nav" Classes.selected="{Binding IsSettingsVisible}" AutomationProperties.Name="Settings" Content="⚙   Settings" Command="{Binding SelectSectionCommand}" CommandParameter="Settings" />
+          <Button Classes="nav" Classes.selected="{Binding IsSettingsVisible}" AutomationProperties.Name="Settings" Command="{Binding SelectSectionCommand}" CommandParameter="Settings">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="⚙" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <TextBlock Text="Settings" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
         </StackPanel>
 
         <Border Grid.Row="2" Background="{DynamicResource SidebarRaisedBrush}" CornerRadius="12" Padding="12">
@@ -113,9 +148,8 @@
           </Border>
 
           <Grid ColumnDefinitions="*,1.15*" ColumnSpacing="22">
-            <Border Grid.Column="0" Classes="card" Padding="0">
-              <StackPanel>
-                <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="15,15,0,0" Padding="20">
+            <StackPanel Grid.Column="0" Spacing="14">
+                <Border Classes="card" Background="{DynamicResource AccentSoftBrush}" Padding="20">
                 <StackPanel Spacing="14">
                 <Grid ColumnDefinitions="*,Auto">
                   <StackPanel Spacing="4">
@@ -126,13 +160,14 @@
                 </Grid>
                 <TextBox AutomationProperties.Name="New task title" Text="{Binding TaskTitle, Mode=TwoWay}" KeyDown="OnTaskCaptureKeyDown" PlaceholderText="What needs doing?" CornerRadius="9" Padding="12" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                  <ComboBox AutomationProperties.Name="Task project" ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose a project" Padding="10" />
+                  <ComboBox Classes="structured-picker" AutomationProperties.Name="Task project" ItemsSource="{Binding CaptureProjectOptions}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" ItemTemplate="{StaticResource TaskPickerTemplate}" PlaceholderText="Choose a project" Padding="10" />
                   <Button Grid.Column="1" Classes="primary" AutomationProperties.Name="Add task" Content="Add task" Command="{Binding CreateTaskCommand}" />
                 </Grid>
                 <TextBlock Text="Capture a thought now. Add the details when you’re ready." Classes="muted" FontSize="11" TextWrapping="Wrap" />
                 </StackPanel>
                 </Border>
-                <StackPanel Spacing="14" Margin="20">
+                <Border Classes="card" Padding="20">
+                <StackPanel Spacing="14">
                 <TextBlock Text="ON THE HORIZON" Classes="eyebrow" />
                 <ItemsControl ItemsSource="{Binding TodayAgendaPreview}">
                   <ItemsControl.ItemTemplate>
@@ -148,8 +183,8 @@
                 </ItemsControl>
                 <TextBlock Text="No upcoming plans. Leave some room, or add a block in Calendar." Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasNoTodayUpcomingRows}" />
                 </StackPanel>
-              </StackPanel>
-            </Border>
+                </Border>
+            </StackPanel>
             <StackPanel Grid.Column="1" Spacing="18">
             <Border Classes="card">
               <StackPanel Spacing="16">
@@ -311,7 +346,7 @@
 
                    <Grid ColumnDefinitions="*,180,Auto" ColumnSpacing="8">
                      <TextBox AutomationProperties.Name="Tasks screen new task title" Text="{Binding TaskTitle, Mode=TwoWay}" KeyDown="OnTaskCaptureKeyDown" PlaceholderText="What needs doing?" Padding="9" />
-                     <ComboBox Grid.Column="1" AutomationProperties.Name="Tasks screen task project" ItemsSource="{Binding Projects}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Project" Padding="9" />
+                     <ComboBox Grid.Column="1" Classes="structured-picker" AutomationProperties.Name="Tasks screen task project" ItemsSource="{Binding CaptureProjectOptions}" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" SelectedValueBinding="{Binding Id}" ItemTemplate="{StaticResource TaskPickerTemplate}" PlaceholderText="Project" Padding="9" />
                      <Button Grid.Column="2" Classes="primary" AutomationProperties.Name="Create task from Tasks" Content="Add task" Command="{Binding CreateTaskCommand}" />
                    </Grid>
                  </StackPanel>

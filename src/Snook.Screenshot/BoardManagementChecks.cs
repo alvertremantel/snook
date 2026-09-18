@@ -46,7 +46,7 @@ internal static partial class InteractionChecks
         await RenameAsync("Renamed project");
         await UntilAsync(() => Task.FromResult(vm.TaskGroups.Single().ProjectName == "Renamed project"));
         if (Visible<ComboBox>(window).Single(combo => AutomationProperties.GetName(combo) == "Tasks screen task project").SelectedItem
-            is not ProjectOption { Name: "Renamed project" })
+            is not TaskPickerEntry { Name: "Renamed project" })
             throw new InvalidOperationException("Renaming cleared the task capture project's displayed selection.");
         var projectId = vm.TaskGroups.Single().ProjectId;
         var secondProject = await backend.CreateProjectAsync(boardId, "Second project");
