@@ -63,4 +63,7 @@ public sealed record TrackerActivityGroup(string Name, IReadOnlyList<TrackerActi
 }
 
 public sealed record TrackerActivity(string Name, string Description, string LaneLabel,
-    string ActionLabel, bool IsRunning, ICommand StartCommand);
+    string ActionLabel, bool IsRunning, ICommand StartCommand)
+{
+    public string? DescriptionToolTip => string.IsNullOrWhiteSpace(Description) ? null : Description;
+}

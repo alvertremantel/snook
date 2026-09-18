@@ -15,6 +15,11 @@ uses aligned ledger columns and a correction drawer. Summary highlights the acti
 grouping, compares attributed durations with bars, and labels clock coverage
 separately. Calendar creation uses drawers and detailed editing belongs to Agenda.
 
+Settings hides deleted boards and activities by default, with separate Show deleted
+checkboxes. Revealed deleted rows have a tinted background, accent border,
+struck-through name, and explicit Deleted label; restore remains in the actions
+menu. Tracker description tooltips are absent for blank or whitespace-only text.
+
 Task capture accepts Enter as well as its button. Tasks has a horizontal board
 button row in both views, including All boards, with its own scroll arrows.
 The selected board and project lanes expose rename, delete, and saved ordering

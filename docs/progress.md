@@ -1,6 +1,6 @@
 # Snook implementation progress
 
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 ## Current state
 
@@ -8,6 +8,12 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Settings hides deleted activities and boards by default with separate Show deleted
+  checkboxes. Deleted rows use tinted backgrounds, accent borders, and struck-through
+  names alongside their Deleted labels. Tracker suppresses blank description tooltips.
+  Full build and all 33 tests passed; persisted headless checks cover hide/show,
+  restore, styling, and optional tooltip content at normal and minimum sizes.
+  Seeded and empty-profile captures were inspected, including 980×640 layouts.
 - Task-sidebar consistency: Tags and visible amber Archive/red Delete actions are
   above Save task, with the immediately committed Move action below. The current
   board/project path updates after moving, and Cancel preserves that move while

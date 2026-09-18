@@ -276,7 +276,29 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string TrackedToday { get => _trackedToday; private set => SetField(ref _trackedToday, value); }
     public int OpenTaskCount { get => _openTaskCount; private set => SetField(ref _openTaskCount, value); }
     public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
-    public bool HasNoActivities => ActivityAdminRows.Count == 0;
+    private bool _showDeletedActivities;
+    private bool _showDeletedBoards;
+    public bool ShowDeletedActivities
+    {
+        get => _showDeletedActivities;
+        set
+        {
+            if (!SetField(ref _showDeletedActivities, value)) return;
+            RaisePropertyChanged(nameof(VisibleActivityAdminRows));
+            RaisePropertyChanged(nameof(HasNoActivities));
+        }
+    }
+    public bool ShowDeletedBoards
+    {
+        get => _showDeletedBoards;
+        set
+        {
+            if (SetField(ref _showDeletedBoards, value)) RaisePropertyChanged(nameof(VisibleBoardAdminRows));
+        }
+    }
+    public IEnumerable<ActivityAdminRowViewModel> VisibleActivityAdminRows => ActivityAdminRows.Where(row => ShowDeletedActivities || !row.IsDeleted);
+    public IEnumerable<BoardAdminRowViewModel> VisibleBoardAdminRows => BoardAdminRows.Where(row => ShowDeletedBoards || !row.IsDeleted);
+    public bool HasNoActivities => !VisibleActivityAdminRows.Any();
     public bool HasNoTodayRecentRows { get => _hasNoTodayRecentRows; private set => SetField(ref _hasNoTodayRecentRows, value); }
     public bool HasNoTodayUpcomingRows { get => _hasNoTodayUpcomingRows; private set => SetField(ref _hasNoTodayUpcomingRows, value); }
     public bool HasDeletedCalendarEvents { get => _hasDeletedCalendarEvents; private set => SetField(ref _hasDeletedCalendarEvents, value); }
@@ -430,6 +452,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 BoardAdminRows.Add(new BoardAdminRowViewModel(board, SaveBoardAsync, ToggleBoardArchiveAsync, DeleteBoardAsync, ReorderBoardAsync));
             }
             NotifyBoardNavigation();
+            RaisePropertyChanged(nameof(VisibleBoardAdminRows));
 
             ActivityAdminRows.Clear();
             foreach (var activity in bootstrap.Activities.Concat(bootstrap.DeletedItems?.Activities ?? []))
@@ -437,6 +460,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 ActivityAdminRows.Add(new ActivityAdminRowViewModel(activity, ActivityGroups, SaveActivityAsync, ToggleActivityArchiveAsync, DeleteActivityAsync, AddActivityTagAsync, StartActivityAsync));
             }
             RaisePropertyChanged(nameof(HasNoActivities));
+            RaisePropertyChanged(nameof(VisibleActivityAdminRows));
 
             if (!Projects.Any(project => project.Id == SelectedProjectId))
             {
@@ -2173,6 +2197,7 @@ public sealed class BoardAdminRowViewModel
     }
 
     public Board Board { get; }
+    public bool IsDeleted => Board.DeletedAtUtc is not null;
     public string LifecycleLabel => Board.DeletedAtUtc is not null ? "Deleted" : Board.ArchivedAtUtc is not null ? "Archived" : "Active board";
     public string DraftName { get; set; }
     public string ArchiveLabel => Board.ArchivedAtUtc is null ? "Archive" : "Restore";
@@ -2260,6 +2285,7 @@ public sealed class ActivityAdminRowViewModel : INotifyPropertyChanged
     }
 
     public Activity Activity { get; }
+    public bool IsDeleted => Activity.DeletedAtUtc is not null;
     public string CatalogLabel => Activity.DeletedAtUtc is not null ? "Deleted" : Activity.ArchivedAtUtc is not null ? "Archived" : $"{LaneLabel} · {GroupOptions.FirstOrDefault(group => group.Id == GroupId)?.Name ?? "No group"}";
     public IReadOnlyList<ActivityGroupOption> GroupOptions { get; }
     public Guid GroupId { get; set; }

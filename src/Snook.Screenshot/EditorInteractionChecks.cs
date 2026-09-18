@@ -133,6 +133,25 @@ internal static partial class InteractionChecks
             await UntilAsync(async () => (await backend.GetBootstrapAsync()).Calendars.Any(calendar => calendar.Id == calendarDraft.Calendar.Id && calendar.DeletedAtUtc is null));
             Console.WriteLine("PASS: Settings category navigation, pointer editing, focus containment/return, draft survival, Cancel, persisted save, and stale revision rejection.");
             Console.WriteLine("PASS: immediate tags preserve the activity draft; calendar action menus soft-delete and restore the same record.");
+            await CheckDeletedCatalogsAsync(window, path);
+        }
+        if (Path.GetFileName(path) == "tracker.png")
+        {
+            await backend.CreateActivityAsync("Empty tooltip fixture", "", SessionLane.Foreground);
+            await backend.CreateActivityAsync("Whitespace tooltip fixture", "   ", SessionLane.Foreground);
+            await UntilAsync(() => Task.FromResult(vm.TrackerGroups.SelectMany(group => group.Activities).Any(activity => activity.Name == "Whitespace tooltip fixture")));
+            window.UpdateLayout();
+            var launchers = Visible<Button>(window).Where(button => button.DataContext is TrackerActivity).ToArray();
+            if (!launchers.Any(button => button.DataContext is TrackerActivity activity && !string.IsNullOrWhiteSpace(activity.Description)))
+                throw new InvalidOperationException("Tooltip check requires a described activity.");
+            foreach (var launcher in launchers)
+            {
+                var activity = (TrackerActivity)launcher.DataContext!;
+                var expected = string.IsNullOrWhiteSpace(activity.Description) ? null : activity.Description;
+                if (!Equals(ToolTip.GetTip(launcher), expected))
+                    throw new InvalidOperationException("Tracker tooltip content did not match the optional description.");
+            }
+            Console.WriteLine("PASS: blank tracker descriptions have no tooltip; described activities retain their tooltip.");
         }
         if (Path.GetFileName(path) == "history.png")
         {

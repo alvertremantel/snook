@@ -447,7 +447,7 @@
                         <ItemsControl ItemsSource="{Binding Activities}">
                           <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                              <Button Classes="activity" Classes.selected="{Binding IsRunning}" Command="{Binding StartCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,3" ToolTip.Tip="{Binding Description}">
+                              <Button Classes="activity" Classes.selected="{Binding IsRunning}" Command="{Binding StartCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,3" ToolTip.Tip="{Binding DescriptionToolTip}">
                                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                                   <StackPanel Spacing="4">
                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />

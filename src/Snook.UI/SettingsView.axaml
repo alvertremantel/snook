@@ -1,6 +1,18 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.SettingsView"
              x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
+  <UserControl.Styles>
+    <Style Selector="Border.catalog-row.deleted">
+      <Setter Property="Background" Value="#F4EEEE" />
+      <Setter Property="BorderBrush" Value="#AC7474" />
+      <Setter Property="BorderThickness" Value="3,1,1,1" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+    <Style Selector="Border.deleted TextBlock.record-name">
+      <Setter Property="TextDecorations" Value="Strikethrough" />
+      <Setter Property="Foreground" Value="#705757" />
+    </Style>
+  </UserControl.Styles>
   <StackPanel Spacing="22">
     <Border Classes="toolbar">
       <WrapPanel>
@@ -48,11 +60,12 @@
         <StackPanel Spacing="16">
           <StackPanel Spacing="5"><TextBlock Text="BOARDS" Classes="eyebrow" /><TextBlock Text="The bigger picture" Classes="section-heading" /><TextBlock Text="Boards hold the projects that belong together." Classes="muted" /></StackPanel>
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><TextBox Text="{Binding NewBoardName}" PlaceholderText="New board name" AutomationProperties.Name="New board name" /><Button Grid.Column="1" Classes="secondary" Content="Add board" Command="{Binding CreateBoardCommand}" /></Grid>
-          <ItemsControl ItemsSource="{Binding BoardAdminRows}">
+          <CheckBox Content="Show deleted boards" IsChecked="{Binding ShowDeletedBoards, Mode=TwoWay}" />
+          <ItemsControl ItemsSource="{Binding VisibleBoardAdminRows}">
             <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:BoardAdminRowViewModel">
-              <Border Classes="catalog-row">
+              <Border Classes="catalog-row" Classes.deleted="{Binding IsDeleted}">
                 <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                  <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Board.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LifecycleLabel}" Classes="muted" FontSize="12" /></StackPanel>
+                  <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Classes="record-name" Text="{Binding Board.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LifecycleLabel}" Classes="muted" FontSize="12" /></StackPanel>
                   <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit board" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
                   <Button Grid.Column="2" Classes="ghost" Content="•••" AutomationProperties.Name="Board actions">
                     <Button.Flyout><Flyout><StackPanel Spacing="4" MinWidth="180">
@@ -95,10 +108,11 @@
             <Button Grid.Column="1" Classes="primary" Content="+ New activity" Command="{Binding OpenUtilityEditorCommand}" CommandParameter="activity" />
           </Grid>
           <TextBlock Text="Start activities in Time Tracker. Organize and maintain them here." Classes="muted" TextWrapping="Wrap" />
-          <ItemsControl ItemsSource="{Binding ActivityAdminRows}">
+          <CheckBox Content="Show deleted activities" IsChecked="{Binding ShowDeletedActivities, Mode=TwoWay}" />
+          <ItemsControl ItemsSource="{Binding VisibleActivityAdminRows}">
             <ItemsControl.ItemTemplate><DataTemplate x:DataType="local:ActivityAdminRowViewModel">
-              <Border Classes="catalog-row"><Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Activity.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding CatalogLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" /></StackPanel>
+              <Border Classes="catalog-row" Classes.deleted="{Binding IsDeleted}"><Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <StackPanel Spacing="4" VerticalAlignment="Center"><TextBlock Classes="record-name" Text="{Binding Activity.Name}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding CatalogLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" /></StackPanel>
                 <Button Grid.Column="1" Classes="ghost" Content="Edit" AutomationProperties.Name="Edit activity" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).OpenUtilityEditorCommand}" CommandParameter="{Binding}" />
                 <Button Grid.Column="2" Classes="ghost" Content="•••" AutomationProperties.Name="Activity actions"><Button.Flyout><Flyout><StackPanel Spacing="6" Width="220">
                   <Button Classes="ghost" Content="{Binding ArchiveLabel}" Command="{Binding ToggleArchiveCommand}" /><Button Classes="ghost" Content="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" />
@@ -106,7 +120,7 @@
               </Grid></Border>
             </DataTemplate></ItemsControl.ItemTemplate>
           </ItemsControl>
-          <TextBlock Text="No activities yet. Create one to start tracking your routines." Classes="muted" IsVisible="{Binding HasNoActivities}" TextWrapping="Wrap" />
+          <TextBlock Text="No activities to show. Create one or show deleted activities to restore one." Classes="muted" IsVisible="{Binding HasNoActivities}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
       <Border Classes="card" Padding="24">

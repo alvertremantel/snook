@@ -35,7 +35,7 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
   its first project. Use the row's arrows to scroll boards. The selected board's
   **•••** menu and each project lane's **•••** menu provide rename, delete, and
   Move earlier/later actions; your order is saved. Restore deleted boards/projects
-  in Settings → Boards & projects. Drag tasks between projects or use the task
+  in Settings → Boards & projects by checking **Show deleted boards**. Drag tasks between projects or use the task
   editor's explicit Move action.
 - **Task details:** Tags and the visible amber Archive/red Delete actions sit
   above Save task; Move sits below it. Save applies the editable task fields.
@@ -55,6 +55,11 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
   and activity editors also provide an explicitly labeled immediate Add tag action.
 - **Calendar:** use **Plan a task** or **New event** above the time grid. The
   **Agenda** view provides event and planned-block editing.
+
+Deleted activities are hidden in Settings → Activities until **Show deleted activities**
+is checked. Both deleted activity and board rows use a tinted background and
+struck-through name; their actions menu offers **Restore deleted**. Time Tracker
+only shows description tooltips for activities with a nonblank description.
 
 Editors retain drafts across workspace refreshes. Save commits the edit; Cancel
 or Escape discards it; completed immediate actions (including tags and moves) remain.
@@ -226,7 +231,10 @@ Include `tracker,history,settings`: these verify activity/manual-time creation,
 picker preservation across refresh, correction validation and provenance, exact
 timestamp preservation, category navigation, board/activity/calendar saves,
 keyboard focus, Cancel, and stale revision rejection. Use a fresh seeded profile;
-these checks intentionally mutate its disposable data.
+these checks intentionally mutate its disposable data. They also verify deleted
+board/activity visibility, checkbox filtering, distinct styling, persistent restore,
+and optional tracker tooltips, capturing `settings-deleted-boards` and
+`settings-deleted-activities`.
 
 The workspace redesign and its verification are documented in `docs/ui-design.md`.
 Backup, export, and restore actions are under Settings → General & data.
