@@ -121,7 +121,7 @@ public sealed class HabitTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = "DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence=8;";
+                command.CommandText = "DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=8;";
                 await command.ExecuteNonQueryAsync();
             }
             await using (var backend = new SnookBackend(new SqliteStore(path)))
@@ -141,7 +141,7 @@ public sealed class HabitTests
                 await backend.SetHabitDeletedAsync(initial.Id, true, Request(archived.Revision));
                 var backup = await backend.CreateBackupAsync(Path.Combine(directory.FullName, "habits.db"));
                 var export = await backend.ExportJsonAsync(Path.Combine(directory.FullName, "habits.json"));
-                Assert.Equal(3, export.SchemaVersion);
+                Assert.Equal(4, export.SchemaVersion);
                 using var json = JsonDocument.Parse(await File.ReadAllTextAsync(export.Path));
                 Assert.Single(json.RootElement.GetProperty("habitTracking").GetProperty("habits").EnumerateArray());
                 Assert.Single(json.RootElement.GetProperty("habitTracking").GetProperty("checkIns").EnumerateArray());
@@ -177,7 +177,7 @@ public sealed class HabitTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = "DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence=8;";
+                command.CommandText = "DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=8;";
                 await command.ExecuteNonQueryAsync();
             }
             var sourceBytes = await File.ReadAllBytesAsync(backupPath);

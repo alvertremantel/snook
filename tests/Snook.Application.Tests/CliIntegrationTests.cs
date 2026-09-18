@@ -320,6 +320,8 @@ public sealed class CliIntegrationTests
                 "--endpoint", $"http://127.0.0.1:{port}/", "--token", token, "habits");
             Assert.True(habits.ExitCode == 0, habits.StandardError);
             Assert.Equal("[]", habits.StandardOutput.Trim());
+            await JournalCliTests.AssertJournalCliAsync(["--data-dir", directory.FullName, "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/", "--token", token]);
         }
         finally
         {

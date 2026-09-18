@@ -1,12 +1,40 @@
 # Snook implementation progress
 
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 ## Current state
 
 Snook is a working desktop vertical slice for local work organization and time tracking. It builds as a .NET 10 Avalonia application, persists to SQLite, and can optionally use an authenticated local daemon. The UI is ready for a human visual pass; this is not yet a finished multi-platform release.
 
 ## Implemented surface
+
+- Journaling is implemented as a sidebar screen with multiple journals, plain-text
+  entries, separate journal-only tags, optional 1–7 mood ratings, title/body search,
+  exact tag filtering, pagination, entry movement, and soft-delete/restore.
+  The writing drawer preserves drafts across refreshes and conflicts, offers
+  latest-saved comparison, contains keyboard focus, and supports Cancel/Escape
+  with focus return. Deleted entries remain readable. Journal deletion preserves
+  entries and their individual deleted states.
+  Contract 1.5 provides matching embedded and authenticated daemon behavior.
+  CLI helpers `journals` and `journal-entries`, plus `call` methods for every read
+  and write, expose the full feature. Schema migration 9 adds independent journal
+  tables; transactional content/tag writes and exact receipts survive restart,
+  backup, and restore. JSON export schema 4 includes all journal data. Supported
+  older backups are upgraded in staging without changing their sources.
+  Limits: 200 journals including deleted records, 20,000 characters per entry,
+  20 tags per entry, mood omitted or 1–7, and 1–100 entries per query page.
+  Verification: full solution build with zero warnings/errors; all 71 tests pass
+  (53 application, 18 domain); clean `git diff --check`. Embedded and daemon
+  contract/CLI tests cover CRUD, moves, independent tags, validation, pagination,
+  conflicts, request replay, notifications, migration, restart, export, and restore.
+  Persisted journal UI checks pass at 1280×820 and 980×640, including create/rename,
+  entry writing/movement, mood/tag clearing, filtering, draft preservation,
+  stale-save review, focus, Cancel/Escape, and delete/restore. Seeded and empty
+  page/editor PNGs and Today/Settings sidebar smoke captures were inspected under
+  `artifacts/journals/{seeded,narrow,empty,empty-narrow,checks,checks-narrow}`.
+  Tests used disposable profiles; VSTest/daemon checks required local sockets
+  outside the sandbox. Native human and assistive-technology review remain
+  separate release work.
 
 - Daily habit tracking is implemented across the GUI and shared backend contract
   1.4, with a read-only `habits [HabitQuery JSON]` CLI helper and generic contract

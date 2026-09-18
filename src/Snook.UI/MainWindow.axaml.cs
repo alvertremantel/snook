@@ -117,7 +117,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(section => section.Length > 0)
             .ToArray()
-            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "habits", "habits-editor", "tracker", "tracker-new-activity", "tracker-manual", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "calendar-history-week", "calendar-history-flex", "history", "history-details", "summary", "settings", "settings-organization", "settings-activities", "settings-activities-bottom", "settings-calendars", "settings-activity-editor"];
+            ?? ["today", "today-bottom", "tasks-list", "tasks-details", "tasks-board", "habits", "habits-editor", "journals", "journals-editor", "journals-new", "tracker", "tracker-new-activity", "tracker-manual", "calendar-day", "calendar-week", "calendar-month", "calendar-agenda", "calendar-details", "calendar-history-week", "calendar-history-flex", "history", "history-details", "summary", "settings", "settings-organization", "settings-activities", "settings-activities-bottom", "settings-calendars", "settings-activity-editor"];
 
         foreach (var section in requestedSections)
         {
@@ -127,6 +127,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 "today" => "Today",
                 "tasks" => "Tasks",
                 "habits" => "Habits",
+                "journals" => "Journals",
                 "tracker" => "Time Tracker",
                 "calendar" => "Calendar",
                 "history" => "History",

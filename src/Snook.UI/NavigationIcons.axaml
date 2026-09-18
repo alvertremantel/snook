@@ -15,6 +15,16 @@
         </Style>
     </ControlTheme>
 
+    <ControlTheme x:Key="JournalsNavigationIcon" TargetType="ContentControl" BasedOn="{StaticResource NavigationIcon}">
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Canvas Width="24" Height="24">
+                    <Path Data="M6 3 H19 V21 H6 Q3 21 3 18 V6 Q3 3 6 3 Z" Fill="{TemplateBinding Foreground}" Opacity="0.12" />
+                    <Path Classes="outline" Data="M6 3 H19 V21 H6 Q3 21 3 18 V6 Q3 3 6 3 Z M7 3 V21 M10.5 8 H15.5 M10.5 12 H15.5 M10.5 16 H13.5" Stroke="{TemplateBinding Foreground}" />
+                </Canvas>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
     <ControlTheme x:Key="HabitsNavigationIcon" TargetType="ContentControl" BasedOn="{StaticResource NavigationIcon}">
         <Setter Property="Template">
             <ControlTemplate>

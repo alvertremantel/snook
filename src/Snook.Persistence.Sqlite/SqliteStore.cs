@@ -84,6 +84,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await EnsureSchemaVersionAsync(connection, cancellationToken);
             await EnsureTaskWorkspaceMigrationAsync(connection, cancellationToken);
             await EnsureHabitsMigrationAsync(connection, cancellationToken);
+            await EnsureJournalsMigrationAsync(connection, cancellationToken);
             await SeedAsync(connection, cancellationToken);
             await EnsureDefaultSettingsAsync(connection, cancellationToken);
             await EnsureDefaultCalendarAsync(connection, cancellationToken);
@@ -2291,7 +2292,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         var payload = new
         {
-            schemaVersion = 3,
+            schemaVersion = 4,
             exportedAtUtc = DateTimeOffset.UtcNow,
             workspace = state.Workspace,
             boards = state.Boards,
@@ -2309,13 +2310,14 @@ public sealed partial class SqliteStore : IAsyncDisposable
             tasks = state.Tasks,
             sessions = state.Sessions,
             corrections,
-            habitTracking = await ExportHabitsAsync(cancellationToken)
+            habitTracking = await ExportHabitsAsync(cancellationToken),
+            journaling = await ExportJournalsAsync(cancellationToken)
         };
         var fullDestination = Path.GetFullPath(destinationPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullDestination) ?? Directory.GetCurrentDirectory());
         await File.WriteAllTextAsync(fullDestination, JsonSerializer.Serialize(payload, ExportJsonOptions), cancellationToken);
         var bytes = new FileInfo(fullDestination).Length;
-        return new StoreExportResult(fullDestination, bytes, await HashFileAsync(fullDestination, cancellationToken), 3);
+        return new StoreExportResult(fullDestination, bytes, await HashFileAsync(fullDestination, cancellationToken), 4);
     }
 
     public async Task<StoreExportResult> ExportCsvAsync(string destinationPath, DateTimeOffset rangeStartUtc, DateTimeOffset rangeEndUtc, CancellationToken cancellationToken = default)
@@ -2431,6 +2433,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 await EnsureSchemaVersionAsync(validation, cancellationToken);
                 await EnsureTaskWorkspaceMigrationAsync(validation, cancellationToken);
                 await EnsureHabitsMigrationAsync(validation, cancellationToken);
+                await EnsureJournalsMigrationAsync(validation, cancellationToken);
                 await ValidateIntegrityAsync(validation, cancellationToken);
                 await using var checkpoint = validation.CreateCommand();
                 checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
@@ -2586,7 +2589,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var sequence = reader.GetInt32(0);
         var current = reader.GetString(1);
         await reader.DisposeAsync();
-        if (sequence > 8 || (sequence == 8 && current != HabitsChecksum) || (sequence == 7 && current != TaskWorkspaceChecksum))
+        if (sequence > 9 || (sequence == 9 && current != JournalsChecksum) || (sequence == 8 && current != HabitsChecksum) || (sequence == 7 && current != TaskWorkspaceChecksum))
             throw new SnookException(SnookErrorCode.SchemaIncompatible, "The workspace schema is newer or incompatible with this Snook build.");
         if (sequence >= 7) return;
         if (string.Equals(current, SchemaChecksum, StringComparison.Ordinal))

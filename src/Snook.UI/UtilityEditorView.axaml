@@ -2,6 +2,49 @@
              xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.UtilityEditorView"
              x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
   <UserControl.DataTemplates>
+    <DataTemplate DataType="local:JournalEditorViewModel">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Give these pages a home. Keep one journal, or a few for different parts of life." Classes="muted" TextWrapping="Wrap" />
+        <TextBlock Text="Journal name" Classes="field-label" />
+        <TextBox Text="{Binding Name}" MaxLength="100" PlaceholderText="e.g. Everyday, Work, Travel" AutomationProperties.Name="Journal name" />
+        <TextBlock Text="Description · optional" Classes="field-label" />
+        <TextBox Text="{Binding Description}" MaxLength="1000" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="100" AutomationProperties.Name="Journal description" />
+        <StackPanel IsVisible="{Binding IsExisting}" Spacing="8" Margin="0,16,0,0">
+          <Button Classes="secondary" Content="Review latest saved journal" Command="{Binding ReviewCommand}" AutomationProperties.Name="Review latest journal" />
+          <TextBlock Text="{Binding SavedDetails}" TextWrapping="Wrap" FontSize="12" />
+        </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="local:JournalEntryEditorViewModel">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Title · optional" Classes="field-label" />
+        <TextBox Text="{Binding Title}" MaxLength="200" PlaceholderText="Give this moment a name" IsReadOnly="{Binding IsReadOnly}" AutomationProperties.Name="Journal entry title" />
+        <TextBlock Text="Your words" Classes="field-label" />
+        <TextBox Text="{Binding Content}" MaxLength="20000" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="210" MaxHeight="360"
+                 PlaceholderText="What’s on your mind?" IsReadOnly="{Binding IsReadOnly}" AutomationProperties.Name="Journal entry content" />
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+          <StackPanel Spacing="6">
+            <TextBlock Text="Journal" Classes="field-label" />
+            <ComboBox ItemsSource="{Binding Journals}" SelectedValue="{Binding JournalId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}"
+                      IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.Name="Entry journal" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Spacing="6">
+            <TextBlock Text="Mood · optional" Classes="field-label" />
+            <ComboBox ItemsSource="{Binding Moods}" SelectedValue="{Binding MoodRating}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}"
+                      IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.Name="Journal entry mood" />
+          </StackPanel>
+        </Grid>
+        <TextBlock Text="Date &amp; time · local · YYYY-MM-DD HH:MM" Classes="field-label" TextWrapping="Wrap" />
+        <TextBox Text="{Binding DateText}" IsReadOnly="{Binding IsReadOnly}" AutomationProperties.Name="Journal entry date" />
+        <TextBlock Text="Journal tags · comma separated" Classes="field-label" />
+        <TextBox Text="{Binding TagsText}" MaxLength="1020" PlaceholderText="gratitude, ideas, small wins" IsReadOnly="{Binding IsReadOnly}" AutomationProperties.Name="Journal entry tags" />
+        <TextBlock Text="These tags belong only to journal entries." Classes="muted" FontSize="12" />
+        <StackPanel IsVisible="{Binding IsExisting}" Spacing="8" Margin="0,16,0,0">
+          <Button Classes="secondary" Content="Review latest saved entry" Command="{Binding ReviewCommand}" AutomationProperties.Name="Review latest journal entry" />
+          <TextBlock Text="{Binding SavedDetails}" TextWrapping="Wrap" FontSize="12" />
+        </StackPanel>
+      </StackPanel>
+    </DataTemplate>
     <DataTemplate DataType="local:HabitEditorViewModel">
       <StackPanel Spacing="10">
         <TextBlock Text="One check-in per day. Choose something small enough to repeat." Classes="muted" TextWrapping="Wrap" />

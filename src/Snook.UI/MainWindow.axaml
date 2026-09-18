@@ -65,6 +65,12 @@
               <TextBlock Text="Habits" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
+          <Button x:DataType="local:MainWindowViewModel" x:CompileBindings="True" Classes="nav" Classes.selected="{Binding IsJournalsVisible}" AutomationProperties.Name="Journals" Command="{Binding SelectSectionCommand}" CommandParameter="Journals">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <ContentControl Theme="{StaticResource JournalsNavigationIcon}" />
+              <TextBlock Text="Journals" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
           <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <ContentControl Theme="{StaticResource TrackerNavigationIcon}" />
@@ -820,6 +826,7 @@
         </StackPanel>
 
         <local:HabitsView x:DataType="local:MainWindowViewModel" x:CompileBindings="True" IsVisible="{Binding IsHabitsVisible}" />
+        <local:JournalsView x:DataType="local:MainWindowViewModel" x:CompileBindings="True" IsVisible="{Binding IsJournalsVisible}" />
         <local:SettingsView IsVisible="{Binding IsSettingsVisible}" />
         </StackPanel>
       </ScrollViewer>

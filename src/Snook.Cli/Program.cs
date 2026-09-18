@@ -71,6 +71,8 @@ public static class Program
                 "bootstrap" => await backend.GetBootstrapAsync(cancellationToken),
                 "tasks" => await RunTasksAsync(backend, invocation.Arguments, cancellationToken),
                 "habits" => await RunHabitsAsync(backend, invocation.Arguments, cancellationToken),
+                "journals" => await RunJournalsAsync(backend, invocation.Arguments, cancellationToken),
+                "journal-entries" => await RunJournalEntriesAsync(backend, invocation.Arguments, cancellationToken),
                 "summary" => await RunSummaryAsync(backend, invocation.Arguments, cancellationToken),
                 "history" => await RunHistoryAsync(backend, invocation.Arguments, cancellationToken),
                 "calendar" => await RunCalendarAsync(backend, invocation.Arguments, cancellationToken),
@@ -168,6 +170,20 @@ public static class Program
         var query = args.Count == 0 ? new HabitQuery() : JsonSerializer.Deserialize<HabitQuery>(args[0], JsonOptions)
             ?? throw new CliUsageException("Provide a HabitQuery JSON object.");
         return await backend.GetHabitsAsync(query, cancellationToken);
+    }
+
+    private static async Task<object> RunJournalsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1 || args.Count == 1 && args[0] != "--include-deleted")
+            throw new CliUsageException("journals accepts only --include-deleted. Use call create-journal, update-journal, or set-journal-deleted to write.");
+        return await backend.GetJournalsAsync(args.Count == 1, cancellationToken);
+    }
+
+    private static async Task<object> RunJournalEntriesAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1) throw new CliUsageException("journal-entries accepts an optional JournalEntryQuery JSON object.");
+        var query = args.Count == 0 ? new JournalEntryQuery() : DeserializeArgument<JournalEntryQuery>(args[0], "journal entry query");
+        return await backend.GetJournalEntriesAsync(query, cancellationToken);
     }
 
     private static async Task<object> RunSummaryAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -571,6 +587,17 @@ public static class Program
         },
         cliCommands = new
         {
+            journals = new
+            {
+                read = "snook journals [--include-deleted] | snook journal-entries [JournalEntryQuery JSON]",
+                write = "snook call create-journal|update-journal|set-journal-deleted|create-journal-entry|update-journal-entry|set-journal-entry-deleted JSON",
+                queryFields = new[] { "journalId", "search", "tag", "includeDeleted", "pageSize", "continuationToken" },
+                journalDefinition = new[] { "name", "description" },
+                entryDefinition = new[] { "journalId", "title", "content", "occurredAtUtc", "mood", "tags" },
+                mood = "Optional integer 1–7; null clears it.",
+                tags = "Journal-only string array; at most 20 tags, each up to 50 characters. Updates replace the full entry, including tags.",
+                pageSize = "1–100; default 30. Pass the returned continuationToken with the same filters."
+            },
             habits = new
             {
                 read = "snook habits [HabitQuery JSON]",
@@ -678,6 +705,10 @@ public static class Program
         writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
         writer.WriteLine("          habits [HabitQuery JSON] (read-only daily progress and check-ins)");
+        writer.WriteLine("          journals [--include-deleted] | journal-entries [JournalEntryQuery JSON]");
+        writer.WriteLine("          call create-journal|update-journal|set-journal-deleted JSON");
+        writer.WriteLine("          call create-journal-entry|update-journal-entry|set-journal-entry-deleted JSON");
+        writer.WriteLine("          call get-journal-entry|get-journal-tags JSON");
         writer.WriteLine("          calendar blocks|events [Range JSON] | task-batch plan|apply JSON | doctor | watch | api");
         writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();

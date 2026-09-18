@@ -177,6 +177,66 @@ snook call add-task-link '{"taskId":"<task-id>","label":"Brief","uri":"https://e
 snook call add-task-dependency '{"taskId":"<task-id>","prerequisiteTaskId":"<other-task-id>"}'
 ```
 
+## Journals and entries
+
+The following commands work in embedded and authenticated daemon modes. Use
+`--host daemon` while the desktop/daemon owns the workspace. Generate real UUIDs
+for the placeholders; creation omits `expectedRevision`, while updates and
+delete/restore require the revision returned by a read or successful write.
+Keep the exact operation ID and payload when retrying an uncertain write.
+
+```bash
+snook journals
+snook journals --include-deleted
+snook call create-journal '{"definition":{"name":"Everyday","description":"Small moments"},"request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>"}}'
+snook call update-journal '{"journalId":"<journal-id>","definition":{"name":"Personal","description":"Small moments"},"request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>","expectedRevision":1}}'
+
+snook call create-journal-entry '{
+  "definition":{
+    "journalId":"<journal-id>","title":"A slower morning",
+    "content":"Coffee by the window.\nA little time to think.",
+    "occurredAtUtc":"2026-09-18T14:00:00Z","mood":6,"tags":["gratitude","small wins"]
+  },
+  "request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>"}
+}'
+snook journal-entries '{"journalId":"<journal-id>","search":"coffee","tag":"gratitude","pageSize":30}'
+snook call get-journal-entry '{"entryId":"<entry-id>"}'
+snook call get-journal-tags '{"journalId":"<journal-id>"}'
+
+snook call update-journal-entry '{
+  "entryId":"<entry-id>",
+  "definition":{
+    "journalId":"<journal-id>","title":"A slower morning","content":"Revised words.",
+    "occurredAtUtc":"2026-09-18T14:00:00Z","mood":null,"tags":[]
+  },
+  "request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>","expectedRevision":1}
+}'
+snook call set-journal-entry-deleted '{"entryId":"<entry-id>","deleted":true,"request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>","expectedRevision":2}}'
+snook call set-journal-entry-deleted '{"entryId":"<entry-id>","deleted":false,"request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>","expectedRevision":3}}'
+snook call set-journal-deleted '{"journalId":"<journal-id>","deleted":true,"request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>","expectedRevision":2}}'
+snook call set-journal-deleted '{"journalId":"<journal-id>","deleted":false,"request":{"operationId":"<new-guid>","clientDeviceId":"<device-guid>","expectedRevision":3}}'
+```
+
+An entry update replaces all editable fields. Change `journalId` to move it;
+`mood: null` removes a rating, and `tags: []` removes its tags. Titles may be blank
+and have a 200-character limit; content is required and limited to 20,000
+characters. Mood is optional and must be an integer 1–7 when supplied. Tags are
+trimmed and deduplicated without regard to case, limited to 20 names of 50
+characters each, with no commas inside a name. They are separate from all other
+Snook tags. Journal names allow 100 characters; descriptions allow 1000.
+
+`journal-entries` returns `{items, continuationToken, hasMore}` in newest-first
+occurrence order, with an ID tie-breaker. `JournalEntryQuery` accepts optional
+`journalId`, literal text `search` (title and body, up to 200 characters), exact
+case-insensitive `tag`, `includeDeleted`, `pageSize` (1–100, default 30), and
+`continuationToken`. Pass the returned token with the same filters for the next
+page. Omit `journalId` to search all journals. `includeDeleted: true` also includes
+entries in deleted journals; direct `get-journal-entry` can read a deleted entry.
+Restore a deleted journal before editing or restoring its entries.
+`get-journal-tags` lists active-entry tags only, optionally scoped to one journal,
+with a limit of 1000 distinct names. The `api` catalog describes all methods and
+the journal record/query fields.
+
 ## Safe mutations and retries
 
 Revision-checked operations require an `OperationRequest` named `request`.

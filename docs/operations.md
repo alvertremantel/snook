@@ -51,6 +51,32 @@ with the backup when moving it between machines.
 
 ## Migration and recovery failures
 
+Schema migration 9 (`journals`) adds `journals`, `journal_entries`, and
+`journal_entry_tags` transactionally under the existing ownership lease. Journal
+tags have no relationship to task/project/activity tags. Contract 1.5 exposes
+the same journal reads and writes in embedded, authenticated daemon, and CLI
+clients; the daemon's interface-derived allowlist includes all journal methods.
+Upgrade desktop, CLI, and daemon together.
+
+Journal and entry mutations require operation/device IDs, plus the current
+aggregate revision for updates or delete/restore. The receipt, content, tags,
+revision, and committed change are saved in one transaction. Exact retries return
+the original result even after later edits, deletion, or restart, without a second
+notification. Deleting a journal hides its entries without changing their individual
+deleted states. Restoring it reveals entries that were not separately deleted.
+Entries retain UTC occurrence, creation, and update instants; desktop display uses
+local time. Mood is nullable or an integer from 1 through 7.
+
+JSON export schema 4 includes every journal and entry, including deleted records,
+under `journaling`; each entry includes its journal-only tags. Existing export
+sections remain available. CSV remains a time-session report. Database backups
+include all journal tables and receipts. Restore upgrades older supported backups
+in the staging copy before replacement and never changes the source backup.
+Journal queries page 1–100 entries in occurrence-time/ID order. Continuation tokens
+must be reused with the same filters. Catalog limits are 200 journals including
+deleted journals and 1000 distinct tags per tag-list query; larger tag catalogs
+remain readable through paginated entries.
+
 Schema migration 8 (`daily-habits`) adds habits and their per-day check-ins in a
 transaction under the existing ownership lease, with a separate checksum. It
 does not alter tasks, calendar recurrence, or tracking sessions. Contract 1.4

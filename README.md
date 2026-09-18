@@ -18,6 +18,8 @@ bounded recurring schedule blocks, user calendars and recurring events with
 occurrence exceptions, operation idempotency, integrity-checked backup,
 JSON/CSV export, and in-memory timer display. A structured-JSON CLI and an
 authenticated loopback daemon use the same backend contract.
+Journals add a separate space for writing, with multiple journals, entry tags,
+optional mood ratings from 1 to 7, and complete CLI read/write access.
 
 Android packaging, authenticated peer sync, Windows service packaging, and the
 remaining release-gate/accessibility matrix are still later milestones.
@@ -75,6 +77,18 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
   history intact. Habits are independent of tasks, timers, and calendar plans.
   This first version supports up to 500 habits including deleted records; weekday
   schedules, numeric targets, reminders, and automatic check-ins are outside scope.
+- **Journals:** create a journal, then **Write an entry**. Add an optional title,
+  date/time, journal-only tags, and mood from **1 · Very low** to **7 · Great**;
+  **Not rated** leaves mood unset. Select a journal or browse all journals, search
+  entry text, or apply an exact tag filter. **Read & edit** opens the full entry;
+  changing its journal moves it when saved. Tags and mood are saved with the draft.
+  **Journal settings** provides rename and delete; **Show deleted** reveals journals
+  and entries for reading/restoring. Deleting a journal preserves its entries.
+  Restore the journal before restoring individually deleted entries. Conflicts
+  keep the draft and offer **Review latest saved entry/journal** before retrying.
+  Journals support plain text, up to 20,000 characters per entry, 20 tags per entry,
+  and 200 journals including deleted ones. Journal tags never enter task, project,
+  activity tags, or time summaries.
 - **History:** scan sessions, start times, duration, and state in a ledger. **Edit**
   opens a correction drawer with a required reason and retained provenance.
 - **Summary:** choose a grouping to compare attributed time and clock coverage.
@@ -175,7 +189,10 @@ Use `call METHOD JSON_OBJECT` for every backend method. Method names are
 case-insensitive; hyphens and the `Async` suffix are optional. Arguments are
 always named JSON properties, which avoids positional ambiguity. See
 [the CLI reference](docs/cli.md) for lifecycle, timer, calendar, data-operation,
-and retry examples.
+and retry examples, including journal creation, entry updates, mood/tag changes,
+delete/restore, and paginated reads. `journals [--include-deleted]` lists journals;
+`journal-entries [JournalEntryQuery JSON]` reads entries. All journal writes use
+`call` with an operation ID and, for edits, the current revision.
 
 `task-batch plan` supports explicit task IDs or intersecting search, board, project,
 status, priority, favorite, and due-date filters. It makes no changes and emits the
@@ -253,7 +270,8 @@ SQLite profile in `artifacts/ui-screenshot-data/` and captures Today, Tasks
 (list and board), Time Tracker, Calendar (Event and History modes), History, Summary, and
 Settings at 1280×820. Set `SNOOK_SCREENSHOT_SECTIONS` to a comma-separated
 subset such as `tasks-list,settings` when iterating on a smaller area.
-The default run produces 26 images, including Habits (`habits`, `habits-editor`), task and utility drawers
+The default run produces 29 images, including Journals (`journals`, `journals-editor`,
+`journals-new`), Habits (`habits`, `habits-editor`), task and utility drawers
 (`tasks-details`, `tracker-new-activity`, `tracker-manual`, `history-details`,
 `calendar-details`), the lower Today section (`today-bottom`), and Settings
 categories (`settings-organization`, `settings-activities`,
@@ -266,9 +284,15 @@ resizing, date navigation, each mode's remembered arrangement, and timer
 pause/resume/stop refreshes.
 An empty screenshot profile is seeded with three sample tasks, a 45-minute
 session, a planned block, two events, grouped activities, and running/paused/background
-timers. Existing tasks prevent repeat seeding;
-set `SNOOK_SCREENSHOT_SEED=0` to capture an empty profile without sample data.
+timers. The fixture also includes two journals and three tagged entries with mood
+ratings. Existing tasks prevent repeat seeding; set `SNOOK_SCREENSHOT_SEED=0`
+to capture an empty profile without sample data.
 This data is confined to the screenshot profile, not the desktop workspace.
+
+`SNOOK_SCREENSHOT_VERIFY_JOURNALS=1` on the `journals` section exercises persisted
+journal creation/rename, entry creation/edit/movement, filters, mood and tag
+clearing, delete/restore, draft retention, stale-save review, focus containment and
+return, and Cancel/Escape. Run it at both the default and 980×640 sizes.
 
 For an isolated review, set `SNOOK_DATA_DIR` to a fresh disposable directory and
 `SNOOK_SCREENSHOT_DIR` to the desired image directory. Set

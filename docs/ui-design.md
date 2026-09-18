@@ -258,3 +258,28 @@ with minimum-size and empty states in `artifacts/ui-final-narrow` and
 `artifacts/ui-final-empty`. Earlier passes also inspected expanded maintenance,
 history correction, overnight/overlap schedules, and drag feedback. Native human
 interaction, assistive-technology, and platform release checks remain separate work.
+
+## Journals
+
+Journals is a first-level sidebar destination with an original notebook icon.
+The page uses the workspace's warm surfaces and teal accents, a compact journal
+picker, and chronological entry cards with generous line spacing. Each card
+shows its journal, local date/time, title, excerpt, textual mood rating, and
+journal-only tags. Exact tag and text filters are explicit; earlier entries load
+in bounded pages. Empty states lead to journal creation and first-entry writing.
+
+The writing drawer owns its title, multiline body, journal, local timestamp,
+optional 1–7 mood, and comma-separated tag draft. Choosing a different journal
+moves the entry on Save. An unset mood is labeled Not rated. Ratings always have
+text, so their meaning does not depend on color. Content is plain text.
+Backend refreshes preserve drafts; stale saves keep them open. Review latest
+shows saved fields alongside the unchanged draft before a new revision can be
+saved. Cancel and Escape discard edits, Tab cycles in the drawer, and focus
+returns to its opener. Metadata and conflict details stay reachable by scrolling
+at the 980×640 minimum size.
+
+Journal settings contains rename and soft-delete/restore actions. Show deleted
+exposes deleted entries and journals with explicit state text; entries remain
+readable with a disabled Save until restored. Deleting a journal preserves its
+contents and their individual deleted states. Journal tags are edited with the
+entry draft and never appear in task or time-tracking tag controls.

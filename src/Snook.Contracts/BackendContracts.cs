@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 4;
+    public const int Minor = 5;
 }
 
 public sealed record OperationRequest(
@@ -94,9 +94,24 @@ public sealed record CalendarRangeQuery(
 
 public sealed record HabitQuery(int Days = 30, DateOnly? ThroughDate = null, bool IncludeArchived = false, bool IncludeDeleted = false);
 
+public sealed record JournalEntryQuery(Guid? JournalId = null, string? Search = null, string? Tag = null,
+    bool IncludeDeleted = false, int PageSize = 30, string? ContinuationToken = null);
+public sealed record JournalEntryPage(IReadOnlyList<JournalEntry> Items, string? ContinuationToken, bool HasMore);
+
 public interface IBackendClient : IAsyncDisposable
 {
     event EventHandler<ChangeNotification>? Changed;
+
+    Task<IReadOnlyList<Journal>> GetJournalsAsync(bool includeDeleted = false, CancellationToken cancellationToken = default);
+    Task<Journal> CreateJournalAsync(JournalDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<Journal> UpdateJournalAsync(Guid journalId, JournalDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<Journal> SetJournalDeletedAsync(Guid journalId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<JournalEntryPage> GetJournalEntriesAsync(JournalEntryQuery query, CancellationToken cancellationToken = default);
+    Task<JournalEntry> GetJournalEntryAsync(Guid entryId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<string>> GetJournalTagsAsync(Guid? journalId = null, CancellationToken cancellationToken = default);
+    Task<JournalEntry> CreateJournalEntryAsync(JournalEntryDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<JournalEntry> UpdateJournalEntryAsync(Guid entryId, JournalEntryDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<JournalEntry> SetJournalEntryDeletedAsync(Guid entryId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<HabitProgress>> GetHabitsAsync(HabitQuery query, CancellationToken cancellationToken = default);
     Task<Habit> CreateHabitAsync(HabitDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);

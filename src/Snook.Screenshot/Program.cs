@@ -59,6 +59,17 @@ internal static class Program
         var snapshot = await backend.GetBootstrapAsync();
         var project = await backend.CreateProjectAsync(snapshot.Boards[0].Id, "Studio refresh");
         var today = DateOnly.FromDateTime(DateTime.Now);
+        var everyday = await backend.CreateJournalAsync(new JournalDefinition("Everyday", "Small moments, kept close."), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
+        var workJournal = await backend.CreateJournalAsync(new JournalDefinition("Studio notes", "Thoughts from the work in progress."), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
+        await backend.CreateJournalEntryAsync(new JournalEntryDefinition(everyday.Id, "A slower start",
+            "Coffee by the window, a few pages of my book, and no rush to open my inbox. The morning felt a little more like mine.\n\nI want to remember that a good day doesn’t have to begin with getting ahead.",
+            DateTimeOffset.Now.AddMinutes(-30), 6, ["small wins", "gratitude"]), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
+        await backend.CreateJournalEntryAsync(new JournalEntryDefinition(workJournal.Id, "Finding the thread",
+            "The sketches finally started to connect. Talking through the rough ideas helped more than another hour of polishing. Next time, share the unfinished version sooner.",
+            DateTimeOffset.Now.AddDays(-1), 5, ["ideas", "creative work"]), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
+        await backend.CreateJournalEntryAsync(new JournalEntryDefinition(everyday.Id, "A walk without a destination",
+            "Took the long way home and noticed the light changing in the trees. A small reminder to leave a little room in the day.",
+            DateTimeOffset.Now.AddDays(-2), 7, ["outside"]), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
         foreach (var (name, description) in new[] { ("Read a little", "A chapter or a few pages before bed."), ("Go for a walk", "Make time to get outside."), ("Practice Spanish", "Ten minutes of listening and speaking.") })
         {
             var habit = await backend.CreateHabitAsync(new HabitDefinition(name, description, today.AddDays(-20), TimeZoneInfo.Local.Id), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
@@ -144,5 +155,7 @@ internal static class Program
             await InteractionChecks.CheckTaskBatchAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_HABITS") == "1")
             await InteractionChecks.CheckHabitsAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_JOURNALS") == "1")
+            await InteractionChecks.CheckJournalsAsync(window, path);
     }
 }
