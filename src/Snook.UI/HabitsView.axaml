@@ -1,0 +1,85 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.HabitsView"
+             x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
+  <UserControl.Resources>
+    <DataTemplate x:Key="HabitDayTemplate" x:DataType="local:HabitDayViewModel">
+      <Button Classes="secondary habit-day" Classes.done="{Binding Completed}" Command="{Binding ToggleCommand}"
+              AutomationProperties.Name="{Binding AutomationName}" ToolTip.Tip="{Binding Detail}" Margin="0,0,6,6" Width="76" Padding="4,9">
+        <StackPanel Spacing="4" HorizontalAlignment="Center">
+          <TextBlock Text="{Binding DateLabel}" FontSize="11" HorizontalAlignment="Center" />
+          <TextBlock Text="{Binding StateLabel}" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" />
+        </StackPanel>
+      </Button>
+    </DataTemplate>
+  </UserControl.Resources>
+  <UserControl.Styles>
+    <Style Selector="Button.habit-day.done">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="Border.habit-row.deleted"><Setter Property="BorderBrush" Value="#A14444" /></Style>
+  </UserControl.Styles>
+  <StackPanel Spacing="16">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+      <TextBlock Text="Small routines, one day at a time." Classes="muted" VerticalAlignment="Center" TextWrapping="Wrap" />
+      <Button Grid.Column="1" Classes="primary" Content="+ New habit" Command="{Binding NewHabitCommand}" AutomationProperties.Name="New habit" />
+    </Grid>
+    <WrapPanel>
+      <CheckBox Content="Show archived" IsChecked="{Binding ShowArchivedHabits}" Margin="0,0,18,0" AutomationProperties.Name="Show archived habits" />
+      <CheckBox Content="Show deleted" IsChecked="{Binding ShowDeletedHabits}" AutomationProperties.Name="Show deleted habits" />
+    </WrapPanel>
+    <WrapPanel>
+      <StackPanel Spacing="5" Margin="0,0,8,0">
+        <TextBlock Text="History through · YYYY-MM-DD" Classes="field-label" />
+        <TextBox Text="{Binding HabitThroughText}" PlaceholderText="Today in each habit's time zone" Width="250" AutomationProperties.Name="Habit history through date" />
+      </StackPanel>
+      <Button Classes="secondary" Content="View date" Command="{Binding ApplyHabitDateCommand}" VerticalAlignment="Bottom" Margin="0,0,8,0" AutomationProperties.Name="View habit history date" />
+      <Button Classes="ghost" Content="Today" Command="{Binding HabitTodayCommand}" VerticalAlignment="Bottom" AutomationProperties.Name="Habit history today" />
+    </WrapPanel>
+    <Border Classes="card" IsVisible="{Binding HasNoHabits}">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Make room for a daily habit" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Read a little, take a walk, or practice something. Add a habit, then check off each day you do it." Classes="muted" TextWrapping="Wrap" />
+        <TextBlock Text="Archived and deleted habits keep their history. Use the filters above to restore them." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+    <ItemsControl ItemsSource="{Binding Habits}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="local:HabitRowViewModel">
+          <Border Classes="card habit-row" Classes.deleted="{Binding IsDeleted}" Margin="0,0,0,12" Padding="18">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding Name}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding StateLabel}" Classes="eyebrow" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="5" VerticalAlignment="Top">
+                  <Button Classes="ghost" Content="Edit" Command="{Binding EditCommand}" IsVisible="{Binding IsActive}" AutomationProperties.Name="{Binding EditName}" />
+                  <Button Classes="ghost" Content="•••" AutomationProperties.Name="Habit actions">
+                    <Button.Flyout><MenuFlyout>
+                      <MenuItem Header="{Binding ArchiveLabel}" Command="{Binding ArchiveCommand}" IsVisible="{Binding CanArchive}" AutomationProperties.Name="{Binding ArchiveName}" />
+                      <MenuItem Header="{Binding DeleteLabel}" Command="{Binding DeleteCommand}" AutomationProperties.Name="{Binding DeleteName}" />
+                    </MenuFlyout></Button.Flyout>
+                  </Button>
+                </StackPanel>
+              </Grid>
+              <TextBlock Text="{Binding Description}" IsVisible="{Binding HasDescription}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ProgressLabel}" FontSize="13" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RangeLabel}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <ItemsControl ItemsSource="{Binding RecentDays}" ItemTemplate="{StaticResource HabitDayTemplate}">
+                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+              </ItemsControl>
+              <Expander Header="Earlier days in this 30-day view" HorizontalAlignment="Stretch">
+                <ItemsControl ItemsSource="{Binding EarlierDays}" ItemTemplate="{StaticResource HabitDayTemplate}">
+                  <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                </ItemsControl>
+              </Expander>
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+    <TextBlock Text="Click a day to check it off or undo it. You can correct the last 366 days. An unfinished today keeps yesterday's streak until the day ends." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+  </StackPanel>
+</UserControl>

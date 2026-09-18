@@ -6,7 +6,7 @@ using Snook.Domain;
 
 namespace Snook.Application;
 
-public sealed class DaemonBackendClient : IBackendClient
+public sealed partial class DaemonBackendClient : IBackendClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _httpClient;

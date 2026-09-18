@@ -90,6 +90,43 @@ public sealed class CliIntegrationTests
     }
 
     [Fact]
+    public async Task HabitsHelperReadsProgressWithoutMutatingAndValidatesBounds()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-cli-habits-");
+        try
+        {
+            var day = DateOnly.FromDateTime(DateTime.UtcNow);
+            var created = await RunCliAsync("--data-dir", directory.FullName, "call", "create-habit", JsonSerializer.Serialize(new
+            {
+                definition = new HabitDefinition("CLI habit", "Daily", day, "UTC"),
+                request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid())
+            }, CliJsonOptions));
+            Assert.True(created.ExitCode == 0, created.StandardError);
+            var habit = JsonSerializer.Deserialize<Habit>(created.StandardOutput, CliJsonOptions)!;
+            var completed = await RunCliAsync("--data-dir", directory.FullName, "call", "set-habit-completion", JsonSerializer.Serialize(new
+            {
+                habitId = habit.Id, day, completed = true,
+                request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), habit.Revision)
+            }, CliJsonOptions));
+            Assert.True(completed.ExitCode == 0, completed.StandardError);
+            var before = await RunCliAsync("--data-dir", directory.FullName, "bootstrap");
+            var result = await RunCliAsync("--data-dir", directory.FullName, "habits", "{\"days\":7}");
+            Assert.True(result.ExitCode == 0, result.StandardError);
+            var progress = Assert.Single(JsonSerializer.Deserialize<HabitProgress[]>(result.StandardOutput, CliJsonOptions)!);
+            Assert.Equal(habit.Id, progress.Habit.Id);
+            Assert.Equal(1, progress.CurrentStreak);
+            Assert.Equal(day, Assert.Single(progress.CheckIns).Date);
+            var after = await RunCliAsync("--data-dir", directory.FullName, "bootstrap");
+            using var beforeJson = JsonDocument.Parse(before.StandardOutput);
+            using var afterJson = JsonDocument.Parse(after.StandardOutput);
+            Assert.Equal(beforeJson.RootElement.GetProperty("committedCursor").GetInt64(), afterJson.RootElement.GetProperty("committedCursor").GetInt64());
+            Assert.NotEqual(0, (await RunCliAsync("--data-dir", directory.FullName, "habits", "{\"days\":367}")).ExitCode);
+            Assert.NotEqual(0, (await RunCliAsync("--data-dir", directory.FullName, "habits", "null")).ExitCode);
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
     public async Task EmbeddedCliPlansAppliesAndSafelyRetriesTaskBatches()
     {
         var directory = Directory.CreateTempSubdirectory("snook-cli-batch-test-");
@@ -279,6 +316,10 @@ public sealed class CliIntegrationTests
             Assert.Equal(0, applied.ExitCode);
             using var appliedDocument = JsonDocument.Parse(applied.StandardOutput);
             Assert.True(appliedDocument.RootElement.GetProperty("tasks")[0].GetProperty("starred").GetBoolean());
+            var habits = await RunCliAsync("--data-dir", directory.FullName, "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/", "--token", token, "habits");
+            Assert.True(habits.ExitCode == 0, habits.StandardError);
+            Assert.Equal("[]", habits.StandardOutput.Trim());
         }
         finally
         {

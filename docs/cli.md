@@ -34,6 +34,37 @@ Exit codes are `0` for success, `2` for a domain or validation error, `64` for
 CLI syntax/argument errors, `1` for an unexpected host/transport error, and
 `130` when a caller cancels the command.
 
+## Daily habit reads
+
+`habits` is a read-only helper over `GetHabitsAsync`. With no arguments it returns
+active habits and their last 30 civil days, each ending today in that habit's
+saved time zone. Supply one optional JSON query:
+
+```bash
+snook habits
+snook habits '{"days":7}'
+snook habits '{"days":30,"throughDate":"2026-09-15","includeArchived":true,"includeDeleted":true}'
+```
+
+Results contain `habit` (including its revision, fixed start date, and time zone),
+`today`, `rangeStart`, `rangeEnd`, `checkIns` with civil dates and UTC recording
+timestamps, `completedDays`, `eligibleDays`, and `currentStreak`. The range is
+inclusive and bounded to 1–366 days. Eligible days exclude dates before the habit
+started and after its today; the completion count is for this range. The streak
+is always current and may extend beyond the read window. Pending today preserves
+yesterday's streak. Archived/deleted habits keep history but cannot be checked
+off until restored. Revealing deleted habits also reveals deleted archived habits.
+
+The generic `call` surface also exposes `create-habit`, `update-habit`,
+`set-habit-completion`, `set-habit-archived`, and `set-habit-deleted` for automation.
+Use `api` for their exact arguments. Creation takes `definition` with `name`,
+`description`, `startDate`, and `timeZone`, plus a `request` with operation/device
+IDs and no expected revision. Other writes require the habit's expected revision.
+`set-habit-completion` takes an explicit `day` and `completed` boolean; sending
+`false` undoes a check-in. Reuse the exact request and operation ID to retry a
+write. Reusing an operation ID with changed arguments is rejected. All writes
+use the same embedded/daemon contract as the GUI.
+
 ## Discovering the contract
 
 ```bash

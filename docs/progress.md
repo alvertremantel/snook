@@ -8,6 +8,35 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Daily habit tracking is implemented across the GUI and shared backend contract
+  1.4, with a read-only `habits [HabitQuery JSON]` CLI helper and generic contract
+  calls available to automation. The Habits page offers create/edit, direct daily
+  check/undo, current streaks, a 30-day history, older-date review, and archive,
+  soft-delete, and restore. Fixed creation time zones preserve civil days across
+  DST and daemon host settings. Corrections cover the last 366 days; the initial
+  catalog cap is 500 habits including deleted records. Weekday schedules, numeric
+  targets, reminders, and automatic timer-based completion remain outside scope.
+  The implementation plan is in [habits-plan.md](habits-plan.md).
+  Schema migration 8 adds separate tables; exact request-bound receipts survive
+  subsequent edits and restart. Backup, staged v7 restore, JSON export schema 3,
+  and authenticated daemon dispatch preserve habits and their history. New
+  committed notifications use the actual mutation cursor and timestamp; replay
+  emits no duplicate notification. Drawer conflicts retain the draft and offer
+  saved-value comparison before retry. Check-in controls retain keyboard focus,
+  and sidebar navigation scrolls when needed at the minimum window size.
+  Verification: full solution build with zero warnings/errors; all 60 tests pass
+  (50 application, 10 domain); `git diff --check` is clean. Tests cover embedded
+  and daemon behavior, revision conflicts, bounded reads/corrections, lifecycle,
+  durable replay, migration, backup/export, staged restore and rejection of newer
+  schemas, CLI reads, DST, midnight, and streaks longer than the read window.
+  Persisted headless habit interaction checks pass at 1280×820 and 980×640,
+  covering create, check/undo, backfill, draft retention, stale-save review, focus,
+  Escape, archive/delete/restore, and history preservation. Seeded/empty Habits
+  and editor renders plus Today/Settings sidebar smoke captures are under
+  `artifacts/habits/{seeded,narrow,empty,empty-narrow}` and were visually inspected.
+  VSTest required local socket access outside the sandbox. Native human and
+  assistive-technology review remain separate release work.
+
 - The headless CLI now has a dedicated reviewable mass-edit workflow. `task-batch
   plan` resolves explicit IDs or intersecting text, hierarchy, state, priority,
   favorite, and due-date filters into a deterministic preview with exact revisions;

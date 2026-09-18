@@ -85,6 +85,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         InitializeCalendarCommands();
         InitializeTaskWorkspaceCommands();
         InitializeWorkspaceEditors();
+        InitializeHabitCommands();
         _backend.Changed += OnBackendChanged;
         RefreshCommand = new AsyncCommand(_ => RefreshAsync());
         CreateTaskCommand = new AsyncCommand(_ => CreateTaskAsync(), _ => !string.IsNullOrWhiteSpace(TaskTitle) && SelectedProjectId != Guid.Empty);
@@ -501,6 +502,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             }
 
             if (!IsTaskEditorOpen && !IsUtilityEditorOpen) StatusMessage = "All changes are saved locally.";
+            if (IsHabitsVisible) await LoadHabitsAsync();
             if (IsHistoryVisible)
             {
                 await LoadHistoryAsync();
@@ -999,6 +1001,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Summary" => "Summary",
             "Calendar" => "Calendar",
             "Tasks" => "Tasks",
+            "Habits" => "Habits",
             "Time Tracker" => "Time Tracker",
             "Settings" => "Settings",
             _ => "Today"
@@ -1009,6 +1012,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "History" => "Time history",
             "Summary" => "Time summary",
             "Tasks" => "Your tasks",
+            "Habits" => "Your daily habits",
             "Time Tracker" => "Time tracker",
             "Calendar" => "Make room for the work",
             "Settings" => "Workspace settings",
@@ -1019,6 +1023,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "History" => "Revisit your sessions and keep your time accurate.",
             "Summary" => "A clearer picture of the last 30 days.",
             "Tasks" => "A clear place for everything you want to do.",
+            "Habits" => "Build a routine and keep a record of the days you show up.",
             "Time Tracker" => "Start tasks or standalone activities, then switch without losing your place.",
             "Calendar" => "Plan your work or see how your days were spent.",
             "Settings" => "Make space for the way you work.",
@@ -1026,6 +1031,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         };
         RaisePropertyChanged(nameof(IsTodayVisible));
         RaisePropertyChanged(nameof(IsTasksVisible));
+        RaisePropertyChanged(nameof(IsHabitsVisible));
         RaisePropertyChanged(nameof(IsTimeTrackerVisible));
         RaisePropertyChanged(nameof(HasPageSearch));
         RaisePropertyChanged(nameof(SearchHint));
@@ -1035,7 +1041,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         RaisePropertyChanged(nameof(IsSummaryVisible));
         RaisePropertyChanged(nameof(IsCalendarVisible));
         RaisePropertyChanged(nameof(IsSettingsVisible));
-        if (normalized == "History")
+        if (normalized == "Habits")
+        {
+            await LoadHabitsAsync();
+        }
+        else if (normalized == "History")
         {
             await LoadHistoryAsync();
         }
@@ -1060,6 +1070,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         CloseTaskEditorCommand.Execute(null);
         CloseUtilityEditor();
         await SelectSectionAsync(section);
+        if (section == "Habits" && variant == "editor") OpenHabitEditor(Habits.FirstOrDefault());
         if (section == "Tasks")
         {
             ShowStarredTasks = variant == "starred";
@@ -2130,6 +2141,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private void UpdateDisplayTimes()
     {
+        RefreshHabitDay(DateTimeOffset.UtcNow);
         RefreshCalendarHistory(DateTimeOffset.UtcNow);
         foreach (var session in ActiveSessions)
         {

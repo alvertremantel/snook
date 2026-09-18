@@ -2,6 +2,21 @@
 
 ## Current direction: September 2026 modernization
 
+Habits is a workspace-wide daily yes/no tracker beside Tasks. Its cards expose
+seven direct day buttons with Done/Open text, a bounded disclosure for the rest
+of a 30-day history, and date navigation for older corrections. Current streaks
+remain current while reviewing old history; completion counts describe the visible
+range. Archive/delete hide routines without losing history, and explicit filters
+reveal restore actions. Habits do not create tasks, calendar blocks, or timers.
+
+Creation/editing uses the shared utility drawer. Start date and creation time zone
+stay fixed after creation; names and descriptions are editable. Refreshes retain
+the draft, stale saves offer a latest-saved comparison, and Cancel/Escape discard
+the draft with focus returned. Day controls keep identity across refreshes so a
+keyboard user can check or undo without losing their place. Days before the start,
+future days, and corrections older than 366 days are disabled. The page refreshes
+at a habit's own midnight even if the host and habit have different time zones.
+
 Task rows and cards provide selection checkboxes separate from completion controls.
 Select all in view (also Ctrl+A outside text fields), Clear, and Edit selected are
 available in both arrangements. Selected rows have a checked control and accent

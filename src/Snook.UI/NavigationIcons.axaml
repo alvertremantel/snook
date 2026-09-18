@@ -15,6 +15,15 @@
         </Style>
     </ControlTheme>
 
+    <ControlTheme x:Key="HabitsNavigationIcon" TargetType="ContentControl" BasedOn="{StaticResource NavigationIcon}">
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Canvas Width="24" Height="24">
+                    <Path Classes="outline" Data="M19.5 7 A8.5 8.5 0 1 0 20.5 13 M16 3.5 L20 7 L21 2.5 M8 12 L11 15 L16 9" Stroke="{TemplateBinding Foreground}" />
+                </Canvas>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
     <StreamGeometry x:Key="TodayIconBody">M17 12 A5 5 0 1 1 7 12 A5 5 0 1 1 17 12 Z</StreamGeometry>
     <ControlTheme x:Key="TodayNavigationIcon" TargetType="ContentControl" BasedOn="{StaticResource NavigationIcon}">
         <Setter Property="Template">

@@ -51,6 +51,24 @@ with the backup when moving it between machines.
 
 ## Migration and recovery failures
 
+Schema migration 8 (`daily-habits`) adds habits and their per-day check-ins in a
+transaction under the existing ownership lease, with a separate checksum. It
+does not alter tasks, calendar recurrence, or tracking sessions. Contract 1.4
+adds habit reads and revision-checked writes to both hosts; the daemon dispatcher
+uses the interface allowlist. Upgrade desktop, CLI, and daemon together.
+
+Habit writes persist an exact, request-bound result receipt alongside the
+aggregate revision and committed change. Exact retries, including after restart
+or later edits, return that result without repeating the mutation or notification.
+Archive/delete retain history; restore does not reinterpret dates. Habits store
+their creation time zone, check-ins store civil dates plus UTC recording instants,
+and corrections are limited to the last 366 days. The initial catalog limit is
+500 habits including deleted records. JSON export schema 3 includes all habits
+and check-ins under `habitTracking`; CSV remains a time-session report. Database
+backups contain the habit tables and receipts. Restore upgrades a v7 backup in
+its staging copy before replacing the workspace, so habit reads work immediately;
+the original backup remains untouched.
+
 Schema migration 7 (`task-due-dates-and-favorites`) indexes open date-only deadlines
 and starred tasks/projects. Existing schemas already contain `tasks.due_date`
 and favorite columns, so the migration preserves their values and all calendar

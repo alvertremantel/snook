@@ -70,6 +70,7 @@ public static class Program
             {
                 "bootstrap" => await backend.GetBootstrapAsync(cancellationToken),
                 "tasks" => await RunTasksAsync(backend, invocation.Arguments, cancellationToken),
+                "habits" => await RunHabitsAsync(backend, invocation.Arguments, cancellationToken),
                 "summary" => await RunSummaryAsync(backend, invocation.Arguments, cancellationToken),
                 "history" => await RunHistoryAsync(backend, invocation.Arguments, cancellationToken),
                 "calendar" => await RunCalendarAsync(backend, invocation.Arguments, cancellationToken),
@@ -159,6 +160,14 @@ public static class Program
         }
 
         return await backend.SearchTasksAsync(args.Count == 0 ? null : args[0], includeCompleted: true, cancellationToken: cancellationToken);
+    }
+
+    private static async Task<object> RunHabitsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1) throw new CliUsageException("habits accepts an optional HabitQuery JSON object.");
+        var query = args.Count == 0 ? new HabitQuery() : JsonSerializer.Deserialize<HabitQuery>(args[0], JsonOptions)
+            ?? throw new CliUsageException("Provide a HabitQuery JSON object.");
+        return await backend.GetHabitsAsync(query, cancellationToken);
     }
 
     private static async Task<object> RunSummaryAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -562,6 +571,14 @@ public static class Program
         },
         cliCommands = new
         {
+            habits = new
+            {
+                read = "snook habits [HabitQuery JSON]",
+                query = TypeName(typeof(HabitQuery)),
+                maximumDays = HabitRules.MaximumDays,
+                defaultDays = 30,
+                timeZone = "Each habit keeps its creation time zone; throughDate is an inclusive civil date."
+            },
             taskBatch = new
             {
                 plan = "snook task-batch plan '<selection/update JSON object>'",
@@ -660,6 +677,7 @@ public static class Program
         writer.WriteLine("Usage: snook [global options] <command> [arguments]");
         writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
+        writer.WriteLine("          habits [HabitQuery JSON] (read-only daily progress and check-ins)");
         writer.WriteLine("          calendar blocks|events [Range JSON] | task-batch plan|apply JSON | doctor | watch | api");
         writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();

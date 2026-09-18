@@ -44,7 +44,8 @@
           <TextBlock Text="A quiet place for doing" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="12" Margin="2,0,0,0" />
         </StackPanel>
 
-        <StackPanel Grid.Row="1" Margin="0,24,0,0" Spacing="2">
+        <ScrollViewer Grid.Row="1" Margin="0,24,0,10" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="2">
           <TextBlock Text="WORKSPACE" Classes="eyebrow" Foreground="{DynamicResource SidebarMutedBrush}" Margin="14,0,0,10" />
           <Button Classes="nav" Classes.selected="{Binding IsTodayVisible}" AutomationProperties.Name="Today" Command="{Binding SelectSectionCommand}" CommandParameter="Today">
             <StackPanel Orientation="Horizontal" Spacing="10">
@@ -56,6 +57,12 @@
             <StackPanel Orientation="Horizontal" Spacing="10">
               <ContentControl Theme="{StaticResource TasksNavigationIcon}" />
               <TextBlock Text="Tasks" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button x:DataType="local:MainWindowViewModel" x:CompileBindings="True" Classes="nav" Classes.selected="{Binding IsHabitsVisible}" AutomationProperties.Name="Habits" Command="{Binding SelectSectionCommand}" CommandParameter="Habits">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <ContentControl Theme="{StaticResource HabitsNavigationIcon}" />
+              <TextBlock Text="Habits" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker">
@@ -91,6 +98,7 @@
           </Button>
         </StackPanel>
 
+        </ScrollViewer>
         <Border Grid.Row="2" Background="{DynamicResource SidebarRaisedBrush}" CornerRadius="12" Padding="12">
           <StackPanel Spacing="6">
             <TextBlock Text="{Binding WorkspaceName}" Classes="eyebrow" Foreground="{DynamicResource SidebarMutedBrush}" TextTrimming="CharacterEllipsis" />
@@ -811,6 +819,7 @@
           </Border>
         </StackPanel>
 
+        <local:HabitsView x:DataType="local:MainWindowViewModel" x:CompileBindings="True" IsVisible="{Binding IsHabitsVisible}" />
         <local:SettingsView IsVisible="{Binding IsSettingsVisible}" />
         </StackPanel>
       </ScrollViewer>

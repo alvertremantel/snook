@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 3;
+    public const int Minor = 4;
 }
 
 public sealed record OperationRequest(
@@ -92,9 +92,18 @@ public sealed record CalendarRangeQuery(
     int MaximumOccurrences = 500,
     bool IncludeDeleted = false);
 
+public sealed record HabitQuery(int Days = 30, DateOnly? ThroughDate = null, bool IncludeArchived = false, bool IncludeDeleted = false);
+
 public interface IBackendClient : IAsyncDisposable
 {
     event EventHandler<ChangeNotification>? Changed;
+
+    Task<IReadOnlyList<HabitProgress>> GetHabitsAsync(HabitQuery query, CancellationToken cancellationToken = default);
+    Task<Habit> CreateHabitAsync(HabitDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<Habit> UpdateHabitAsync(Guid habitId, HabitUpdate update, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<Habit> SetHabitCompletionAsync(Guid habitId, DateOnly day, bool completed, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<Habit> SetHabitArchivedAsync(Guid habitId, bool archived, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<Habit> SetHabitDeletedAsync(Guid habitId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default);
 
     // Atomic, revision-checked patch of 1–500 distinct active tasks. Replays return the committed result.
     Task<IReadOnlyList<TaskItem>> BulkUpdateTasksAsync(

@@ -64,6 +64,17 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
 - **Time Tracker:** launch grouped activities alongside running, paused, and
   background timers. **Manual time** and **New activity** open focused editors;
   **Activity library** opens their organization settings.
+- **Habits:** create a daily yes/no routine with a name, optional description,
+  and start date. Click a day to check it off or undo it. The page shows the last
+  seven days, an expandable 30-day history, a current streak, and completed days
+  in the displayed range. **History through** opens older dates; **Today** returns
+  to the present. You can correct the last 366 days, starting no earlier than the
+  habit's start date. An unfinished today does not break yesterday's streak until
+  the day ends. Each habit retains the local time zone in which it was created.
+  Use **•••** to archive/delete, and **Show archived/deleted** to restore with
+  history intact. Habits are independent of tasks, timers, and calendar plans.
+  This first version supports up to 500 habits including deleted records; weekday
+  schedules, numeric targets, reminders, and automatic check-ins are outside scope.
 - **History:** scan sessions, start times, duration, and state in a ledger. **Edit**
   opens a correction drawer with a required reason and retained provenance.
 - **Summary:** choose a grouping to compare attributed time and clock coverage.
@@ -122,6 +133,7 @@ dotnet run --project src/Snook.Desktop/Snook.Desktop.csproj
 # Structured JSON client
 dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- bootstrap
 dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- summary day 30
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- habits
 
 # Optional daemon profile (the client never opens SQLite in this mode)
 dotnet run --project src/Snook.Daemon/Snook.Daemon.csproj
@@ -241,7 +253,7 @@ SQLite profile in `artifacts/ui-screenshot-data/` and captures Today, Tasks
 (list and board), Time Tracker, Calendar (Event and History modes), History, Summary, and
 Settings at 1280×820. Set `SNOOK_SCREENSHOT_SECTIONS` to a comma-separated
 subset such as `tasks-list,settings` when iterating on a smaller area.
-The default run produces 24 images, including task and utility drawers
+The default run produces 26 images, including Habits (`habits`, `habits-editor`), task and utility drawers
 (`tasks-details`, `tracker-new-activity`, `tracker-manual`, `history-details`,
 `calendar-details`), the lower Today section (`today-bottom`), and Settings
 categories (`settings-organization`, `settings-activities`,
@@ -291,6 +303,11 @@ also cover sidebar action order, grouped pickers, and moves retained after Cance
 saves, atomic stale-revision rejection and recovery, Cancel/focus, task/project
 favorites, the Starred scope, and calendar due popups against disposable SQLite.
 `tasks-starred` and `tasks-bulk` are also available as static screenshot sections.
+`SNOOK_SCREENSHOT_VERIFY_HABITS=1` with `habits` checks habit creation, check/undo,
+history backfill, archive/delete/restore, retained drafts, stale-save recovery,
+Escape, and keyboard focus against disposable SQLite state. `habits-editor`
+captures the creation drawer for an empty profile or the first habit's editor
+for a seeded profile.
 `SNOOK_SCREENSHOT_VERIFY_EDITORS=1` adds persisted checks for the utility editors.
 Include `tracker,history,settings`: these verify activity/manual-time creation,
 picker preservation across refresh, correction validation and provenance, exact

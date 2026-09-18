@@ -2,6 +2,23 @@
              xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.UtilityEditorView"
              x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
   <UserControl.DataTemplates>
+    <DataTemplate DataType="local:HabitEditorViewModel">
+      <StackPanel Spacing="10">
+        <TextBlock Text="One check-in per day. Choose something small enough to repeat." Classes="muted" TextWrapping="Wrap" />
+        <TextBlock Text="Habit name" Classes="field-label" />
+        <TextBox Text="{Binding Name}" MaxLength="200" AutomationProperties.Name="Habit name" />
+        <TextBlock Text="Description · optional" Classes="field-label" />
+        <TextBox Text="{Binding Description}" MaxLength="2000" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="90" AutomationProperties.Name="Habit description" />
+        <TextBlock Text="Start date · YYYY-MM-DD" Classes="field-label" />
+        <TextBox Text="{Binding StartDateText}" IsReadOnly="{Binding IsExisting}" AutomationProperties.Name="Habit start date" />
+        <TextBlock Text="{Binding ZoneLabel}" Classes="muted" TextWrapping="Wrap" FontSize="12" />
+        <TextBlock Text="You can start today or backfill a habit from the last 366 days." IsVisible="{Binding IsNew}" Classes="muted" TextWrapping="Wrap" />
+        <StackPanel IsVisible="{Binding IsExisting}" Spacing="8" Margin="0,16,0,0">
+          <Button Classes="secondary" Content="Review latest saved habit" Command="{Binding ReviewCommand}" AutomationProperties.Name="Review latest habit" />
+          <TextBlock Text="{Binding SavedDetails}" TextWrapping="Wrap" FontSize="12" />
+        </StackPanel>
+      </StackPanel>
+    </DataTemplate>
     <DataTemplate DataType="local:BulkTaskEditorViewModel">
       <StackPanel Spacing="10">
         <TextBlock Text="Only checked fields will change for every selected task." Classes="muted" TextWrapping="Wrap" />

@@ -6,7 +6,7 @@ using DomainCalendar = Snook.Domain.Calendar;
 
 namespace Snook.Application;
 
-public sealed class SnookBackend : IBackendClient
+public sealed partial class SnookBackend : IBackendClient
 {
     private readonly SqliteStore _store;
     private readonly TimeProvider _clock;

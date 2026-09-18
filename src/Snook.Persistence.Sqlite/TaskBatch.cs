@@ -23,7 +23,7 @@ public sealed partial class SqliteStore
     {
         await using var query = connection.CreateCommand();
         query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-        if (Convert.ToInt32(await query.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 7) return;
+        if (Convert.ToInt32(await query.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) >= 7) return;
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         await ExecuteMigrationCommandAsync(connection, transaction, TaskWorkspaceSql, cancellationToken);
         await ExecuteMigrationCommandAsync(connection, transaction,
