@@ -79,6 +79,7 @@ public sealed class CalendarTimeline : UserControl
             var labels = new StackPanel { Spacing = 3 };
             labels.Children.Add(new TextBlock { Text = $"{day.DayLabel}  {day.Date:dd}", FontSize = 13, FontWeight = FontWeight.SemiBold,
                 Foreground = Brush.Parse(day.Date.Date == DateTime.Today ? "#246B63" : "#60747A") });
+            if (day.HasDueTasks) labels.Children.Add(CreateDueButton(day));
             if (day.IsHistory)
                 labels.Children.Add(new TextBlock { Text = day.TrackedLabel, FontSize = 10, Foreground = Brush.Parse("#60747A"), TextTrimming = TextTrimming.CharacterEllipsis });
             if (day.IsHistory && day.MinuteCount != 1440)
@@ -149,6 +150,38 @@ public sealed class CalendarTimeline : UserControl
         AutomationProperties.SetName(button, $"{item.KindLabel}: {item.Label}. {item.IntervalLabel}");
         ToolTip.SetTip(button, $"{item.Label}\n{item.IntervalLabel}\n{item.Details}");
         return button;
+    }
+
+    internal static Button CreateDueButton(CalendarDayColumnViewModel day)
+    {
+        var entries = new StackPanel { Spacing = 6, Width = 300 };
+        entries.Children.Add(new TextBlock { Text = $"Due {day.Date:dddd, MMMM d}", FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap });
+        entries.Children.Add(new TextBlock { Text = "Due dates do not reserve calendar time.", FontSize = 12, TextWrapping = TextWrapping.Wrap });
+        var flyout = new Flyout { Content = new ScrollViewer { Content = entries, MaxHeight = 320 }, Placement = PlacementMode.Bottom };
+        foreach (var task in day.DueTasks)
+        {
+            var content = new StackPanel { Spacing = 3 };
+            content.Children.Add(new TextBlock { Text = task.Title, TextWrapping = TextWrapping.Wrap, FontWeight = FontWeight.SemiBold });
+            content.Children.Add(new TextBlock { Text = task.ProjectPath, FontSize = 11, TextWrapping = TextWrapping.Wrap });
+            var entry = new Button { Content = content, Command = task.OpenCommand, HorizontalAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetName(entry, $"Open due task {task.Title}");
+            entry.Click += (_, _) => flyout.Hide();
+            entries.Children.Add(entry);
+        }
+        var button = new Button { Content = day.DueCountLabel, Flyout = flyout, FontSize = 11, Padding = new Thickness(4, 2), MinHeight = 24 };
+        button.Classes.Add("ghost");
+        AutomationProperties.SetName(button, day.DueAutomationLabel);
+        return button;
+    }
+}
+
+/// <summary>The month grid shares the same accessible due-list popup as the time grid.</summary>
+public sealed class CalendarDueIndicator : UserControl
+{
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        Content = DataContext is CalendarDayColumnViewModel { HasDueTasks: true } day ? CalendarTimeline.CreateDueButton(day) : null;
     }
 }
 

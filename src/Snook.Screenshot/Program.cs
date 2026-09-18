@@ -62,6 +62,8 @@ internal static class Program
         var first = await backend.CreateTaskAsync(project.Id, "Sketch the new welcome experience", Priority.High, today);
         await backend.CreateTaskAsync(project.Id, "Review typography and color samples", Priority.Medium, today.AddDays(1));
         await backend.CreateTaskAsync(snapshot.Projects[0].Id, "Book a table for Friday dinner", Priority.Low, today.AddDays(2));
+        await backend.UpdateProjectAsync(project.Id, new ProjectUpdate(project.Name, project.Description, true), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), project.Revision));
+        await backend.BulkUpdateTasksAsync([new(first.Id, first.Revision)], new BulkTaskUpdate(Starred: true), new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_BOARD_STRESS") == "1")
         {
             foreach (var name in new[] { "Launch notes", "Reading room", "Weekend plans", "Writing desk", "Z — Someday" })
@@ -129,5 +131,7 @@ internal static class Program
         }
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_EDITORS") == "1")
             await InteractionChecks.CheckEditorsAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_TASK_BATCH") == "1")
+            await InteractionChecks.CheckTaskBatchAsync(window, path);
     }
 }

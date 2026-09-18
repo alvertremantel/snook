@@ -142,7 +142,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             NotifyBoardNavigation();
         }
     }
-    public IEnumerable<TaskRowViewModel> WorkspaceTasks => Tasks.Where(row => IsTaskBoardProject(row.Task.ProjectId));
+    public IEnumerable<TaskRowViewModel> WorkspaceTasks => Tasks.Where(row => IsTaskBoardProject(row.Task.ProjectId)
+        && (!ShowStarredTasks || row.Task.Starred || IsStarredProject(row.Task.ProjectId)));
     public bool HasEmptyTaskBoard => TaskBoardId != Guid.Empty && !Projects.Any(project => IsTaskBoardProject(project.Id));
     public bool HasNoWorkspaceTasks => !HasEmptyTaskBoard && !WorkspaceTasks.Any();
     private bool IsTaskBoardProject(Guid projectId) => TaskBoardId == Guid.Empty || _projectBoards.GetValueOrDefault(projectId) == TaskBoardId;
@@ -748,7 +749,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.UpdateProjectAsync(row.Project.Id, new ProjectUpdate(row.DraftName, row.Project.Description, row.Project.Starred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision));
+            await _backend.UpdateProjectAsync(row.Project.Id, new ProjectUpdate(row.DraftName, row.Project.Description, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision));
             FinishUtilityEdit(row);
             await RefreshAsync();
         }
@@ -1061,9 +1062,16 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         await SelectSectionAsync(section);
         if (section == "Tasks")
         {
+            ShowStarredTasks = variant == "starred";
+            ClearTaskSelection();
             await SelectTaskViewAsync(variant == "board" ? "Board" : "List");
             if (variant?.StartsWith("details", StringComparison.Ordinal) == true && Tasks.Count > 0)
                 await ShowTaskDetailsAsync(Tasks[0]);
+            if (variant == "bulk")
+            {
+                foreach (var row in WorkspaceTasks.Take(2)) row.IsSelected = true;
+                OpenBulkTaskEditorCommand.Execute(null);
+            }
         }
         else if (section == "Calendar" && variant is "day" or "week" or "month" or "agenda")
         {
@@ -1182,9 +1190,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         HasNoSummary = SummaryItems.Count == 0;
     }
 
+    private int _tasksLoadVersion;
     private async Task LoadTasksAsync()
     {
+        var version = ++_tasksLoadVersion;
         var tasks = await _backend.SearchTasksAsync(SearchText, ShowCompleted, ShowArchived, ShowDeleted);
+        if (version != _tasksLoadVersion) return;
         tasks = TaskSortMode switch
         {
             "DueDate" => tasks.OrderBy(item => item.Task.DueDate is null).ThenBy(item => item.Task.DueDate).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -1197,6 +1208,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         foreach (var task in tasks)
         {
             var row = new TaskRowViewModel(task, Projects, Activities, prerequisiteOptions, StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
+            row.IsSelected = _selectedTaskIds.Contains(task.Task.Id);
+            row.PropertyChanged += OnTaskSelectionChanged;
             Tasks.Add(row);
         }
 
@@ -1210,7 +1223,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         TaskGroups.Clear();
         var rows = WorkspaceTasks.ToArray();
-        foreach (var project in Projects.Where(project => IsTaskBoardProject(project.Id)))
+        foreach (var project in Projects.Where(project => IsTaskBoardProject(project.Id)
+            && (!ShowStarredTasks || IsStarredProject(project.Id) || rows.Any(row => row.Task.ProjectId == project.Id))))
         {
             TaskGroups.Add(new ProjectTaskGroupViewModel(project.Id, project.Name, rows.Where(row => row.Task.ProjectId == project.Id).ToArray(),
                 ProjectAdminRows.FirstOrDefault(row => row.Project.Id == project.Id), project.BoardName));
@@ -1221,6 +1235,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         RaisePropertyChanged(nameof(WorkspaceTasks));
         RaisePropertyChanged(nameof(HasEmptyTaskBoard));
         RaisePropertyChanged(nameof(HasNoWorkspaceTasks));
+        RaisePropertyChanged(nameof(StarredProjects));
+        ReconcileTaskSelection();
     }
 
     private async Task LoadCalendarAsync(BootstrapSnapshot bootstrap)
@@ -1308,7 +1324,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             _nextCalendarTick = DateTimeOffset.MinValue;
             RefreshCalendarHistory(DateTimeOffset.UtcNow);
         }
-        else BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents);
+        else BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents, taskItems);
         HasNoCalendarBlocks = CalendarBlocks.Count == 0 && CalendarEvents.Count == 0;
     }
 
@@ -1317,7 +1333,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         DateTime gridEnd,
         DateTime displayedMonth,
         IEnumerable<CalendarBlockRowViewModel> blocks,
-        IEnumerable<CalendarEventRowViewModel> events)
+        IEnumerable<CalendarEventRowViewModel> events,
+        IReadOnlyList<TaskListItem> taskItems)
     {
         CalendarDayColumns.Clear();
         if (!IsCalendarGridVisible)
@@ -1346,12 +1363,21 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             CalendarDayColumns.Add(new CalendarDayColumnViewModel(
                 date,
                 IsCalendarMonth && date.Month != displayedMonth.Month,
-                items.OrderBy(item => item.StartAtUtc).ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase).ToArray()));
+                items.OrderBy(item => item.StartAtUtc).ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase).ToArray(),
+                dueTasks: taskItems.Where(item => item.Task.DueDate == DateOnly.FromDateTime(date)
+                    && item.Task.Status == TaskState.Open && item.Task.ArchivedAtUtc is null && item.Task.DeletedAtUtc is null)
+                    .OrderByDescending(item => item.Task.Priority).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase)
+                    .Select(item => new DueTaskViewModel(item.Task.Title, $"{item.BoardName} / {item.ProjectName}",
+                        new AsyncCommand(_ => ShowDueTaskAsync(item)))).ToArray()));
         }
     }
 
     private static DateTimeOffset LocalDateToUtc(DateTime date)
         => new DateTimeOffset(date, TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();
+
+    private Task ShowDueTaskAsync(TaskListItem item) => ShowTaskDetailsAsync(new TaskRowViewModel(item, Projects, Activities, [],
+        StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, DeleteTaskAsync,
+        AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync));
 
     internal static string FormatLocalDateTime(DateTimeOffset instant)
         => TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.Local).ToString(LocalDateTimeFormat, CultureInfo.InvariantCulture);
@@ -2269,6 +2295,7 @@ public sealed class ProjectAdminRowViewModel : INotifyPropertyChanged
     {
         Project = project;
         DraftName = project.Name;
+        DraftStarred = project.Starred;
         _save = save;
         _toggleArchive = toggleArchive;
         _delete = delete;
@@ -2283,6 +2310,9 @@ public sealed class ProjectAdminRowViewModel : INotifyPropertyChanged
     }
 
     public Project Project { get; }
+    public bool DraftStarred { get; set; }
+    public string StarGlyph => Project.Starred ? "★" : "☆";
+    public string StarLabel => Project.Starred ? $"Unstar project {Project.Name}" : $"Star project {Project.Name}";
     public string LifecycleLabel => Project.DeletedAtUtc is not null ? "Deleted" : Project.ArchivedAtUtc is not null ? "Archived" : "Active project";
     public string DraftName { get; set; }
     public string TagText
@@ -2382,6 +2412,16 @@ public sealed class ProjectTaskGroupViewModel
 
 public sealed class TaskRowViewModel : INotifyPropertyChanged
 {
+    private bool _isSelected;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set { if (_isSelected == value) return; _isSelected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
+    }
+    public bool CanSelect => Task.DeletedAtUtc is null;
+    public string SelectionLabel => $"Select task {Title}";
+    public string StarGlyph => Task.Starred ? "★" : "☆";
+    public string StarLabel => Task.Starred ? $"Unstar task {Title}" : $"Star task {Title}";
     private readonly Func<TaskRowViewModel, Task> _start;
     private readonly Func<TaskRowViewModel, Task> _complete;
     private readonly Func<TaskRowViewModel, Task> _save;
@@ -2647,13 +2687,14 @@ public sealed class CalendarBlockRowViewModel
 public sealed class CalendarDayColumnViewModel
 {
     public CalendarDayColumnViewModel(DateTime date, bool outsideDisplayedMonth, IReadOnlyList<CalendarGridItemViewModel> items,
-        bool isHistory = false, TimeZoneInfo? timeZone = null)
+        bool isHistory = false, TimeZoneInfo? timeZone = null, IReadOnlyList<DueTaskViewModel>? dueTasks = null)
     {
         Date = date;
         OutsideDisplayedMonth = outsideDisplayedMonth;
         Items = items;
         IsHistory = isHistory;
         TimeZone = timeZone ?? TimeZoneInfo.Local;
+        DueTasks = dueTasks ?? [];
     }
 
     public DateTime Date { get; }
@@ -2662,6 +2703,10 @@ public sealed class CalendarDayColumnViewModel
     public string DayLabel => Date.ToString("ddd", CultureInfo.CurrentCulture);
     public string DateLabel => Date.ToString("MMM d", CultureInfo.CurrentCulture);
     public IReadOnlyList<CalendarGridItemViewModel> Items { get; }
+    public IReadOnlyList<DueTaskViewModel> DueTasks { get; }
+    public bool HasDueTasks => DueTasks.Count > 0;
+    public string DueCountLabel => $"{DueTasks.Count} due";
+    public string DueAutomationLabel => $"{DueTasks.Count} tasks due {Date:MMMM d, yyyy}";
     public bool HasItems => Items.Count > 0;
     public bool IsHistory { get; }
     public TimeZoneInfo TimeZone { get; }
@@ -2678,6 +2723,8 @@ public sealed class CalendarDayColumnViewModel
         }
     }
 }
+
+public sealed record DueTaskViewModel(string Title, string ProjectPath, ICommand OpenCommand);
 
 public sealed class CalendarGridItemViewModel
 {

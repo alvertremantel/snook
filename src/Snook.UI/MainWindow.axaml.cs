@@ -48,7 +48,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     {
                         UtilityDrawer.GetVisualDescendants().OfType<ScrollViewer>().First().Offset = default;
                         UtilityDrawer.GetVisualDescendants().OfType<Control>()
-                            .FirstOrDefault(control => control.IsEffectivelyVisible && control is TextBox or ComboBox)?.Focus();
+                            .FirstOrDefault(control => control.IsEffectivelyVisible && control.IsEffectivelyEnabled && control is TextBox or ComboBox or CheckBox)?.Focus();
                     });
                 }
                 else Dispatcher.UIThread.Post(() =>

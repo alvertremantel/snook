@@ -191,6 +191,24 @@ public sealed record TaskUpdate(
     Guid? DefaultActivityId,
     bool Starred);
 
+public sealed record TaskRevision(Guid TaskId, long ExpectedRevision);
+
+/// <summary>Only supplied fields change. Explicit flags distinguish clearing nullable fields from keeping them.</summary>
+public sealed record BulkTaskUpdate(
+    string? Title = null,
+    string? Description = null,
+    Priority? Priority = null,
+    TaskState? Status = null,
+    bool ChangeDueDate = false,
+    DateOnly? DueDate = null,
+    bool ChangeActivity = false,
+    Guid? DefaultActivityId = null,
+    bool? Starred = null,
+    Guid? ProjectId = null,
+    bool? Archived = null,
+    IReadOnlyList<string>? TagsToAdd = null,
+    IReadOnlyList<string>? TagsToRemove = null);
+
 public sealed record Calendar(
     Guid Id,
     Guid WorkspaceId,

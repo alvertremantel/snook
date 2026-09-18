@@ -686,7 +686,7 @@ public sealed class BackendLifecycleTests
         await verification.OpenAsync();
         await using var query = verification.CreateCommand();
         query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-        Assert.Equal(6L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+        Assert.Equal(7L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
 
         Directory.Delete(directory.FullName, recursive: true);
     }
@@ -912,9 +912,14 @@ public sealed class BackendLifecycleTests
         Assert.Equal(created.Id, notification.AggregateId);
         Assert.True(notification.Cursor > bootstrap.CommittedCursor);
 
-        process.Kill(entireProcessTree: true);
-        await process.WaitForExitAsync();
-        Directory.Delete(directory.FullName, recursive: true);
+        // The dispatcher derives its allowlist from IBackendClient.
+        try { await TaskBatchTests.AssertBatchContractAsync(client); }
+        finally
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            Directory.Delete(directory.FullName, recursive: true);
+        }
     }
 
     private static async Task<(bool Ready, string Contract)> ReadDaemonReadinessAsync(StreamReader output, StreamReader error)

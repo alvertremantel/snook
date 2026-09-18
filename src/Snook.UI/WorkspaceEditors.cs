@@ -35,6 +35,7 @@ public sealed partial class MainWindowViewModel
     public ICommand? UtilitySaveCommand { get => _utilitySaveCommand; private set => SetField(ref _utilitySaveCommand, value); }
     public string UtilitySaveLabel => _utilityKind switch
     {
+        "bulk" => UtilityDraft is BulkTaskEditorViewModel batch ? $"Apply to {batch.Targets.Count} tasks" : "Apply changes",
         "manual" => "Add time",
         "activity" => "Create activity",
         "plan" => "Plan task",

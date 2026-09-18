@@ -181,6 +181,9 @@ public sealed class DaemonBackendClient : IBackendClient
     public Task<TaskItem> CreateTaskAsync(Guid projectId, string title, Priority priority = Priority.None, DateOnly? dueDate = null, CancellationToken cancellationToken = default)
         => CallAsync<TaskItem>(nameof(CreateTaskAsync), cancellationToken, projectId, title, priority, dueDate);
 
+    public Task<IReadOnlyList<TaskItem>> BulkUpdateTasksAsync(IReadOnlyList<TaskRevision> tasks, BulkTaskUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
+        => CallAsync<IReadOnlyList<TaskItem>>(nameof(BulkUpdateTasksAsync), cancellationToken, tasks, update, request);
+
     public Task<TaskItem> UpdateTaskAsync(Guid taskId, TaskUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
         => CallAsync<TaskItem>(nameof(UpdateTaskAsync), cancellationToken, taskId, update, request);
 

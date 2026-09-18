@@ -8,6 +8,33 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Tasks supports checkbox selection in List and Board, Select all in view/Ctrl+A,
+  Clear/Escape, and a bulk drawer with explicit fields to apply. Priority, due date,
+  favorite, completion, project, default activity, tags, title, description, and
+  archive state update atomically for up to 500 tasks. Stable selection survives
+  refresh and excludes hidden tasks. Conflicts retain the draft and provide a
+  latest-revision review; Cancel discards the draft. Completion retains prerequisite
+  rules and permits selected prerequisites to complete in the same transaction.
+  Contract 1.3 supports the same batch in embedded and authenticated daemon modes;
+  durable receipts replay exact results after subsequent edits or restart.
+- Tasks and projects expose star toggles and editor controls; boards do not.
+  The Starred scope includes starred tasks and tasks in starred projects. Date-only
+  due dates reuse the existing independent field, with a dedicated schema-7
+  migration for deadline/favorite indexes. Event Day/Week/Month displays clickable
+  due counts for open, unarchived tasks; due-list entries open task details and
+  never create schedule blocks. Month event lists remain inside their cells.
+  Verification: zero-warning full solution build, all 49 tests passing, and clean
+  `git diff --check`. Shared embedded/daemon tests cover atomic rollback, selective
+  fields, nullable clears, tags, moves, lifecycle changes, dependency completion,
+  bounds, favorites, migration preservation, and restart-safe replay. Persisted
+  headless checks cover bulk editing/conflicts/recovery/cancel/focus, selection,
+  favorites and due popups at 1280×820 and 980×640. Existing workspace creation,
+  drag/drop, task/utility editor, timer, and calendar checks pass at both sizes.
+  Seeded and empty images were rendered and inspected under
+  `artifacts/task-batch/{seeded,narrow,empty,empty-narrow}`; regression captures are
+  in `regression` and `regression-narrow`. VSTest requires loopback socket access
+  outside the sandbox. Native human and assistive-technology review remain separate.
+
 - Sidebar navigation replaces all seven font glyphs with original vector icons:
   sun, checklist, stopwatch, calendar, history clock, bar chart, and gear. Shared
   24-pixel slots, rounded strokes, and subtle fills keep detail and weight consistent;

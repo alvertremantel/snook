@@ -2,6 +2,26 @@
 
 ## Current direction: September 2026 modernization
 
+Task rows and cards provide selection checkboxes separate from completion controls.
+Select all in view (also Ctrl+A outside text fields), Clear, and Edit selected are
+available in both arrangements. Selected rows have a checked control and accent
+border. Selection follows stable task IDs across refreshes and drops tasks hidden
+by changed filters. The bulk drawer snapshots selected tasks and their revisions;
+each editable field has an explicit opt-in checkbox. Blank checked due dates and
+No activity clear those values; unchecked fields remain untouched. Tags support
+add/remove. Saving is atomic across the selection, including moves and tags.
+Conflicts preserve the draft and expose an explicit latest-revision review before
+retry. The shared drawer contains focus, keeps Save/status reachable, and discards
+drafts on Cancel/Escape.
+
+Tasks and projects have direct star toggles and editor controls. The Starred scope
+shows individually starred tasks plus tasks belonging to starred projects, with
+favorite projects listed above; it respects board/search/lifecycle filters. Boards
+have no favorite state. Due dates remain civil dates separate from planned blocks.
+Event calendar Day/Week/Month headers offer a due-count popup for open, unarchived
+tasks, with their project path and a direct action to open task details. Due tasks
+never enter the time grid unless independently scheduled.
+
 The [intensive review and implementation plan](ui-modernization.md) supersedes the
 earlier disclosure-based maintenance layouts described below. The Dashboard split,
 calendar time grid, sidebar, and state colors remain the foundation.

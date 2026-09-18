@@ -51,6 +51,21 @@ with the backup when moving it between machines.
 
 ## Migration and recovery failures
 
+Schema migration 7 (`task-due-dates-and-favorites`) indexes open date-only deadlines
+and starred tasks/projects. Existing schemas already contain `tasks.due_date`
+and favorite columns, so the migration preserves their values and all calendar
+blocks instead of adding a duplicate due-date column or deriving deadlines from
+schedule times. It runs transactionally under the ownership lease and has its own
+checksum. As with other upgrades, keep a verified backup before upgrading.
+
+Contract 1.3 adds `BulkUpdateTasksAsync` to both embedded and daemon clients.
+Batches accept 1–500 distinct task IDs and expected revisions, use one SQLite
+transaction, and create one `task-batch` committed change. The operation receipt
+stores the affected tasks and their exact committed revisions for replay, even
+after later edits or restart. A failed batch rolls back task fields, tag changes,
+the receipt, and the change log. UI retries reuse the operation ID for an unchanged
+request; explicitly loading latest task revisions creates a new attempt.
+
 - A schema checksum or migration failure is reported as an incompatible-store
   error; Snook does not reset the database.
 - Preserve the original database and its logs, then retry from a verified

@@ -144,6 +144,14 @@ public partial class MainWindow
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _viewModel.IsTasksVisible
+            && !_viewModel.IsTaskEditorOpen && !_viewModel.IsUtilityEditorOpen
+            && FocusManager?.GetFocusedElement() is not TextBox)
+        {
+            _viewModel.SelectAllTasksCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Escape && _dragCard is not null)
         {
             ClearBoardDrag();
@@ -157,6 +165,11 @@ public partial class MainWindow
         else if (e.Key == Key.Escape && _viewModel.IsTaskEditorOpen)
         {
             _viewModel.CloseTaskEditorCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && _viewModel.IsTasksVisible && _viewModel.HasSelectedTasks)
+        {
+            _viewModel.ClearTaskSelectionCommand.Execute(null);
             e.Handled = true;
         }
         base.OnKeyDown(e);

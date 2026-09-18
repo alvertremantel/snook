@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 2;
+    public const int Minor = 3;
 }
 
 public sealed record OperationRequest(
@@ -95,6 +95,13 @@ public sealed record CalendarRangeQuery(
 public interface IBackendClient : IAsyncDisposable
 {
     event EventHandler<ChangeNotification>? Changed;
+
+    // Atomic, revision-checked patch of 1–500 distinct active tasks. Replays return the committed result.
+    Task<IReadOnlyList<TaskItem>> BulkUpdateTasksAsync(
+        IReadOnlyList<TaskRevision> tasks,
+        BulkTaskUpdate update,
+        OperationRequest request,
+        CancellationToken cancellationToken = default);
 
     Task<BootstrapSnapshot> GetBootstrapAsync(CancellationToken cancellationToken = default);
 

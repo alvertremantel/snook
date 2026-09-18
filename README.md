@@ -37,6 +37,26 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
   Move earlier/later actions; your order is saved. Restore deleted boards/projects
   in Settings → Boards & projects by checking **Show deleted boards**. Drag tasks between projects or use the task
   editor's explicit Move action.
+- **Bulk editing:** use the selection checkboxes in List or Board, or **Select all
+  in view** (Ctrl+A outside text fields), then **Edit selected**. Check only fields
+  you want to apply: priority, due date, favorite, completion, project, activity,
+  tags, title, description, and archive state. A blank checked due date clears it;
+  **No activity** clears the default activity. Tags can be added or removed without
+  replacing other tags. Batches are limited to 500 tasks and commit together. A
+  conflict keeps the draft; expand **Review selected tasks**, load the latest
+  revisions, review, and apply again. Cancel/Escape discards the draft. Selection
+  survives refresh and is restricted to the current filtered view; Escape also
+  clears selection outside an editor.
+- **Favorites:** toggle the star on task rows/cards and project lane headings, or
+  use the task/project editor. **Starred** shows individually starred tasks plus
+  tasks in starred projects, with favorite projects listed above. Board and search
+  filters still apply. Boards do not have favorites.
+- **Due dates:** enter an optional `YYYY-MM-DD` date in the task editor or bulk
+  editor. Due dates already have their own date-only database field and remain
+  independent of scheduling. Day, Week, and Month show **N due** above days with
+  open, unarchived tasks due. Click it to inspect the list and open a task. Only
+  explicitly scheduled tasks occupy calendar time; completing or archiving a
+  task removes it from due counts without removing its planned blocks.
 - **Task details:** Tags and the visible amber Archive/red Delete actions sit
   above Save task; Move sits below it. Save applies the editable task fields.
   Move commits immediately and survives Cancel. Project choices are grouped by
@@ -253,6 +273,10 @@ against the disposable profile, including rendered empty boards, their first
 project lane, board button selection/scrolling, rename/delete/restore, saved board
 and project ordering, and Escape/outside-click dismissal. Task interaction checks
 also cover sidebar action order, grouped pickers, and moves retained after Cancel.
+`SNOOK_SCREENSHOT_VERIFY_TASK_BATCH=1` with `tasks-list` checks selection, bulk
+saves, atomic stale-revision rejection and recovery, Cancel/focus, task/project
+favorites, the Starred scope, and calendar due popups against disposable SQLite.
+`tasks-starred` and `tasks-bulk` are also available as static screenshot sections.
 `SNOOK_SCREENSHOT_VERIFY_EDITORS=1` adds persisted checks for the utility editors.
 Include `tracker,history,settings`: these verify activity/manual-time creation,
 picker preservation across refresh, correction validation and provenance, exact

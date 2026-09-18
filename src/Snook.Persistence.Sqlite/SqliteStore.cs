@@ -32,7 +32,7 @@ public sealed record StoreBackupResult(string Path, long Bytes, string Sha256, s
 
 public sealed record StoreExportResult(string Path, long Bytes, string Sha256, int SchemaVersion);
 
-public sealed class SqliteStore : IAsyncDisposable
+public sealed partial class SqliteStore : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions ExportJsonOptions = new() { WriteIndented = true };
     private static readonly string SchemaChecksum = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(SchemaSql))).ToLowerInvariant();
@@ -82,6 +82,7 @@ public sealed class SqliteStore : IAsyncDisposable
             command.CommandText = SchemaSql;
             await command.ExecuteNonQueryAsync(cancellationToken);
             await EnsureSchemaVersionAsync(connection, cancellationToken);
+            await EnsureTaskWorkspaceMigrationAsync(connection, cancellationToken);
             await SeedAsync(connection, cancellationToken);
             await EnsureDefaultSettingsAsync(connection, cancellationToken);
             await EnsureDefaultCalendarAsync(connection, cancellationToken);
@@ -964,7 +965,10 @@ public sealed class SqliteStore : IAsyncDisposable
             command.Transaction = transaction;
             command.CommandText = """
                 UPDATE tasks SET title=$title, description=$description, priority=$priority,
-                    due_date=$due_date, default_activity_id=$activity, starred=$starred,
+                    due_date=$due_date,
+                    due_at_utc_ms=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_at_utc_ms END,
+                    due_time_zone=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_time_zone END,
+                    default_activity_id=$activity, starred=$starred,
                     updated_at_utc_ms=$updated, revision=$revision
                 WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
                 """;
@@ -989,6 +993,8 @@ public sealed class SqliteStore : IAsyncDisposable
                 Description = description,
                 Priority = update.Priority,
                 DueDate = update.DueDate,
+                DueAtUtc = update.DueDate is not null ? null : task.DueAtUtc,
+                DueTimeZone = update.DueDate is not null ? null : task.DueTimeZone,
                 DefaultActivityId = update.DefaultActivityId,
                 Starred = update.Starred,
                 Revision = nextRevision
@@ -2572,6 +2578,9 @@ public sealed class SqliteStore : IAsyncDisposable
         var sequence = reader.GetInt32(0);
         var current = reader.GetString(1);
         await reader.DisposeAsync();
+        if (sequence > 7 || (sequence == 7 && current != TaskWorkspaceChecksum))
+            throw new SnookException(SnookErrorCode.SchemaIncompatible, "The workspace schema is newer or incompatible with this Snook build.");
+        if (sequence == 7) return;
         if (string.Equals(current, SchemaChecksum, StringComparison.Ordinal))
         {
             return;

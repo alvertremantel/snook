@@ -711,6 +711,14 @@ public sealed class SnookBackend : IBackendClient
         return session;
     }
 
+    public async Task<IReadOnlyList<TaskItem>> BulkUpdateTasksAsync(IReadOnlyList<TaskRevision> tasks, BulkTaskUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var result = await _store.BulkUpdateTasksAsync(tasks, update, request.OperationId, _clock.GetUtcNow(), cancellationToken);
+        await PublishAsync(request.OperationId, "task-batch", request.OperationId, "updated", 1, cancellationToken);
+        return result;
+    }
+
     private async Task PublishAsync(Guid operationId, string aggregateType, Guid aggregateId, string kind, long revision, CancellationToken cancellationToken)
     {
         var state = await _store.LoadStateAsync(_clock.GetUtcNow(), cancellationToken);

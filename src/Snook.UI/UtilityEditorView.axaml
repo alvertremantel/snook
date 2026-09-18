@@ -2,6 +2,43 @@
              xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.UtilityEditorView"
              x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
   <UserControl.DataTemplates>
+    <DataTemplate DataType="local:BulkTaskEditorViewModel">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Only checked fields will change for every selected task." Classes="muted" TextWrapping="Wrap" />
+        <Expander Header="Review selected tasks" HorizontalAlignment="Stretch">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding TargetSummary}" FontSize="12" TextWrapping="Wrap" />
+            <Button Classes="secondary" Content="Load latest task revisions" Command="{Binding ReviewCommand}" AutomationProperties.Name="Review latest selected tasks" />
+          </StackPanel>
+        </Expander>
+        <CheckBox Content="Change priority" IsChecked="{Binding ChangePriority}" />
+        <ComboBox ItemsSource="{Binding Priorities}" SelectedValue="{Binding Priority}" SelectedValueBinding="{Binding Value}" DisplayMemberBinding="{Binding Name}" IsEnabled="{Binding ChangePriority}" AutomationProperties.Name="Bulk task priority" />
+        <CheckBox Content="Change due date" IsChecked="{Binding ChangeDueDate}" />
+        <TextBox Text="{Binding DueDateText}" PlaceholderText="yyyy-MM-dd · blank clears due dates" IsEnabled="{Binding ChangeDueDate}" AutomationProperties.Name="Bulk task due date" />
+        <TextBlock Text="A due date does not reserve calendar time." Classes="muted" FontSize="12" />
+        <CheckBox Content="Change favorite" IsChecked="{Binding ChangeStarred}" />
+        <CheckBox Content="Starred" IsChecked="{Binding Starred}" IsEnabled="{Binding ChangeStarred}" AutomationProperties.Name="Bulk task starred" Margin="20,0,0,0" />
+        <CheckBox Content="Change completion" IsChecked="{Binding ChangeStatus}" />
+        <CheckBox Content="Completed · unchecked reopens tasks" IsChecked="{Binding Completed}" IsEnabled="{Binding ChangeStatus}" AutomationProperties.Name="Bulk task completed" Margin="20,0,0,0" />
+        <CheckBox Content="Move to project" IsChecked="{Binding ChangeProject}" />
+        <ComboBox ItemsSource="{Binding Projects}" SelectedValue="{Binding ProjectId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" PlaceholderText="Choose a project" IsEnabled="{Binding ChangeProject}" AutomationProperties.Name="Bulk task project" />
+        <CheckBox Content="Change default activity" IsChecked="{Binding ChangeActivity}" />
+        <ComboBox ItemsSource="{Binding Activities}" SelectedValue="{Binding ActivityId}" SelectedValueBinding="{Binding Id}" DisplayMemberBinding="{Binding Name}" IsEnabled="{Binding ChangeActivity}" AutomationProperties.Name="Bulk task activity" />
+        <CheckBox Content="Change tags" IsChecked="{Binding ChangeTags}" />
+        <StackPanel Spacing="6" IsEnabled="{Binding ChangeTags}">
+          <TextBlock Text="Add tags · comma separated" Classes="field-label" />
+          <TextBox Text="{Binding AddTagsText}" AutomationProperties.Name="Bulk add tags" />
+          <TextBlock Text="Remove tags · comma separated" Classes="field-label" />
+          <TextBox Text="{Binding RemoveTagsText}" AutomationProperties.Name="Bulk remove tags" />
+        </StackPanel>
+        <CheckBox Content="Replace title" IsChecked="{Binding ChangeTitle}" />
+        <TextBox Text="{Binding Title}" IsEnabled="{Binding ChangeTitle}" AutomationProperties.Name="Bulk task title" TextWrapping="Wrap" />
+        <CheckBox Content="Replace description" IsChecked="{Binding ChangeDescription}" />
+        <TextBox Text="{Binding Description}" IsEnabled="{Binding ChangeDescription}" AutomationProperties.Name="Bulk task description" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" />
+        <CheckBox Content="Change archive state" IsChecked="{Binding ChangeArchive}" />
+        <CheckBox Content="Archived · unchecked restores tasks" IsChecked="{Binding Archived}" IsEnabled="{Binding ChangeArchive}" AutomationProperties.Name="Bulk task archived" Margin="20,0,0,0" />
+      </StackPanel>
+    </DataTemplate>
     <DataTemplate DataType="local:BoardAdminRowViewModel">
       <StackPanel Spacing="8">
         <TextBlock Text="Board name" Classes="field-label" />
@@ -13,6 +50,7 @@
       <StackPanel Spacing="8">
         <TextBlock Text="Project name" Classes="field-label" />
         <TextBox Text="{Binding DraftName}" AutomationProperties.Name="Project name" />
+        <CheckBox Content="Starred project" IsChecked="{Binding DraftStarred}" />
         <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,18,0,6" />
         <TextBlock Text="Add a tag · applies immediately" Classes="field-label" />
         <TextBox Text="{Binding TagText}" AutomationProperties.Name="Project tag" PlaceholderText="Tag name" />

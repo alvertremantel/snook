@@ -24,6 +24,7 @@ public sealed partial class MainWindowViewModel
 
     private void InitializeTaskWorkspaceCommands()
     {
+        InitializeBulkTaskCommands();
         SelectTaskBoardCommand = new AsyncCommand(value =>
         {
             if (value is Guid id) TaskBoardId = id;
