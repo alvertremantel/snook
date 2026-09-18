@@ -9,12 +9,17 @@
         MinWidth="980"
         MinHeight="640">
   <Window.Resources>
-    <DataTemplate x:Key="TaskPickerTemplate" x:DataType="local:TaskPickerEntry" x:CompileBindings="True">
-      <StackPanel Spacing="3" MaxWidth="330" Margin="0,3">
-        <TextBlock Text="{Binding Name}" Classes.picker-heading="{Binding IsHeader}" TextWrapping="Wrap" />
-        <TextBlock Text="{Binding Context}" IsVisible="{Binding HasContext}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
-      </StackPanel>
-    </DataTemplate>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="/NavigationIcons.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+      <DataTemplate x:Key="TaskPickerTemplate" x:DataType="local:TaskPickerEntry" x:CompileBindings="True">
+        <StackPanel Spacing="3" MaxWidth="330" Margin="0,3">
+          <TextBlock Text="{Binding Name}" Classes.picker-heading="{Binding IsHeader}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Context}" IsVisible="{Binding HasContext}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+        </StackPanel>
+      </DataTemplate>
+    </ResourceDictionary>
   </Window.Resources>
   <Window.Styles>
     <Style Selector="ComboBox.structured-picker ComboBoxItem" x:DataType="local:TaskPickerEntry" x:CompileBindings="True">
@@ -43,44 +48,44 @@
           <TextBlock Text="WORKSPACE" Classes="eyebrow" Foreground="{DynamicResource SidebarMutedBrush}" Margin="14,0,0,10" />
           <Button Classes="nav" Classes.selected="{Binding IsTodayVisible}" AutomationProperties.Name="Today" Command="{Binding SelectSectionCommand}" CommandParameter="Today">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="⌂" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource TodayNavigationIcon}" />
               <TextBlock Text="Today" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="nav" Classes.selected="{Binding IsTasksVisible}" AutomationProperties.Name="Tasks" Command="{Binding SelectSectionCommand}" CommandParameter="Tasks">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="▣" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource TasksNavigationIcon}" />
               <TextBlock Text="Tasks" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="◷" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource TrackerNavigationIcon}" />
               <TextBlock Text="Time Tracker" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="nav" Classes.selected="{Binding IsCalendarVisible}" AutomationProperties.Name="Calendar" Command="{Binding SelectSectionCommand}" CommandParameter="Calendar">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="□" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource CalendarNavigationIcon}" />
               <TextBlock Text="Calendar" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="nav" Classes.selected="{Binding IsHistoryVisible}" AutomationProperties.Name="History" Command="{Binding SelectSectionCommand}" CommandParameter="History">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="▤" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource HistoryNavigationIcon}" />
               <TextBlock Text="History" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="nav" Classes.selected="{Binding IsSummaryVisible}" AutomationProperties.Name="Summary" Command="{Binding SelectSectionCommand}" CommandParameter="Summary">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="⌁" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource SummaryNavigationIcon}" />
               <TextBlock Text="Summary" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <TextBlock Text="MANAGE" Classes="eyebrow" Foreground="{DynamicResource SidebarMutedBrush}" Margin="14,12,0,8" />
           <Button Classes="nav" Classes.selected="{Binding IsSettingsVisible}" AutomationProperties.Name="Settings" Command="{Binding SelectSectionCommand}" CommandParameter="Settings">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <TextBlock Text="⚙" FontSize="22" Width="24" TextAlignment="Center" VerticalAlignment="Center" />
+              <ContentControl Theme="{StaticResource SettingsNavigationIcon}" />
               <TextBlock Text="Settings" VerticalAlignment="Center" />
             </StackPanel>
           </Button>

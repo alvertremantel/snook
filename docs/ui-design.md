@@ -59,7 +59,11 @@ Summary charts are secondary to those daily interactions.
 
 Dashboard capture sits on the left, with a soft green card separated from its white
 schedule preview by a 14-pixel gap; tracking and next tasks sit on the right.
-Navigation glyphs use 22-pixel text in aligned slots beside the existing labels.
+Navigation uses original vector icons in aligned 24-pixel slots beside the labels:
+a sun, checklist, stopwatch, calendar, history clock, bar chart, and gear. Shared
+rounded strokes and subtle foreground-tinted fills give the set consistent detail.
+Icons inherit label colors for selection, hover, and press, and remain decorative
+so the named navigation buttons own keyboard focus and accessibility labels.
 Today and Tasks capture project pickers share the task editor's non-selectable
 board headings and retain board context beneath the selected project.
 Board/project creation

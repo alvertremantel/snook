@@ -8,6 +8,15 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Sidebar navigation replaces all seven font glyphs with original vector icons:
+  sun, checklist, stopwatch, calendar, history clock, bar chart, and gear. Shared
+  24-pixel slots, rounded strokes, and subtle fills keep detail and weight consistent;
+  icons inherit the navigation label's state colors without taking focus or clicks.
+  Verification: full solution build with zero warnings/errors, all 47 tests passing,
+  and clean `git diff --check`. All seven selected states were rendered and their
+  sidebars visually inspected with seeded and empty profiles at 1280×820 and
+  980×640 (28 captures in `artifacts/ui-navigation-icons`). VSTest required local
+  socket access outside the sandbox. This pass covers the navigation artwork.
 - Calendar has Event and History modes. Event retains its existing arrangements;
   History has Week and adaptive Flex, proportional recorded intervals through now,
   gaps for pauses, per-day tracked totals, and gray future task plans clipped at now.
@@ -23,7 +32,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   `git diff --check` passes. This is headless development verification; native
   human interaction and assistive-technology review remain separate release work.
 - Today separates Quick capture and On the horizon with a 14-pixel gap.
-  Sidebar icons use larger, aligned glyphs within compact navigation rows.
+  Sidebar icons remain aligned within compact navigation rows.
   Today and Tasks capture pickers group projects under disabled board headings
   and retain board labels on selected choices. Full build and all 33 tests pass;
   persisted capture, board management, drag/drop, and task drawer checks pass.
