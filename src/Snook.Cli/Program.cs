@@ -73,6 +73,7 @@ public static class Program
                 "summary" => await RunSummaryAsync(backend, invocation.Arguments, cancellationToken),
                 "history" => await RunHistoryAsync(backend, invocation.Arguments, cancellationToken),
                 "calendar" => await RunCalendarAsync(backend, invocation.Arguments, cancellationToken),
+                "task-batch" => await RunTaskBatchAsync(backend, invocation.Arguments, cancellationToken),
                 "doctor" => await RunDoctorAsync(backend, invocation.Options, cancellationToken),
                 "call" => await RunCallAsync(backend, invocation.Arguments, cancellationToken),
                 _ => throw new CliUsageException($"Unknown command '{invocation.Command}'.")
@@ -203,6 +204,228 @@ public static class Program
         return args[0] == "blocks"
             ? await backend.GetCalendarRangeAsync(query, cancellationToken)
             : await backend.GetCalendarEventsRangeAsync(query, cancellationToken);
+    }
+
+    private static async Task<object> RunTaskBatchAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count != 2 || args[0] is not ("plan" or "apply"))
+        {
+            throw new CliUsageException("task-batch requires 'plan' with a selection/update JSON object or 'apply' with the resulting plan JSON.");
+        }
+
+        if (args[0] == "apply")
+        {
+            var plan = DeserializeArgument<TaskBatchApply>(args[1], "task batch plan");
+            if (plan.Tasks is null || plan.Update is null || plan.Request is null)
+            {
+                throw new CliUsageException("A task batch plan must contain tasks, update, and request properties.");
+            }
+
+            if (plan.Request.OperationId == Guid.Empty || plan.Request.ClientDeviceId == Guid.Empty)
+            {
+                throw new CliUsageException("A task batch plan requires non-empty operationId and clientDeviceId values.");
+            }
+
+            if (plan.Request.ExpectedRevision is not null)
+            {
+                throw new CliUsageException("Use each task's expectedRevision; request.expectedRevision must be null for a task batch.");
+            }
+
+            ValidateTaskBatchUpdate(plan.Update);
+            var result = await backend.BulkUpdateTasksAsync(plan.Tasks, plan.Update, plan.Request, cancellationToken);
+            return new
+            {
+                kind = "task-batch-result",
+                count = result.Count,
+                operationId = plan.Request.OperationId,
+                clientDeviceId = plan.Request.ClientDeviceId,
+                tasks = result
+            };
+        }
+
+        var request = DeserializeArgument<TaskBatchPlanRequest>(args[1], "task batch request");
+        if (request.Selection is null || request.Update is null)
+        {
+            throw new CliUsageException("A task batch request must contain selection and update properties.");
+        }
+
+        ValidateTaskBatchUpdate(request.Update);
+        var selected = await SelectTaskBatchAsync(backend, request.Selection, cancellationToken);
+        var operationId = request.OperationId ?? Guid.NewGuid();
+        var clientDeviceId = request.ClientDeviceId ?? Guid.NewGuid();
+        if (operationId == Guid.Empty || clientDeviceId == Guid.Empty)
+        {
+            throw new CliUsageException("operationId and clientDeviceId must be non-empty when supplied.");
+        }
+
+        var targets = selected.Select(item => new TaskRevision(item.Task.Id, item.Task.Revision)).ToArray();
+        return new
+        {
+            kind = "task-batch-plan",
+            count = targets.Length,
+            selection = request.Selection,
+            tasks = targets,
+            update = request.Update,
+            request = new OperationRequest(operationId, clientDeviceId),
+            preview = selected.Select(item => new
+            {
+                taskId = item.Task.Id,
+                expectedRevision = item.Task.Revision,
+                item.Task.Title,
+                item.Task.ProjectId,
+                item.ProjectName,
+                item.BoardName,
+                item.Task.Priority,
+                item.Task.Status,
+                item.Task.DueDate,
+                item.Task.Starred,
+                archived = item.Task.ArchivedAtUtc is not null
+            })
+        };
+    }
+
+    private static async Task<IReadOnlyList<TaskListItem>> SelectTaskBatchAsync(
+        IBackendClient backend,
+        TaskBatchSelection selection,
+        CancellationToken cancellationToken)
+    {
+        var ids = selection.TaskIds?.ToArray() ?? [];
+        if (ids.Length > 500 || ids.Any(id => id == Guid.Empty) || ids.Distinct().Count() != ids.Length)
+        {
+            throw new CliUsageException("selection.taskIds must contain at most 500 distinct, non-empty task IDs.");
+        }
+
+        if (selection.ProjectId == Guid.Empty || selection.BoardId == Guid.Empty)
+        {
+            throw new CliUsageException("selection.projectId and selection.boardId must be non-empty when supplied.");
+        }
+
+        if (selection.DueOnOrAfter is { Year: < 1900 } || selection.DueOnOrBefore is { Year: < 1900 }
+            || selection.DueOnOrAfter > selection.DueOnOrBefore)
+        {
+            throw new CliUsageException("Selection due dates must be on or after 1900-01-01, and dueOnOrAfter cannot follow dueOnOrBefore.");
+        }
+
+        var hasCriterion = ids.Length > 0 || !string.IsNullOrWhiteSpace(selection.Search)
+            || selection.ProjectId is not null || selection.BoardId is not null || selection.Status is not null
+            || selection.Priority is not null || selection.Starred is not null || selection.HasDueDate is not null
+            || selection.DueOnOrAfter is not null || selection.DueOnOrBefore is not null;
+        if (!selection.All && !hasCriterion)
+        {
+            throw new CliUsageException("Choose at least one selection filter, taskIds, or set selection.all to true.");
+        }
+
+        var candidates = await backend.SearchTasksAsync(
+            selection.Search,
+            selection.IncludeCompleted || selection.Status == TaskState.Completed,
+            selection.IncludeArchived,
+            includeDeleted: false,
+            cancellationToken);
+        IReadOnlyDictionary<Guid, Guid>? boardsByProject = null;
+        if (selection.BoardId is not null)
+        {
+            var bootstrap = await backend.GetBootstrapAsync(cancellationToken);
+            boardsByProject = bootstrap.Projects.ToDictionary(project => project.Id, project => project.BoardId);
+        }
+
+        var idSet = ids.ToHashSet();
+        var filtered = candidates.Where(item =>
+                (idSet.Count == 0 || idSet.Contains(item.Task.Id))
+                && (selection.ProjectId is null || item.Task.ProjectId == selection.ProjectId)
+                && (selection.BoardId is null || boardsByProject!.GetValueOrDefault(item.Task.ProjectId) == selection.BoardId)
+                && (selection.Status is null || item.Task.Status == selection.Status)
+                && (selection.Priority is null || item.Task.Priority == selection.Priority)
+                && (selection.Starred is null || item.Task.Starred == selection.Starred)
+                && (selection.HasDueDate is null || (item.Task.DueDate is not null) == selection.HasDueDate)
+                && (selection.DueOnOrAfter is null || item.Task.DueDate >= selection.DueOnOrAfter)
+                && (selection.DueOnOrBefore is null || item.Task.DueDate <= selection.DueOnOrBefore))
+            .ToArray();
+        if (ids.Length > 0 && filtered.Length != ids.Length)
+        {
+            var matched = filtered.Select(item => item.Task.Id).ToHashSet();
+            var missing = ids.Where(id => !matched.Contains(id));
+            throw new CliUsageException($"Explicit task IDs were not found or did not match every filter: {string.Join(", ", missing)}.");
+        }
+
+        if (filtered.Length == 0)
+        {
+            throw new CliUsageException("The task batch selection matched no editable tasks.");
+        }
+
+        if (filtered.Length > 500)
+        {
+            throw new CliUsageException($"The task batch selection matched {filtered.Length} tasks; narrow it to at most 500.");
+        }
+
+        if (ids.Length > 0)
+        {
+            var byId = filtered.ToDictionary(item => item.Task.Id);
+            return ids.Select(id => byId[id]).ToArray();
+        }
+
+        return filtered.OrderBy(item => item.BoardName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Task.Id)
+            .ToArray();
+    }
+
+    private static void ValidateTaskBatchUpdate(BulkTaskUpdate update)
+    {
+        if (update.Title is not null && (string.IsNullOrWhiteSpace(update.Title) || update.Title.Trim().Length > 300))
+        {
+            throw new CliUsageException("update.title must contain text and be at most 300 characters.");
+        }
+
+        if (update.Description?.Length > 20_000)
+        {
+            throw new CliUsageException("update.description must be at most 20000 characters.");
+        }
+
+        if (update.DueDate is not null && !update.ChangeDueDate)
+        {
+            throw new CliUsageException("Set update.changeDueDate to true when supplying dueDate.");
+        }
+
+        if (update.ChangeDueDate && update.DueDate is { Year: < 1900 })
+        {
+            throw new CliUsageException("update.dueDate must be on or after 1900-01-01.");
+        }
+
+        if (update.DefaultActivityId is not null && !update.ChangeActivity)
+        {
+            throw new CliUsageException("Set update.changeActivity to true when supplying defaultActivityId.");
+        }
+
+        if (update.ProjectId == Guid.Empty || update.DefaultActivityId == Guid.Empty)
+        {
+            throw new CliUsageException("update.projectId and update.defaultActivityId must be non-empty when supplied.");
+        }
+
+        var addTags = ValidateTaskBatchTags(update.TagsToAdd, "tagsToAdd");
+        var removeTags = ValidateTaskBatchTags(update.TagsToRemove, "tagsToRemove");
+        if (addTags.Intersect(removeTags, StringComparer.OrdinalIgnoreCase).Any())
+        {
+            throw new CliUsageException("A tag cannot appear in both update.tagsToAdd and update.tagsToRemove.");
+        }
+
+        if (update.Title is null && update.Description is null && update.Priority is null && update.Status is null
+            && !update.ChangeDueDate && !update.ChangeActivity && update.Starred is null && update.ProjectId is null
+            && update.Archived is null && addTags.Length == 0 && removeTags.Length == 0)
+        {
+            throw new CliUsageException("Choose at least one task field to change.");
+        }
+    }
+
+    private static string[] ValidateTaskBatchTags(IReadOnlyList<string>? tags, string propertyName)
+    {
+        if (tags is null) return [];
+        if (tags.Count > 50 || tags.Any(tag => string.IsNullOrWhiteSpace(tag) || tag.Trim().Length > 100))
+        {
+            throw new CliUsageException($"update.{propertyName} must contain at most 50 non-empty names of at most 100 characters.");
+        }
+
+        return tags.Select(tag => tag.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static async Task<object> RunDoctorAsync(IBackendClient backend, CliOptions options, CancellationToken cancellationToken)
@@ -337,6 +560,23 @@ public static class Program
             mutationRequests = "Use { operationId, clientDeviceId, expectedRevision }. Reuse operationId when retrying the same mutation; expectedRevision is required by revision-checked mutations.",
             nullValues = "Use JSON null for optional IDs, text, dates, or timestamps."
         },
+        cliCommands = new
+        {
+            taskBatch = new
+            {
+                plan = "snook task-batch plan '<selection/update JSON object>'",
+                apply = "snook task-batch apply '<task-batch-plan JSON>'",
+                selection = TypeName(typeof(TaskBatchSelection)),
+                selectionFields = new[]
+                {
+                    "all", "taskIds", "search", "boardId", "projectId", "status", "priority", "starred",
+                    "hasDueDate", "dueOnOrAfter", "dueOnOrBefore", "includeCompleted", "includeArchived"
+                },
+                update = TypeName(typeof(BulkTaskUpdate)),
+                limit = 500,
+                retry = "Keep and reapply the exact plan JSON. It contains task revisions and a stable operationId."
+            }
+        },
         methods = typeof(IBackendClient).GetMethods().Where(method => method.ReturnType != typeof(ValueTask))
             .OrderBy(method => method.Name, StringComparer.Ordinal).Select(method => new
             {
@@ -420,7 +660,8 @@ public static class Program
         writer.WriteLine("Usage: snook [global options] <command> [arguments]");
         writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
-        writer.WriteLine("          calendar blocks|events [Range JSON] | doctor | watch | api | call METHOD [JSON OBJECT]");
+        writer.WriteLine("          calendar blocks|events [Range JSON] | task-batch plan|apply JSON | doctor | watch | api");
+        writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();
         writer.WriteLine("Example: snook call create-task '{\"projectId\":\"...\",\"title\":\"Write brief\",\"priority\":\"High\"}'");
         writer.WriteLine("Mutation: snook call complete-task '{\"taskId\":\"...\",\"request\":{\"operationId\":\"...\",\"clientDeviceId\":\"...\",\"expectedRevision\":4}}'");
@@ -435,5 +676,28 @@ public static class Program
 
     private sealed record CliOptions(string? DataDirectory = null, string? Host = null, string? Endpoint = null, string? Token = null, string? TokenFile = null);
     private sealed record Invocation(string Command, IReadOnlyList<string> Arguments, CliOptions Options);
+    private sealed record TaskBatchSelection(
+        bool All = false,
+        IReadOnlyList<Guid>? TaskIds = null,
+        string? Search = null,
+        Guid? BoardId = null,
+        Guid? ProjectId = null,
+        TaskState? Status = null,
+        Priority? Priority = null,
+        bool? Starred = null,
+        bool? HasDueDate = null,
+        DateOnly? DueOnOrAfter = null,
+        DateOnly? DueOnOrBefore = null,
+        bool IncludeCompleted = false,
+        bool IncludeArchived = false);
+    private sealed record TaskBatchPlanRequest(
+        TaskBatchSelection Selection,
+        BulkTaskUpdate Update,
+        Guid? OperationId = null,
+        Guid? ClientDeviceId = null);
+    private sealed record TaskBatchApply(
+        IReadOnlyList<TaskRevision> Tasks,
+        BulkTaskUpdate Update,
+        OperationRequest Request);
     private sealed class CliUsageException(string message) : Exception(message);
 }

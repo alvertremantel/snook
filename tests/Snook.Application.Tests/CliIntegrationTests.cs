@@ -5,12 +5,19 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Snook.Cli;
 using Snook.Contracts;
+using Snook.Domain;
 using Xunit;
 
 namespace Snook.Application.Tests;
 
 public sealed class CliIntegrationTests
 {
+    private static readonly string[] BatchTags = ["release", "cli"];
+    private static readonly JsonSerializerOptions CliJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
     [Fact]
     public async Task ApiDescribesEveryPublicBackendMethod()
     {
@@ -25,6 +32,8 @@ public sealed class CliIntegrationTests
         Assert.Contains("RestoreBackupAsync", methodNames);
         Assert.Contains("UpsertCalendarEventExceptionAsync", methodNames);
         Assert.Contains("CorrectSessionAsync", methodNames);
+        Assert.Contains("BulkUpdateTasksAsync", methodNames);
+        Assert.Equal(500, document.RootElement.GetProperty("cliCommands").GetProperty("taskBatch").GetProperty("limit").GetInt32());
     }
 
     [Fact]
@@ -81,6 +90,120 @@ public sealed class CliIntegrationTests
     }
 
     [Fact]
+    public async Task EmbeddedCliPlansAppliesAndSafelyRetriesTaskBatches()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-cli-batch-test-");
+        try
+        {
+            var dataDirectory = directory.FullName;
+            var bootstrap = await RunCliAsync("--data-dir", dataDirectory, "bootstrap");
+            Assert.Equal(0, bootstrap.ExitCode);
+            var projectId = ReadId(bootstrap.StandardOutput, "projects", 0);
+            var first = await CreateTaskAsync(dataDirectory, projectId, "Release alpha", "Low");
+            var second = await CreateTaskAsync(dataDirectory, projectId, "Release beta", "Low");
+            var unselected = await CreateTaskAsync(dataDirectory, projectId, "Unrelated task", "Medium");
+            var operationId = Guid.NewGuid();
+            var clientDeviceId = Guid.NewGuid();
+            var planRequest = JsonSerializer.Serialize(new
+            {
+                selection = new { projectId, search = "Release" },
+                update = new
+                {
+                    description = "Shared from CLI",
+                    priority = "Urgent",
+                    changeDueDate = true,
+                    dueDate = "2026-10-02",
+                    starred = true,
+                    tagsToAdd = BatchTags
+                },
+                operationId,
+                clientDeviceId
+            });
+
+            var plan = await RunCliAsync("--data-dir", dataDirectory, "task-batch", "plan", planRequest);
+            Assert.Equal(0, plan.ExitCode);
+            using (var planDocument = JsonDocument.Parse(plan.StandardOutput))
+            {
+                var root = planDocument.RootElement;
+                Assert.Equal("task-batch-plan", root.GetProperty("kind").GetString());
+                Assert.Equal(2, root.GetProperty("count").GetInt32());
+                Assert.Equal(operationId, root.GetProperty("request").GetProperty("operationId").GetGuid());
+                Assert.Equal(clientDeviceId, root.GetProperty("request").GetProperty("clientDeviceId").GetGuid());
+                Assert.Collection(root.GetProperty("preview").EnumerateArray(),
+                    item => Assert.Equal("Release alpha", item.GetProperty("title").GetString()),
+                    item => Assert.Equal("Release beta", item.GetProperty("title").GetString()));
+            }
+
+            var concurrent = await RunCliAsync("--data-dir", dataDirectory, "call", "update-task", JsonSerializer.Serialize(new
+            {
+                taskId = second.Id,
+                update = new
+                {
+                    title = "Release beta",
+                    description = "Concurrent edit",
+                    priority = "Low",
+                    dueDate = (string?)null,
+                    defaultActivityId = (Guid?)null,
+                    starred = false
+                },
+                request = new { operationId = Guid.NewGuid(), clientDeviceId, expectedRevision = second.Revision }
+            }));
+            Assert.Equal(0, concurrent.ExitCode);
+
+            var staleApply = await RunCliAsync("--data-dir", dataDirectory, "task-batch", "apply", plan.StandardOutput);
+            Assert.Equal(2, staleApply.ExitCode);
+            using (var errorDocument = JsonDocument.Parse(staleApply.StandardError))
+            {
+                Assert.Equal("RevisionConflict", errorDocument.RootElement.GetProperty("error").GetProperty("code").GetString());
+            }
+
+            using var unchanged = await GetTaskDetailsAsync(dataDirectory, first.Id);
+            Assert.Equal(string.Empty, unchanged.RootElement.GetProperty("task").GetProperty("description").GetString());
+            Assert.Equal("Low", unchanged.RootElement.GetProperty("task").GetProperty("priority").GetString());
+
+            var refreshedPlan = await RunCliAsync("--data-dir", dataDirectory, "task-batch", "plan", planRequest);
+            Assert.Equal(0, refreshedPlan.ExitCode);
+            var applied = await RunCliAsync("--data-dir", dataDirectory, "task-batch", "apply", refreshedPlan.StandardOutput);
+            Assert.Equal(0, applied.ExitCode);
+            using var appliedDocument = JsonDocument.Parse(applied.StandardOutput);
+            Assert.Equal("task-batch-result", appliedDocument.RootElement.GetProperty("kind").GetString());
+            Assert.Equal(2, appliedDocument.RootElement.GetProperty("count").GetInt32());
+            Assert.All(appliedDocument.RootElement.GetProperty("tasks").EnumerateArray(), task =>
+            {
+                Assert.Equal("Shared from CLI", task.GetProperty("description").GetString());
+                Assert.Equal("Urgent", task.GetProperty("priority").GetString());
+                Assert.Equal("2026-10-02", task.GetProperty("dueDate").GetString());
+                Assert.True(task.GetProperty("starred").GetBoolean());
+            });
+
+            var retry = await RunCliAsync("--data-dir", dataDirectory, "task-batch", "apply", refreshedPlan.StandardOutput);
+            Assert.Equal(0, retry.ExitCode);
+            using var retryDocument = JsonDocument.Parse(retry.StandardOutput);
+            Assert.Equal(
+                appliedDocument.RootElement.GetProperty("tasks")[0].GetProperty("revision").GetInt64(),
+                retryDocument.RootElement.GetProperty("tasks")[0].GetProperty("revision").GetInt64());
+
+            using var details = await GetTaskDetailsAsync(dataDirectory, first.Id);
+            Assert.Collection(details.RootElement.GetProperty("tags").EnumerateArray()
+                    .OrderBy(tag => tag.GetProperty("displayName").GetString(), StringComparer.Ordinal),
+                tag => Assert.Equal("cli", tag.GetProperty("displayName").GetString()),
+                tag => Assert.Equal("release", tag.GetProperty("displayName").GetString()));
+            using var untouched = await GetTaskDetailsAsync(dataDirectory, unselected.Id);
+            Assert.Equal("Medium", untouched.RootElement.GetProperty("task").GetProperty("priority").GetString());
+            Assert.Equal(string.Empty, untouched.RootElement.GetProperty("task").GetProperty("description").GetString());
+
+            var unsafeSelection = await RunCliAsync("--data-dir", dataDirectory, "task-batch", "plan",
+                "{\"selection\":{},\"update\":{\"starred\":true}}");
+            Assert.Equal(64, unsafeSelection.ExitCode);
+            Assert.Contains("selection.all", unsafeSelection.StandardError, StringComparison.Ordinal);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task DaemonCliUsesTheRemoteClientInsteadOfOpeningTheWorkspaceDatabase()
     {
         var directory = Directory.CreateTempSubdirectory("snook-cli-daemon-test-");
@@ -117,6 +240,45 @@ public sealed class CliIntegrationTests
 
             Assert.Equal(0, result.ExitCode);
             Assert.Contains("Remote board", result.StandardOutput, StringComparison.Ordinal);
+
+            var bootstrap = await RunCliAsync(
+                "--data-dir", directory.FullName,
+                "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token", token,
+                "bootstrap");
+            Assert.Equal(0, bootstrap.ExitCode);
+            var projectId = ReadId(bootstrap.StandardOutput, "projects", 0);
+            var created = await RunCliAsync(
+                "--data-dir", directory.FullName,
+                "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token", token,
+                "call", "create-task", JsonSerializer.Serialize(new { projectId, title = "Remote batch task" }));
+            Assert.Equal(0, created.ExitCode);
+            using var createdDocument = JsonDocument.Parse(created.StandardOutput);
+            var taskId = createdDocument.RootElement.GetProperty("id").GetGuid();
+
+            var plan = await RunCliAsync(
+                "--data-dir", directory.FullName,
+                "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token", token,
+                "task-batch", "plan", JsonSerializer.Serialize(new
+                {
+                    selection = new { taskIds = new[] { taskId } },
+                    update = new { starred = true }
+                }));
+            Assert.Equal(0, plan.ExitCode);
+            var applied = await RunCliAsync(
+                "--data-dir", directory.FullName,
+                "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token", token,
+                "task-batch", "apply", plan.StandardOutput);
+            Assert.Equal(0, applied.ExitCode);
+            using var appliedDocument = JsonDocument.Parse(applied.StandardOutput);
+            Assert.True(appliedDocument.RootElement.GetProperty("tasks")[0].GetProperty("starred").GetBoolean());
         }
         finally
         {
@@ -142,6 +304,21 @@ public sealed class CliIntegrationTests
     {
         using var document = JsonDocument.Parse(json);
         return document.RootElement.GetProperty(arrayName)[index].GetProperty("id").GetString()!;
+    }
+
+    private static async Task<TaskItem> CreateTaskAsync(string dataDirectory, string projectId, string title, string priority)
+    {
+        var result = await RunCliAsync("--data-dir", dataDirectory, "call", "create-task",
+            JsonSerializer.Serialize(new { projectId, title, priority }));
+        Assert.Equal(0, result.ExitCode);
+        return JsonSerializer.Deserialize<TaskItem>(result.StandardOutput, CliJsonOptions)!;
+    }
+
+    private static async Task<JsonDocument> GetTaskDetailsAsync(string dataDirectory, Guid taskId)
+    {
+        var result = await RunCliAsync("--data-dir", dataDirectory, "call", "get-task-details", JsonSerializer.Serialize(new { taskId }));
+        Assert.Equal(0, result.ExitCode);
+        return JsonDocument.Parse(result.StandardOutput);
     }
 
     private static async Task WaitForReadyAsync(StreamReader output, StreamReader error)

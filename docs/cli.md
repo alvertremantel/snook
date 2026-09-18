@@ -72,6 +72,52 @@ snook history '{"rangeStartUtc":"2026-09-01T00:00:00Z","rangeEndUtc":"2026-10-01
 
 `calendar` defaults to the next seven days when the range object is omitted.
 
+## Planning and applying task batches
+
+Use the dedicated two-step command for mass edits. `plan` resolves a selection to
+exact task IDs and revisions without writing anything, then returns a JSON document
+that includes a readable preview, the patch, and stable operation/device IDs.
+Review and retain that document; `apply` accepts it unchanged and commits the whole
+batch atomically.
+
+```bash
+snook task-batch plan '{
+  "selection":{"projectId":"<project-id>","search":"release","status":"Open"},
+  "update":{
+    "priority":"Urgent",
+    "changeDueDate":true,
+    "dueDate":"2026-09-20",
+    "starred":true,
+    "tagsToAdd":["release"]
+  }
+}' > /tmp/snook-release-plan.json
+
+snook task-batch apply "$(cat /tmp/snook-release-plan.json)"
+```
+
+Selections are intersections of the supplied fields. They support `taskIds`,
+`search`, `boardId`, `projectId`, `status`, `priority`, `starred`, `hasDueDate`,
+`dueOnOrAfter`, and `dueOnOrBefore`. Open, unarchived tasks are the default;
+`includeCompleted` and `includeArchived` opt into those states. Deleted tasks and
+tasks under inactive projects or boards are never selected. To intentionally
+select every eligible task, use `{"all":true}`; an empty selection is rejected.
+Explicit task IDs must all exist and match every other supplied filter, so a typo or
+stale filter cannot silently shrink the batch. Plans contain 1–500 tasks.
+
+The `update` object is the same selective patch used by the desktop bulk editor:
+title, description, priority, status, project, favorite and archive state, plus tag
+additions/removals. Set `changeDueDate` to `true` to set `dueDate`, or pair it with
+`"dueDate":null` to clear the date. `changeActivity` has the same set/clear behavior
+for `defaultActivityId`. Omitted fields remain unchanged on every selected task.
+
+If any target revision is stale or any resulting task violates dependency or
+validation rules, no task changes. Generate a new plan to review current revisions.
+After a successful or response-uncertain apply, retry the exact saved plan rather
+than planning again: its operation ID makes the retry return the original committed
+result without applying the patch twice. The result identifies the operation and
+contains every updated task. This workflow behaves identically with `--host
+embedded` and `--host daemon`.
+
 ## Calling every capability
 
 The general form is:

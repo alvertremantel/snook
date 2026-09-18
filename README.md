@@ -150,6 +150,13 @@ dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-age
 # Invoke concise read helpers.
 dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent tasks release
 dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent summary project 14
+
+# Resolve a safe, revision-pinned mass edit for review, then apply that exact plan.
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent \
+  task-batch plan '{"selection":{"search":"release"},"update":{"priority":"High","starred":true}}' \
+  > /tmp/snook-task-plan.json
+dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- --data-dir /tmp/snook-agent \
+  task-batch apply "$(cat /tmp/snook-task-plan.json)"
 ```
 
 Use `call METHOD JSON_OBJECT` for every backend method. Method names are
@@ -157,6 +164,13 @@ case-insensitive; hyphens and the `Async` suffix are optional. Arguments are
 always named JSON properties, which avoids positional ambiguity. See
 [the CLI reference](docs/cli.md) for lifecycle, timer, calendar, data-operation,
 and retry examples.
+
+`task-batch plan` supports explicit task IDs or intersecting search, board, project,
+status, priority, favorite, and due-date filters. It makes no changes and emits the
+exact task revisions, patch, preview, and operation ID. `task-batch apply` commits
+that saved plan atomically for 1–500 tasks; stale revisions change nothing, and an
+exact retry returns the first committed result. Empty selections require an explicit
+`all: true`. See the CLI reference for every selector and nullable-field syntax.
 
 Use `watch` when an agent needs committed change notifications. It emits NDJSON:
 one ready record followed by `change` records, and runs until cancelled. It is

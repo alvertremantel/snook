@@ -8,6 +8,19 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- The headless CLI now has a dedicated reviewable mass-edit workflow. `task-batch
+  plan` resolves explicit IDs or intersecting text, hierarchy, state, priority,
+  favorite, and due-date filters into a deterministic preview with exact revisions;
+  broad selection requires explicit `all: true`. `task-batch apply` sends that
+  unchanged plan through the atomic backend operation for up to 500 tasks. Saved
+  operation IDs make response-uncertain retries exact, while stale targets roll the
+  entire batch back. Structured JSON output includes the operation and updated
+  tasks, and the machine-readable `api` catalog advertises the workflow. Embedded
+  integration coverage verifies planning, conflict rollback, selective mutation,
+  tags, due dates, favorites, untouched tasks, and receipt replay; authenticated
+  daemon coverage exercises the same plan/apply path. Verification: the full
+  solution builds with zero warnings or errors, all 50 tests pass, and
+  `git diff --check` is clean.
 - Tasks supports checkbox selection in List and Board, Select all in view/Ctrl+A,
   Clear/Escape, and a bulk drawer with explicit fields to apply. Priority, due date,
   favorite, completion, project, default activity, tags, title, description, and
