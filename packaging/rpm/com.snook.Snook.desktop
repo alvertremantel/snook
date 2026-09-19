@@ -6,3 +6,12 @@ Exec=snook
 Terminal=false
 Categories=Office;Utility;
 StartupNotify=true
+Actions=Daemon;Connection;
+
+[Desktop Action Daemon]
+Name=Connect to local daemon
+Exec=snook --host daemon
+
+[Desktop Action Connection]
+Name=Connection settings
+Exec=snook --configure

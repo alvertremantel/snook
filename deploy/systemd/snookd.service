@@ -1,24 +1,19 @@
 [Unit]
-Description=Snook local workspace daemon
-After=local-fs.target
-Wants=local-fs.target
+Description=Snook per-user local workspace daemon
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
-Type=simple
-DynamicUser=yes
-StateDirectory=snook
-Environment=SNOOK_DATA_DIR=/var/lib/snook
+Type=exec
+# Use the same LocalApplicationData default as the desktop and CLI.
+# Custom workspace/port settings belong in a per-user drop-in.
 ExecStart=/usr/bin/snookd
 Restart=on-failure
 RestartSec=3s
 KillSignal=SIGTERM
-TimeoutStopSec=15s
+TimeoutStopSec=45s
+UMask=0077
 NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/snook
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
