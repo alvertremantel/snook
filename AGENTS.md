@@ -66,6 +66,14 @@ change, enable the relevant `SNOOK_SCREENSHOT_VERIFY_*` persisted checks, and in
 the PNGs. `README.md` lists section names and interaction switches. Never point the
 app, tests, or screenshot runner at a real workspace.
 
+Daemon-facing changes require end-to-end acceptance in both composition roots: run a
+CLI command through a saved daemon client profile without connection flags, and run
+the GUI against a disposable daemon workspace. For connection or reconnect changes,
+exercise missing credentials, retry, an actual daemon stop/restart, draft retention,
+and the absence of a client-side SQLite database. The screenshot harness exposes
+bounded `SNOOK_SCREENSHOT_VERIFY_CONNECTION` and `SNOOK_SCREENSHOT_VERIFY_OUTAGE`
+checks for this purpose; follow its terminal prompts and use only disposable paths.
+
 ## Contract and persistence invariants
 
 - Treat `IBackendClient` as a versioned wire contract. A change must update
@@ -86,6 +94,10 @@ app, tests, or screenshot runner at a real workspace.
   authentication, connectivity, or protocol errors. Keep the listener loopback-only,
   authenticate health and SSE as well as RPC, keep tokens only in the private token
   file, and never log them.
+- Client connection profiles are device-local configuration, not workspace state or a
+  second contract. Never store bearer tokens in them. Preserve precedence among CLI
+  flags, environment variables, saved settings, and embedded defaults; malformed or
+  unsafe saved profiles must fail closed unless the caller explicitly bypasses them.
 - Persist and transport explicit UTC instants, but preserve local civil dates, time
   zones, DST gaps/folds, and real elapsed duration. Inject `TimeProvider` into
   testable time-dependent code.
