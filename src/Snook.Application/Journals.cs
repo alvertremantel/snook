@@ -12,19 +12,19 @@ public sealed partial class SnookBackend
     public Task<Journal> CreateJournalAsync(JournalDefinition definition, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateJournalRequest(request, creating: true);
-        return CommitJournalAsync(_store.SaveJournalAsync(null, definition, null, request.OperationId, _clock.GetUtcNow(), cancellationToken), "journal", request);
+        return JournalValueAsync(_store.SaveJournalAsync(null, definition, null, request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<Journal> UpdateJournalAsync(Guid journalId, JournalDefinition definition, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateJournalRequest(request);
-        return CommitJournalAsync(_store.SaveJournalAsync(journalId, definition, request.ExpectedRevision, request.OperationId, _clock.GetUtcNow(), cancellationToken), "journal", request);
+        return JournalValueAsync(_store.SaveJournalAsync(journalId, definition, request.ExpectedRevision, request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<Journal> SetJournalDeletedAsync(Guid journalId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateJournalRequest(request);
-        return CommitJournalAsync(_store.SetJournalDeletedAsync(journalId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken), "journal", request);
+        return JournalValueAsync(_store.SetJournalDeletedAsync(journalId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public async Task<JournalEntryPage> GetJournalEntriesAsync(JournalEntryQuery query, CancellationToken cancellationToken = default)
@@ -42,26 +42,24 @@ public sealed partial class SnookBackend
     public Task<JournalEntry> CreateJournalEntryAsync(JournalEntryDefinition definition, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateJournalRequest(request, creating: true);
-        return CommitJournalAsync(_store.SaveJournalEntryAsync(null, definition, null, request.OperationId, _clock.GetUtcNow(), cancellationToken), "journal-entry", request);
+        return JournalValueAsync(_store.SaveJournalEntryAsync(null, definition, null, request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<JournalEntry> UpdateJournalEntryAsync(Guid entryId, JournalEntryDefinition definition, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateJournalRequest(request);
-        return CommitJournalAsync(_store.SaveJournalEntryAsync(entryId, definition, request.ExpectedRevision, request.OperationId, _clock.GetUtcNow(), cancellationToken), "journal-entry", request);
+        return JournalValueAsync(_store.SaveJournalEntryAsync(entryId, definition, request.ExpectedRevision, request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<JournalEntry> SetJournalEntryDeletedAsync(Guid entryId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateJournalRequest(request);
-        return CommitJournalAsync(_store.SetJournalEntryDeletedAsync(entryId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken), "journal-entry", request);
+        return JournalValueAsync(_store.SetJournalEntryDeletedAsync(entryId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
-    private async Task<T> CommitJournalAsync<T>(Task<StoreJournalResult<T>> mutation, string aggregate, OperationRequest request)
+    private static async Task<T> JournalValueAsync<T>(Task<StoreJournalResult<T>> mutation)
     {
         var result = await mutation;
-        if (result.Cursor is { } cursor)
-            Changed?.Invoke(this, new ChangeNotification(cursor, request.OperationId, aggregate, result.Id, result.Kind, result.Revision, result.CommittedAtUtc));
         return result.Value;
     }
 

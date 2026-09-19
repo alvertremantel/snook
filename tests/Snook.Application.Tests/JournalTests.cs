@@ -154,9 +154,10 @@ public sealed class JournalTests
                 await backend.InitializeAsync();
                 await backend.CreateHabitAsync(new HabitDefinition("Existing habit", "", DateOnly.FromDateTime(DateTime.UtcNow), "UTC"), Request());
             }
-            await SqlAsync(path, "DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DELETE FROM schema_migrations WHERE sequence=9;");
+            await SqlAsync(path, "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DELETE FROM schema_migrations WHERE sequence>=9;");
             var oldBackup = Path.Combine(directory.FullName, "v8.db");
             File.Copy(path, oldBackup);
+            await BackupFixture.WriteManifestAsync(oldBackup);
             var oldBytes = await File.ReadAllBytesAsync(oldBackup);
             await using (var backend = new SnookBackend(new SqliteStore(path)))
             {
@@ -174,7 +175,7 @@ public sealed class JournalTests
                 Assert.Equal(2, changes.Count);
                 var backup = await backend.CreateBackupAsync(Path.Combine(directory.FullName, "journals.db"));
                 var export = await backend.ExportJsonAsync(Path.Combine(directory.FullName, "journals.json"));
-                Assert.Equal(4, export.SchemaVersion);
+                Assert.Equal(5, export.SchemaVersion);
                 using var json = JsonDocument.Parse(await File.ReadAllTextAsync(export.Path));
                 var exported = json.RootElement.GetProperty("journaling");
                 Assert.Single(exported.GetProperty("journals").EnumerateArray());
@@ -199,6 +200,7 @@ public sealed class JournalTests
                 await backend.CreateJournalAsync(definition, create);
                 var corrupt = await backend.CreateBackupAsync(Path.Combine(directory.FullName, "bad.db"));
                 await SqlAsync(corrupt.Path, "UPDATE schema_migrations SET checksum='bad' WHERE sequence=9;");
+                await BackupFixture.WriteManifestAsync(corrupt.Path);
                 await AssertErrorAsync(SnookErrorCode.SchemaIncompatible, () => backend.RestoreBackupAsync(corrupt.Path));
                 Assert.Single(await backend.GetJournalsAsync());
             }

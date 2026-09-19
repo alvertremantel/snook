@@ -51,7 +51,8 @@ public sealed partial class SqliteStore
     public async Task<IReadOnlyList<Journal>> GetJournalsAsync(bool includeDeleted, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         return await ReadJournalsAsync(connection, null, includeDeleted, cancellationToken);
     }
 
@@ -135,7 +136,8 @@ public sealed partial class SqliteStore
             catch (Exception exception) when (exception is JsonException or FormatException) { throw JournalInvalid("The journal continuation token is invalid."); }
             if (cursor is null || cursor.Scope != scope || cursor.Id == Guid.Empty) throw JournalInvalid("The continuation token does not match this journal query.");
         }
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         await using var command = connection.CreateCommand();
         command.CommandText = EntrySelect + """
 
@@ -166,7 +168,8 @@ public sealed partial class SqliteStore
     {
         EnsureInitialized();
         if (entryId == Guid.Empty) throw JournalInvalid("An entry ID is required.");
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         return await ReadJournalEntryAsync(connection, null, entryId, cancellationToken);
     }
 
@@ -174,7 +177,8 @@ public sealed partial class SqliteStore
     {
         EnsureInitialized();
         if (journalId == Guid.Empty) throw JournalInvalid("Use a valid journal ID.");
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT MIN(t.display_name) FROM journal_entry_tags t JOIN journal_entries e ON e.id=t.entry_id JOIN journals j ON j.id=e.journal_id
@@ -308,7 +312,8 @@ public sealed partial class SqliteStore
 
     private async Task<object> ExportJournalsAsync(CancellationToken cancellationToken)
     {
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         var journals = await ReadJournalsAsync(connection, transaction, true, cancellationToken);
         await using var command = connection.CreateCommand();

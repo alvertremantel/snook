@@ -431,7 +431,7 @@ public sealed class BackendLifecycleTests
         Assert.True(File.Exists(backup.ManifestPath));
         Assert.True(File.Exists(export.Path));
         Assert.True(File.Exists(csv.Path));
-        Assert.Equal(4, export.SchemaVersion);
+        Assert.Equal(5, export.SchemaVersion);
         Assert.Equal(64, backup.Sha256.Length);
         Assert.Equal(64, export.Sha256.Length);
         Assert.Equal(64, csv.Sha256.Length);
@@ -686,7 +686,7 @@ public sealed class BackendLifecycleTests
         await verification.OpenAsync();
         await using var query = verification.CreateCommand();
         query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-        Assert.Equal(9L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+        Assert.Equal(10L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
 
         Directory.Delete(directory.FullName, recursive: true);
     }
@@ -705,7 +705,7 @@ public sealed class BackendLifecycleTests
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = "DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; ALTER TABLE activities DROP COLUMN group_id; DELETE FROM schema_migrations; INSERT INTO schema_migrations(sequence,name,checksum,applied_at_utc_ms) VALUES(5,'workspace-settings','legacy',0);";
+            command.CommandText = "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; ALTER TABLE activities DROP COLUMN group_id; DELETE FROM schema_migrations; INSERT INTO schema_migrations(sequence,name,checksum,applied_at_utc_ms) VALUES(5,'workspace-settings','legacy',0);";
             await command.ExecuteNonQueryAsync();
         }
 

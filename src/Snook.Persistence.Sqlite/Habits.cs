@@ -41,7 +41,8 @@ public sealed partial class SqliteStore
         EnsureInitialized();
         if (days is < 1 or > HabitRules.MaximumDays || throughDate is { Year: < 1900 })
             throw new SnookException(SnookErrorCode.ValidationFailed, "Read 1–366 days, with dates on or after 1900-01-01.");
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         var habits = await ReadHabitsAsync(connection, transaction, cancellationToken);
         var result = new List<HabitProgress>();
@@ -230,7 +231,8 @@ public sealed partial class SqliteStore
 
     private async Task<object> ExportHabitsAsync(CancellationToken cancellationToken)
     {
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         var habits = await ReadHabitsAsync(connection, transaction, cancellationToken);
         var checkIns = new List<HabitCheckIn>();

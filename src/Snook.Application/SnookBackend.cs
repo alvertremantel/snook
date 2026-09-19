@@ -24,9 +24,24 @@ public sealed partial class SnookBackend : IBackendClient
         _clock = clock ?? TimeProvider.System;
         _deviceId = deviceId ?? Guid.NewGuid();
         _allowConcurrentForegroundOverride = allowConcurrentForeground;
+        _store.Committed += OnStoreCommitted;
     }
 
     public event EventHandler<ChangeNotification>? Changed;
+
+    private void OnStoreCommitted(object? sender, StoreCommittedChange change)
+        => NotifyChanged(new ChangeNotification(change.Cursor, change.OperationId, change.AggregateType,
+            change.AggregateId, change.Kind, change.NewRevision, change.CommittedAtUtc));
+
+    private void NotifyChanged(ChangeNotification notification)
+    {
+        if (Changed is not { } handlers) return;
+        foreach (EventHandler<ChangeNotification> handler in handlers.GetInvocationList())
+        {
+            try { handler(this, notification); }
+            catch (Exception) { /* A failed observer must not invalidate a committed operation or starve other observers. */ }
+        }
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -39,7 +54,6 @@ public sealed partial class SnookBackend : IBackendClient
     public async Task<WorkspaceSettings> UpdateSettingsAsync(WorkspaceSettings settings, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var updated = await _store.UpdateSettingsAsync(settings, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "workspace-settings", Guid.Empty, "updated", updated.Revision, cancellationToken);
         return updated;
     }
 
@@ -77,175 +91,157 @@ public sealed partial class SnookBackend : IBackendClient
             .ToArray();
     }
 
-    public async Task<Board> CreateBoardAsync(string name, CancellationToken cancellationToken = default)
+    public async Task<Board> CreateBoardAsync(string name, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var board = await _store.CreateBoardAsync(name, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "board", board.Id, "created", board.Revision, cancellationToken);
         return board;
     }
 
     public async Task<Board> UpdateBoardAsync(Guid boardId, BoardUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var board = await _store.UpdateBoardAsync(boardId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "board", board.Id, "updated", board.Revision, cancellationToken);
         return board;
     }
 
     public async Task<Board> ReorderBoardAsync(Guid boardId, ReorderDirection direction, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var board = await _store.ReorderBoardAsync(boardId, direction, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "board", board.Id, "reordered", board.Revision, cancellationToken);
         return board;
     }
 
     public Task<Board> ArchiveBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetBoardArchivedAsync(boardId, true, request, "archived", cancellationToken);
+        => SetBoardArchivedAsync(boardId, true, request, cancellationToken);
 
     public Task<Board> RestoreBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetBoardArchivedAsync(boardId, false, request, "restored", cancellationToken);
+        => SetBoardArchivedAsync(boardId, false, request, cancellationToken);
 
-    private async Task<Board> SetBoardArchivedAsync(Guid boardId, bool archived, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<Board> SetBoardArchivedAsync(Guid boardId, bool archived, OperationRequest request, CancellationToken cancellationToken)
     {
         var board = await _store.SetBoardArchivedAsync(boardId, archived, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "board", board.Id, kind, board.Revision, cancellationToken);
         return board;
     }
 
     public Task<Board> DeleteBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetBoardDeletedAsync(boardId, true, request, "deleted", cancellationToken);
+        => SetBoardDeletedAsync(boardId, true, request, cancellationToken);
 
     public Task<Board> RestoreDeletedBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetBoardDeletedAsync(boardId, false, request, "restored-deleted", cancellationToken);
+        => SetBoardDeletedAsync(boardId, false, request, cancellationToken);
 
-    private async Task<Board> SetBoardDeletedAsync(Guid boardId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<Board> SetBoardDeletedAsync(Guid boardId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var board = await _store.SetBoardDeletedAsync(boardId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "board", board.Id, kind, board.Revision, cancellationToken);
         return board;
     }
 
-    public async Task<Project> CreateProjectAsync(Guid boardId, string name, string description = "", bool starred = false, CancellationToken cancellationToken = default)
+    public async Task<Project> CreateProjectAsync(Guid boardId, string name, string description = "", bool starred = false, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var project = await _store.CreateProjectAsync(boardId, name, description, starred, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "project", project.Id, "created", project.Revision, cancellationToken);
         return project;
     }
 
     public async Task<Project> UpdateProjectAsync(Guid projectId, ProjectUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var project = await _store.UpdateProjectAsync(projectId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "project", project.Id, "updated", project.Revision, cancellationToken);
         return project;
     }
 
     public async Task<Project> ReorderProjectAsync(Guid projectId, ReorderDirection direction, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var project = await _store.ReorderProjectAsync(projectId, direction, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "project", project.Id, "reordered", project.Revision, cancellationToken);
         return project;
     }
 
     public Task<Project> ArchiveProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetProjectArchivedAsync(projectId, true, request, "archived", cancellationToken);
+        => SetProjectArchivedAsync(projectId, true, request, cancellationToken);
 
     public Task<Project> RestoreProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetProjectArchivedAsync(projectId, false, request, "restored", cancellationToken);
+        => SetProjectArchivedAsync(projectId, false, request, cancellationToken);
 
-    private async Task<Project> SetProjectArchivedAsync(Guid projectId, bool archived, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<Project> SetProjectArchivedAsync(Guid projectId, bool archived, OperationRequest request, CancellationToken cancellationToken)
     {
         var project = await _store.SetProjectArchivedAsync(projectId, archived, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "project", project.Id, kind, project.Revision, cancellationToken);
         return project;
     }
 
     public Task<Project> DeleteProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetProjectDeletedAsync(projectId, true, request, "deleted", cancellationToken);
+        => SetProjectDeletedAsync(projectId, true, request, cancellationToken);
 
     public Task<Project> RestoreDeletedProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetProjectDeletedAsync(projectId, false, request, "restored-deleted", cancellationToken);
+        => SetProjectDeletedAsync(projectId, false, request, cancellationToken);
 
-    private async Task<Project> SetProjectDeletedAsync(Guid projectId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<Project> SetProjectDeletedAsync(Guid projectId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var project = await _store.SetProjectDeletedAsync(projectId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "project", project.Id, kind, project.Revision, cancellationToken);
         return project;
     }
 
-    public async Task<ActivityGroup> CreateActivityGroupAsync(string name, CancellationToken cancellationToken = default)
+    public async Task<ActivityGroup> CreateActivityGroupAsync(string name, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var group = await _store.CreateActivityGroupAsync(name, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "activity-group", group.Id, "created", group.Revision, cancellationToken);
         return group;
     }
 
     public async Task<ActivityGroup> UpdateActivityGroupAsync(Guid groupId, ActivityGroupUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var group = await _store.UpdateActivityGroupAsync(groupId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "activity-group", group.Id, "updated", group.Revision, cancellationToken);
         return group;
     }
 
     public async Task<ActivityGroup> ReorderActivityGroupAsync(Guid groupId, ReorderDirection direction, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var group = await _store.ReorderActivityGroupAsync(groupId, direction, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "activity-group", group.Id, "reordered", group.Revision, cancellationToken);
         return group;
     }
 
     public Task<ActivityGroup> DeleteActivityGroupAsync(Guid groupId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetActivityGroupDeletedAsync(groupId, true, request, "deleted", cancellationToken);
+        => SetActivityGroupDeletedAsync(groupId, true, request, cancellationToken);
 
     public Task<ActivityGroup> RestoreDeletedActivityGroupAsync(Guid groupId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetActivityGroupDeletedAsync(groupId, false, request, "restored-deleted", cancellationToken);
+        => SetActivityGroupDeletedAsync(groupId, false, request, cancellationToken);
 
-    private async Task<ActivityGroup> SetActivityGroupDeletedAsync(Guid groupId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<ActivityGroup> SetActivityGroupDeletedAsync(Guid groupId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var group = await _store.SetActivityGroupDeletedAsync(groupId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "activity-group", group.Id, kind, group.Revision, cancellationToken);
         return group;
     }
 
-    public async Task<Activity> CreateActivityAsync(string name, string description = "", SessionLane defaultLane = SessionLane.Foreground, Guid? groupId = null, CancellationToken cancellationToken = default)
+    public async Task<Activity> CreateActivityAsync(string name, string description = "", SessionLane defaultLane = SessionLane.Foreground, Guid? groupId = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var activity = await _store.CreateActivityAsync(name, description, defaultLane, groupId, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "activity", activity.Id, "created", activity.Revision, cancellationToken);
         return activity;
     }
 
     public async Task<Activity> UpdateActivityAsync(Guid activityId, ActivityUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var activity = await _store.UpdateActivityAsync(activityId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "activity", activity.Id, "updated", activity.Revision, cancellationToken);
         return activity;
     }
 
     public Task<Activity> ArchiveActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetActivityArchivedAsync(activityId, true, request, "archived", cancellationToken);
+        => SetActivityArchivedAsync(activityId, true, request, cancellationToken);
 
     public Task<Activity> RestoreActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetActivityArchivedAsync(activityId, false, request, "restored", cancellationToken);
+        => SetActivityArchivedAsync(activityId, false, request, cancellationToken);
 
-    private async Task<Activity> SetActivityArchivedAsync(Guid activityId, bool archived, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<Activity> SetActivityArchivedAsync(Guid activityId, bool archived, OperationRequest request, CancellationToken cancellationToken)
     {
         var activity = await _store.SetActivityArchivedAsync(activityId, archived, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "activity", activity.Id, kind, activity.Revision, cancellationToken);
         return activity;
     }
 
     public Task<Activity> DeleteActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetActivityDeletedAsync(activityId, true, request, "deleted", cancellationToken);
+        => SetActivityDeletedAsync(activityId, true, request, cancellationToken);
 
     public Task<Activity> RestoreDeletedActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetActivityDeletedAsync(activityId, false, request, "restored-deleted", cancellationToken);
+        => SetActivityDeletedAsync(activityId, false, request, cancellationToken);
 
-    private async Task<Activity> SetActivityDeletedAsync(Guid activityId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<Activity> SetActivityDeletedAsync(Guid activityId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var activity = await _store.SetActivityDeletedAsync(activityId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "activity", activity.Id, kind, activity.Revision, cancellationToken);
         return activity;
     }
 
@@ -379,31 +375,28 @@ public sealed partial class SnookBackend : IBackendClient
         return result.OrderBy(block => block.StartAtUtc).ToArray();
     }
 
-    public async Task<DomainCalendar> CreateCalendarAsync(string name, string color = "#6767F2", bool visible = true, CancellationToken cancellationToken = default)
+    public async Task<DomainCalendar> CreateCalendarAsync(string name, string color = "#6767F2", bool visible = true, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var calendar = await _store.CreateCalendarAsync(name, color, visible, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "calendar", calendar.Id, "created", calendar.Revision, cancellationToken);
         return calendar;
     }
 
     public async Task<DomainCalendar> UpdateCalendarAsync(Guid calendarId, CalendarUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var calendar = await _store.UpdateCalendarAsync(calendarId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "calendar", calendar.Id, "updated", calendar.Revision, cancellationToken);
         return calendar;
     }
 
     public Task<DomainCalendar> DeleteCalendarAsync(Guid calendarId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetCalendarDeletedAsync(calendarId, true, request, "deleted", cancellationToken);
+        => SetCalendarDeletedAsync(calendarId, true, request, cancellationToken);
 
     public Task<DomainCalendar> RestoreDeletedCalendarAsync(Guid calendarId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetCalendarDeletedAsync(calendarId, false, request, "restored-deleted", cancellationToken);
+        => SetCalendarDeletedAsync(calendarId, false, request, cancellationToken);
 
-    private async Task<DomainCalendar> SetCalendarDeletedAsync(Guid calendarId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<DomainCalendar> SetCalendarDeletedAsync(Guid calendarId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var calendar = await _store.SetCalendarDeletedAsync(calendarId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "calendar", calendar.Id, kind, calendar.Revision, cancellationToken);
         return calendar;
     }
 
@@ -436,107 +429,96 @@ public sealed partial class SnookBackend : IBackendClient
         return result.OrderBy(item => item.StartAtUtc).ToArray();
     }
 
-    public async Task<CalendarEvent> CreateCalendarEventAsync(Guid calendarId, string title, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, string description = "", string? location = null, string color = "#6767F2", bool allDay = false, string timeZone = "UTC", string? recurrenceRule = null, DateTimeOffset? recurrenceEndUtc = null, CancellationToken cancellationToken = default)
+    public async Task<CalendarEvent> CreateCalendarEventAsync(Guid calendarId, string title, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, string description = "", string? location = null, string color = "#6767F2", bool allDay = false, string timeZone = "UTC", string? recurrenceRule = null, DateTimeOffset? recurrenceEndUtc = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var item = await _store.CreateCalendarEventAsync(calendarId, title, startAtUtc, endAtUtc, description, location, color, allDay, timeZone, recurrenceRule, recurrenceEndUtc, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "calendar-event", item.Id, "created", item.Revision, cancellationToken);
         return item;
     }
 
     public async Task<CalendarEvent> UpdateCalendarEventAsync(Guid eventId, CalendarEventUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var item = await _store.UpdateCalendarEventAsync(eventId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "calendar-event", item.Id, "updated", item.Revision, cancellationToken);
         return item;
     }
 
     public Task<CalendarEvent> DeleteCalendarEventAsync(Guid eventId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetCalendarEventDeletedAsync(eventId, true, request, "deleted", cancellationToken);
+        => SetCalendarEventDeletedAsync(eventId, true, request, cancellationToken);
 
     public Task<CalendarEvent> RestoreDeletedCalendarEventAsync(Guid eventId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetCalendarEventDeletedAsync(eventId, false, request, "restored-deleted", cancellationToken);
+        => SetCalendarEventDeletedAsync(eventId, false, request, cancellationToken);
 
-    private async Task<CalendarEvent> SetCalendarEventDeletedAsync(Guid eventId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<CalendarEvent> SetCalendarEventDeletedAsync(Guid eventId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var item = await _store.SetCalendarEventDeletedAsync(eventId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "calendar-event", item.Id, kind, item.Revision, cancellationToken);
         return item;
     }
 
     public async Task<CalendarEventOccurrenceOverride> UpsertCalendarEventExceptionAsync(Guid eventId, DateTimeOffset originalStartAtUtc, DateTimeOffset? newStartAtUtc, DateTimeOffset? newEndAtUtc, string? titleOverride, bool cancelled, OperationRequest request, CancellationToken cancellationToken = default)
     {
+        ValidateOperation(request);
         var item = await _store.UpsertCalendarEventExceptionAsync(eventId, originalStartAtUtc, newStartAtUtc, newEndAtUtc, titleOverride, cancelled, request.ExpectedRevision, request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "calendar-event-exception", item.Id, item.Revision == 1 ? "created" : "updated", item.Revision, cancellationToken);
         return item;
     }
 
     public async Task DeleteCalendarEventExceptionAsync(Guid exceptionId, OperationRequest request, CancellationToken cancellationToken = default)
     {
         await _store.DeleteCalendarEventExceptionAsync(exceptionId, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "calendar-event-exception", exceptionId, "deleted", RequireRevision(request) + 1, cancellationToken);
     }
 
-    public async Task<ScheduleBlock> CreateScheduleBlockAsync(Guid calendarId, Guid? taskId, Guid? activityId, string? titleOverride, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, string timeZone, string? recurrenceRule = null, DateTimeOffset? recurrenceEndUtc = null, CancellationToken cancellationToken = default)
+    public async Task<ScheduleBlock> CreateScheduleBlockAsync(Guid calendarId, Guid? taskId, Guid? activityId, string? titleOverride, DateTimeOffset startAtUtc, DateTimeOffset endAtUtc, string timeZone, string? recurrenceRule = null, DateTimeOffset? recurrenceEndUtc = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var block = await _store.CreateScheduleBlockAsync(calendarId, taskId, activityId, titleOverride, startAtUtc, endAtUtc, timeZone, recurrenceRule, recurrenceEndUtc, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "schedule-block", block.Id, "created", block.Revision, cancellationToken);
         return block;
     }
 
     public async Task<ScheduleBlock> UpdateScheduleBlockAsync(Guid blockId, ScheduleBlockUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var block = await _store.UpdateScheduleBlockAsync(blockId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "schedule-block", block.Id, "updated", block.Revision, cancellationToken);
         return block;
     }
 
-    public async Task<TaskItem> CreateTaskAsync(Guid projectId, string title, Priority priority = Priority.None, DateOnly? dueDate = null, CancellationToken cancellationToken = default)
+    public async Task<TaskItem> CreateTaskAsync(Guid projectId, string title, Priority priority = Priority.None, DateOnly? dueDate = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var task = await _store.CreateTaskAsync(projectId, title, priority, dueDate, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "task", task.Id, "created", task.Revision, cancellationToken);
         return task;
     }
 
     public async Task<TaskItem> UpdateTaskAsync(Guid taskId, TaskUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var task = await _store.UpdateTaskAsync(taskId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task", task.Id, "updated", task.Revision, cancellationToken);
         return task;
     }
 
     public async Task<TaskItem> MoveTaskAsync(Guid taskId, Guid projectId, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var task = await _store.MoveTaskAsync(taskId, projectId, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task", task.Id, "moved", task.Revision, cancellationToken);
         return task;
     }
 
     public Task<TaskItem> ArchiveTaskAsync(Guid taskId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetTaskArchivedAsync(taskId, true, request, "archived", cancellationToken);
+        => SetTaskArchivedAsync(taskId, true, request, cancellationToken);
 
     public Task<TaskItem> RestoreTaskAsync(Guid taskId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetTaskArchivedAsync(taskId, false, request, "unarchived", cancellationToken);
+        => SetTaskArchivedAsync(taskId, false, request, cancellationToken);
 
     public Task<TaskItem> DeleteTaskAsync(Guid taskId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetTaskDeletedAsync(taskId, true, request, "deleted", cancellationToken);
+        => SetTaskDeletedAsync(taskId, true, request, cancellationToken);
 
     public Task<TaskItem> RestoreDeletedTaskAsync(Guid taskId, OperationRequest request, CancellationToken cancellationToken = default)
-        => SetTaskDeletedAsync(taskId, false, request, "restored", cancellationToken);
+        => SetTaskDeletedAsync(taskId, false, request, cancellationToken);
 
-    private async Task<TaskItem> SetTaskArchivedAsync(Guid taskId, bool archived, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<TaskItem> SetTaskArchivedAsync(Guid taskId, bool archived, OperationRequest request, CancellationToken cancellationToken)
     {
         var task = await _store.SetTaskArchivedAsync(taskId, archived, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task", task.Id, kind, task.Revision, cancellationToken);
         return task;
     }
 
-    private async Task<TaskItem> SetTaskDeletedAsync(Guid taskId, bool deleted, OperationRequest request, string kind, CancellationToken cancellationToken)
+    private async Task<TaskItem> SetTaskDeletedAsync(Guid taskId, bool deleted, OperationRequest request, CancellationToken cancellationToken)
     {
         var task = await _store.SetTaskDeletedAsync(taskId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task", task.Id, kind, task.Revision, cancellationToken);
         return task;
     }
 
@@ -556,75 +538,63 @@ public sealed partial class SnookBackend : IBackendClient
         return new ProjectDetails(project, tasks, tracked, active);
     }
 
-    public async Task<TaskLink> AddTaskLinkAsync(Guid taskId, string? label, string uri, string kind = "reference", CancellationToken cancellationToken = default)
+    public async Task<TaskLink> AddTaskLinkAsync(Guid taskId, string? label, string uri, string kind = "reference", OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var link = await _store.AddTaskLinkAsync(taskId, label, uri, kind, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "task-link", link.Id, "created", 1, cancellationToken);
         return link;
     }
 
-    public async Task<Tag> AddTaskTagAsync(Guid taskId, string displayName, string? color = null, CancellationToken cancellationToken = default)
+    public async Task<Tag> AddTaskTagAsync(Guid taskId, string displayName, string? color = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var tag = await _store.AddTaskTagAsync(taskId, displayName, color, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "task", taskId, "tag-added", 1, cancellationToken);
         return tag;
     }
 
-    public async Task<Tag> AddProjectTagAsync(Guid projectId, string displayName, string? color = null, CancellationToken cancellationToken = default)
+    public async Task<Tag> AddProjectTagAsync(Guid projectId, string displayName, string? color = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var tag = await _store.AddProjectTagAsync(projectId, displayName, color, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "project", projectId, "tag-added", 0, cancellationToken);
         return tag;
     }
 
-    public async Task<Tag> AddActivityTagAsync(Guid activityId, string displayName, string? color = null, CancellationToken cancellationToken = default)
+    public async Task<Tag> AddActivityTagAsync(Guid activityId, string displayName, string? color = null, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         var tag = await _store.AddActivityTagAsync(activityId, displayName, color, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "activity", activityId, "tag-added", 0, cancellationToken);
         return tag;
     }
 
     public async Task<TaskItem> CompleteTaskAsync(Guid taskId, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var task = await _store.SetTaskCompletionAsync(taskId, true, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task", task.Id, "completed", task.Revision, cancellationToken);
         return task;
     }
 
     public async Task<TaskItem> ReopenTaskAsync(Guid taskId, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var task = await _store.SetTaskCompletionAsync(taskId, false, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task", task.Id, "reopened", task.Revision, cancellationToken);
         return task;
     }
 
-    public async Task AddTaskDependencyAsync(Guid taskId, Guid prerequisiteTaskId, CancellationToken cancellationToken = default)
+    public async Task AddTaskDependencyAsync(Guid taskId, Guid prerequisiteTaskId, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
-        var operationId = Guid.NewGuid();
+        var operationId = NewOperationId(request);
         await _store.AddTaskDependencyAsync(taskId, prerequisiteTaskId, operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "task", taskId, "dependency-added", 1, cancellationToken);
     }
 
     public async Task<TrackingSession> StartSessionAsync(Guid? taskId, Guid? activityId, SessionLane lane, OperationRequest request, CancellationToken cancellationToken = default)
     {
+        RequireNewOperation(request);
+        if (!Enum.IsDefined(lane)) throw new SnookException(SnookErrorCode.ValidationFailed, "The session lane is invalid.");
         if (taskId is null && activityId is null)
         {
             throw new SnookException(SnookErrorCode.ValidationFailed, "Choose a task or activity before starting a timer.");
         }
 
-        if (taskId is not null && activityId is null)
-        {
-            var state = await _store.LoadStateAsync(_clock.GetUtcNow(), cancellationToken);
-            activityId = state.Tasks.FirstOrDefault(task => task.Id == taskId)?.DefaultActivityId;
-        }
-
         var allowConcurrentForeground = _allowConcurrentForegroundOverride ?? (await _store.GetSettingsAsync(cancellationToken)).AllowConcurrentForeground;
         var session = await _store.StartSessionAsync(taskId, activityId, lane, request.OperationId, _clock.GetUtcNow(), allowConcurrentForeground, cancellationToken);
-        await PublishAsync(request.OperationId, "session", session.Id, "started", session.Revision, cancellationToken);
         return session;
     }
 
@@ -641,22 +611,20 @@ public sealed partial class SnookBackend : IBackendClient
     public async Task<TrackingSession> StopSessionAsync(Guid sessionId, string? notes, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var session = await _store.TransitionSessionAsync(sessionId, SessionState.Stopped, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), notes, cancellationToken: cancellationToken);
-        await PublishAsync(request.OperationId, "session", session.Id, "stopped", session.Revision, cancellationToken);
         return session;
     }
 
     public async Task<TrackingSession> CreateManualSessionAsync(Guid? taskId, Guid? activityId, DateTimeOffset startedAtUtc, DateTimeOffset endedAtUtc, string? notes, OperationRequest? request = null, CancellationToken cancellationToken = default)
     {
+        if (request is not null) RequireNewOperation(request);
         var operationId = request?.OperationId ?? Guid.NewGuid();
         var session = await _store.CreateManualSessionAsync(taskId, activityId, startedAtUtc, endedAtUtc, Guard.Optional(notes, "notes"), operationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(operationId, "session", session.Id, "manual", session.Revision, cancellationToken);
         return session;
     }
 
     public async Task<TrackingSession> CorrectSessionAsync(Guid sessionId, SessionCorrection correction, OperationRequest request, CancellationToken cancellationToken = default)
     {
         var session = await _store.CorrectSessionAsync(sessionId, correction, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "session", session.Id, "corrected", session.Revision, cancellationToken);
         return session;
     }
 
@@ -665,8 +633,8 @@ public sealed partial class SnookBackend : IBackendClient
 
     public async Task<TrackingSession> ResolveRecoveryAsync(Guid sessionId, RecoveryDecision decision, OperationRequest request, CancellationToken cancellationToken = default)
     {
-        var session = await _store.ResolveRecoveryAsync(sessionId, decision, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "session", session.Id, $"recovery-{decision.ToString().ToLowerInvariant()}", session.Revision, cancellationToken);
+        var session = await _store.ResolveRecoveryAsync(sessionId, decision, RequireRevision(request), request.OperationId, _clock.GetUtcNow(),
+            _allowConcurrentForegroundOverride, cancellationToken);
         return session;
     }
 
@@ -691,7 +659,6 @@ public sealed partial class SnookBackend : IBackendClient
     public async Task<RestoreResult> RestoreBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
     {
         var result = await _store.RestoreBackupAsync(sourcePath, cancellationToken);
-        await PublishAsync(Guid.NewGuid(), "workspace", Guid.Empty, "restored", 0, cancellationToken);
         return new RestoreResult(result.Path, result.Bytes, result.Sha256);
     }
 
@@ -707,22 +674,14 @@ public sealed partial class SnookBackend : IBackendClient
             _clock.GetUtcNow(),
             pauseOtherForeground: pauseOtherForeground,
             cancellationToken: cancellationToken);
-        await PublishAsync(request.OperationId, "session", session.Id, target.ToString().ToLowerInvariant(), session.Revision, cancellationToken);
         return session;
     }
 
     public async Task<IReadOnlyList<TaskItem>> BulkUpdateTasksAsync(IReadOnlyList<TaskRevision> tasks, BulkTaskUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        RequireNewOperation(request);
         var result = await _store.BulkUpdateTasksAsync(tasks, update, request.OperationId, _clock.GetUtcNow(), cancellationToken);
-        await PublishAsync(request.OperationId, "task-batch", request.OperationId, "updated", 1, cancellationToken);
         return result;
-    }
-
-    private async Task PublishAsync(Guid operationId, string aggregateType, Guid aggregateId, string kind, long revision, CancellationToken cancellationToken)
-    {
-        var state = await _store.LoadStateAsync(_clock.GetUtcNow(), cancellationToken);
-        Changed?.Invoke(this, new ChangeNotification(state.Cursor, operationId, aggregateType, aggregateId, kind, revision, _clock.GetUtcNow()));
     }
 
     private static BootstrapSnapshot BuildBootstrap(StoreState state, DateTimeOffset now)
@@ -1031,7 +990,31 @@ public sealed partial class SnookBackend : IBackendClient
 
     private static int DayIndex(DayOfWeek day) => day == DayOfWeek.Sunday ? 6 : (int)day - 1;
 
-    private static long RequireRevision(OperationRequest request) => request.ExpectedRevision ?? throw new SnookException(SnookErrorCode.ValidationFailed, "An expected revision is required for this mutation.");
+    private static void ValidateOperation(OperationRequest request)
+    {
+        if (request is null || request.OperationId == Guid.Empty || request.ClientDeviceId == Guid.Empty || request.ExpectedRevision is < 1)
+            throw new SnookException(SnookErrorCode.ValidationFailed, "Provide nonempty operation and device IDs and a positive expected revision when applicable.");
+    }
+
+    private static Guid NewOperationId(OperationRequest? request)
+    {
+        if (request is null) return Guid.NewGuid();
+        RequireNewOperation(request);
+        return request.OperationId;
+    }
+
+    private static void RequireNewOperation(OperationRequest request)
+    {
+        ValidateOperation(request);
+        if (request.ExpectedRevision is not null)
+            throw new SnookException(SnookErrorCode.ValidationFailed, "This operation does not accept an aggregate expected revision.");
+    }
+
+    private static long RequireRevision(OperationRequest request)
+    {
+        ValidateOperation(request);
+        return request.ExpectedRevision ?? throw new SnookException(SnookErrorCode.ValidationFailed, "An expected revision is required for this mutation.");
+    }
 
     private static IEnumerable<SummaryPart> SummaryParts(TrackingSession session, DateTimeOffset rangeStartUtc, DateTimeOffset rangeEndUtc, DateTimeOffset asOfUtc, TimeZoneInfo timeZone)
     {
@@ -1074,6 +1057,7 @@ public sealed partial class SnookBackend : IBackendClient
         }
 
         _disposed = true;
+        _store.Committed -= OnStoreCommitted;
         await _store.DisposeAsync();
     }
 }

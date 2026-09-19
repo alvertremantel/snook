@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Snook.Domain;
 
@@ -58,17 +57,6 @@ public sealed partial class SqliteStore
 
         return await WriteAsync<IReadOnlyList<TaskItem>>(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                await using var receipt = connection.CreateCommand();
-                receipt.Transaction = transaction;
-                receipt.CommandText = "SELECT result_payload FROM operation_receipts WHERE operation_id=$id;";
-                receipt.Parameters.AddWithValue("$id", Id(operationId));
-                if (await receipt.ExecuteScalarAsync(cancellationToken) is not string payload)
-                    throw new SnookException(SnookErrorCode.ValidationFailed, "This operation ID was used for another mutation.");
-                return JsonSerializer.Deserialize<TaskItem[]>(payload)
-                    ?? throw new SnookException(SnookErrorCode.InternalError, "The batch receipt is invalid.");
-            }
             if (update.ProjectId is { } projectId) await EnsureBatchProjectAsync(connection, transaction, projectId, cancellationToken);
             if (update.ChangeActivity && update.DefaultActivityId is { } activityId)
                 await EnsureActivityAsync(connection, transaction, activityId, cancellationToken);
@@ -127,11 +115,8 @@ public sealed partial class SqliteStore
             // One committed batch notification, with the affected IDs and exact results in its durable receipt.
             await RecordMutationAsync(connection, transaction, operationId, "task-batch", operationId, "updated", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, operationId, 1, cancellationToken);
-            await ExecuteMigrationCommandAsync(connection, transaction,
-                "UPDATE operation_receipts SET result_payload=$payload WHERE operation_id=$id;", cancellationToken,
-                ("$payload", JsonSerializer.Serialize(result)), ("$id", Id(operationId)));
             return result;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "BulkUpdateTasksAsync", new { tasks, update }));
     }
 
     private static string[] ValidateBatchTags(IReadOnlyList<string>? tags)

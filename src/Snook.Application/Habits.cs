@@ -15,39 +15,36 @@ public sealed partial class SnookBackend
     public Task<Habit> CreateHabitAsync(HabitDefinition definition, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateHabitRequest(request, creating: true);
-        return CommitHabitAsync(_store.CreateHabitAsync(definition, request.OperationId, _clock.GetUtcNow(), cancellationToken), request, cancellationToken);
+        return HabitValueAsync(_store.CreateHabitAsync(definition, request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<Habit> UpdateHabitAsync(Guid habitId, HabitUpdate update, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateHabitRequest(request);
-        return CommitHabitAsync(_store.UpdateHabitAsync(habitId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken), request, cancellationToken);
+        return HabitValueAsync(_store.UpdateHabitAsync(habitId, update, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<Habit> SetHabitCompletionAsync(Guid habitId, DateOnly day, bool completed, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateHabitRequest(request);
-        return CommitHabitAsync(_store.SetHabitCompletionAsync(habitId, day, completed, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken), request, cancellationToken);
+        return HabitValueAsync(_store.SetHabitCompletionAsync(habitId, day, completed, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<Habit> SetHabitArchivedAsync(Guid habitId, bool archived, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateHabitRequest(request);
-        return CommitHabitAsync(_store.SetHabitArchivedAsync(habitId, archived, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken), request, cancellationToken);
+        return HabitValueAsync(_store.SetHabitArchivedAsync(habitId, archived, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
     public Task<Habit> SetHabitDeletedAsync(Guid habitId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default)
     {
         ValidateHabitRequest(request);
-        return CommitHabitAsync(_store.SetHabitDeletedAsync(habitId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken), request, cancellationToken);
+        return HabitValueAsync(_store.SetHabitDeletedAsync(habitId, deleted, RequireRevision(request), request.OperationId, _clock.GetUtcNow(), cancellationToken));
     }
 
-    private async Task<Habit> CommitHabitAsync(Task<StoreHabitResult> mutation, OperationRequest request, CancellationToken cancellationToken)
+    private static async Task<Habit> HabitValueAsync(Task<StoreHabitResult> mutation)
     {
         var result = await mutation;
-        if (result.Cursor is { } cursor)
-            Changed?.Invoke(this, new ChangeNotification(cursor, request.OperationId, "habit", result.Habit.Id,
-                result.Kind!, result.Habit.Revision, result.CommittedAtUtc));
         return result.Habit;
     }
 

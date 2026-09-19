@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using Snook.Application;
 using Snook.Contracts;
 using Snook.Domain;
@@ -17,13 +18,55 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
-        var dataRoot = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
+        try
+        {
+            if (args is ["--help"] or ["-h"])
+            {
+                Console.WriteLine("snookd: --data-dir PATH --port PORT. Environment: SNOOK_DATA_DIR, SNOOK_DAEMON_PORT. Ctrl-C/SIGTERM stops gracefully.");
+                return 0;
+            }
+            string? dataRoot = null, port = null;
+            for (var index = 0; index < args.Length; index += 2)
+            {
+                if (index + 1 >= args.Length || args[index] is not ("--data-dir" or "--port"))
+                    throw new SnookException(SnookErrorCode.ValidationFailed, "Use snookd --help for options.");
+                if (args[index] == "--data-dir") dataRoot = args[index + 1];
+                else port = args[index + 1];
+            }
+            return await RunAsync(dataRoot, port);
+        }
+        catch (OperationCanceledException) { return 0; }
+        catch (Exception exception)
+        {
+            // Startup diagnostics must not expose database paths, SQL, content or tokens.
+            Console.Error.WriteLine(JsonSerializer.Serialize(new
+            {
+                ready = false,
+                error = new
+                {
+                    code = exception is SnookException snook ? snook.Code.ToString() : "StartupFailed",
+                    message = "Daemon startup failed. Check configuration, private file permissions, workspace ownership and loopback port availability."
+                }
+            }, JsonOptions));
+            return 1;
+        }
+    }
+
+    private static async Task<int> RunAsync(string? selectedDataRoot, string? selectedPort)
+    {
+        var dataRoot = selectedDataRoot ?? Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
             ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var snookRoot = Path.Combine(dataRoot, "Snook");
-        Directory.CreateDirectory(snookRoot);
+        if (new DirectoryInfo(snookRoot).LinkTarget is not null)
+            throw new SnookException(SnookErrorCode.ValidationFailed, "Daemon profile directory cannot be a symbolic link.");
+        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(snookRoot);
+        else
+        {
+            Directory.CreateDirectory(snookRoot, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.SetUnixFileMode(snookRoot, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
         var databasePath = Path.Combine(snookRoot, "workspace.db");
-        var token = await LoadOrCreateTokenAsync(Path.Combine(snookRoot, "daemon.token"));
-        var port = ReadPort();
+        var port = ReadPort(selectedPort);
         using var cancellationSource = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
         {
@@ -45,17 +88,26 @@ internal static class Program
             var store = new SqliteStore(databasePath);
             await using var backend = new SnookBackend(store);
             await backend.InitializeAsync(cancellationSource.Token);
+            var token = await LoadOrCreateTokenAsync(Path.Combine(snookRoot, "daemon.token"));
             await using var server = new DaemonRpcServer(backend, token, port);
             server.Start();
-            Console.WriteLine(JsonSerializer.Serialize(new
+            var descriptorPath = Path.Combine(snookRoot, "daemon.endpoint.json");
+            var descriptor = new DaemonEndpointDescriptor(1, Guid.NewGuid(), server.Endpoint.AbsoluteUri, ContractInfo.Major, ContractInfo.Minor);
+            await WriteDescriptorAsync(descriptorPath, descriptor, cancellationSource.Token);
+            try
             {
-                ready = true,
-                contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
-                endpoint = server.Endpoint,
-                tokenPath = Path.Combine(snookRoot, "daemon.token")
-            }, JsonOptions));
-            await server.RunAsync(cancellationSource.Token);
-            return 0;
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    ready = true,
+                    contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
+                    endpoint = server.Endpoint,
+                    instanceId = descriptor.InstanceId,
+                    tokenFile = "daemon.token"
+                }, JsonOptions));
+                await server.RunAsync(cancellationSource.Token);
+                return 0;
+            }
+            finally { File.Delete(descriptorPath); }
         }
         finally
         {
@@ -63,21 +115,61 @@ internal static class Program
         }
     }
 
-    private static int ReadPort()
+    private static async Task WriteDescriptorAsync(string path, DaemonEndpointDescriptor descriptor, CancellationToken cancellationToken)
     {
-        var value = Environment.GetEnvironmentVariable("SNOOK_DAEMON_PORT");
-        return int.TryParse(value, out var port) && port is >= 1024 and <= 65535 ? port : 43871;
+        var temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            await using (var stream = new FileStream(temporaryPath, options))
+            {
+                await JsonSerializer.SerializeAsync(stream, descriptor, cancellationToken: cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally { File.Delete(temporaryPath); }
+    }
+
+    private static int ReadPort(string? selectedPort)
+    {
+        var value = selectedPort ?? Environment.GetEnvironmentVariable("SNOOK_DAEMON_PORT");
+        if (value is null) return 43871;
+        return int.TryParse(value, out var port) && port is >= 1024 and <= 65535
+            ? port
+            : throw new SnookException(SnookErrorCode.ValidationFailed, "SNOOK_DAEMON_PORT must be between 1024 and 65535.");
     }
 
     private static async Task<string> LoadOrCreateTokenAsync(string path)
     {
+        if (new FileInfo(path).LinkTarget is not null)
+            throw new SnookException(SnookErrorCode.ValidationFailed, "Daemon token cannot be a symbolic link.");
         if (File.Exists(path))
         {
-            return Guard.Required((await File.ReadAllTextAsync(path)).Trim('\uFEFF'), "daemon token", 512);
+            if (new FileInfo(path).Length > 1024 || (!OperatingSystem.IsWindows()
+                && (File.GetUnixFileMode(path) & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                    | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0))
+                throw new SnookException(SnookErrorCode.ValidationFailed, "Daemon token requires private file permissions and bounded contents.");
+            var existing = (await File.ReadAllTextAsync(path)).Trim('\uFEFF', '\r', '\n', ' ');
+            if (existing.Length != 64 || !existing.All(char.IsAsciiHexDigit))
+                throw new SnookException(SnookErrorCode.ValidationFailed, "Daemon token must contain a 256-bit hexadecimal credential.");
+            return existing;
         }
 
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 256, FileOptions.Asynchronous);
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            Options = FileOptions.Asynchronous
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+        await using var stream = new FileStream(path, options);
         await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         await writer.WriteAsync(token);
         await writer.FlushAsync();
@@ -94,12 +186,18 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
 {
     private const int MaxRequestBytes = 1_048_576;
     private const int MaxArgumentCount = 64;
+    private const int MaxRequests = 64;
+    private const int MaxSubscribers = 16;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IBackendClient _backend;
     private readonly string _token;
     private readonly HttpListener _listener = new();
-    private readonly HashSet<string> _contractMethods = typeof(IBackendClient).GetMethods().Select(method => method.Name).ToHashSet(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<Guid, StreamWriter> _changeSubscribers = new();
+    private readonly Dictionary<string, System.Reflection.MethodInfo> _contractMethods = typeof(IBackendClient).GetMethods()
+        .Where(method => typeof(Task).IsAssignableFrom(method.ReturnType))
+        .ToDictionary(method => method.Name, StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<Guid, Channel<string>> _changeSubscribers = new();
+    private readonly SemaphoreSlim _dispatch = new(1, 1);
+    private readonly SemaphoreSlim _subscriptions = new(MaxSubscribers, MaxSubscribers);
 
     public DaemonRpcServer(IBackendClient backend, string token, int port)
     {
@@ -120,29 +218,40 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         {
             _listener.Start();
         }
+        var handlers = new HashSet<Task>();
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var contextTask = _listener.GetContextAsync();
-                var completed = await Task.WhenAny(contextTask, Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
-                if (completed != contextTask)
+                var context = await _listener.GetContextAsync().WaitAsync(cancellationToken);
+                handlers.RemoveWhere(task => task.IsCompleted);
+                if (handlers.Count >= MaxRequests)
                 {
-                    break;
+                    context.Response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                    context.Response.Close();
+                    continue;
                 }
 
-                _ = HandleAsync(await contextTask, cancellationToken);
+                handlers.Add(HandleAsync(context, stopping.Token));
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         finally
         {
+            await stopping.CancelAsync();
             _listener.Stop();
+            await Task.WhenAll(handlers);
             _listener.Close();
         }
     }
 
     private async Task HandleAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
             if (!IsAuthorized(context.Request))
@@ -165,7 +274,7 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
 
             if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == "/v1/call")
             {
-                await HandleCallAsync(context, cancellationToken);
+                await HandleCallAsync(context, deadline.Token);
                 return;
             }
 
@@ -176,60 +285,99 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
             var actual = exception is System.Reflection.TargetInvocationException { InnerException: not null } invocation
                 ? invocation.InnerException
                 : exception;
-            var code = actual is SnookException snook ? snook.Code : SnookErrorCode.InternalError;
-            var status = actual is SnookException ? HttpStatusCode.BadRequest : HttpStatusCode.InternalServerError;
-            await WriteErrorAsync(context.Response, status, actual?.Message ?? "Daemon request failed.", code, CancellationToken.None);
+            var code = actual is SnookException snook ? snook.Code
+                : actual is JsonException ? SnookErrorCode.ValidationFailed : SnookErrorCode.InternalError;
+            var status = actual is SnookException { Code: not SnookErrorCode.InternalError } or JsonException ? HttpStatusCode.BadRequest
+                : actual is OperationCanceledException ? HttpStatusCode.RequestTimeout : HttpStatusCode.InternalServerError;
+            var message = actual is SnookException { Code: not SnookErrorCode.InternalError } ? actual.Message
+                : actual is JsonException ? "Daemon call contains invalid JSON or argument types."
+                : "Daemon request failed.";
+            try
+            {
+                using var errorDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await WriteErrorAsync(context.Response, status, message, code, errorDeadline.Token);
+            }
+            catch (Exception writeException) when (writeException is IOException or HttpListenerException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+            {
+                // The peer may have disconnected, or an SSE response already started.
+            }
         }
         finally
         {
-            context.Response.Close();
+            try { context.Response.Close(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
     private async Task HandleChangesAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
-        context.Response.StatusCode = (int)HttpStatusCode.OK;
-        context.Response.ContentType = "text/event-stream";
-        context.Response.SendChunked = true;
-        context.Response.KeepAlive = true;
-        await using var writer = new StreamWriter(context.Response.OutputStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true)
+        if (!await _subscriptions.WaitAsync(0, cancellationToken))
         {
-            AutoFlush = true
-        };
+            await WriteErrorAsync(context.Response, HttpStatusCode.ServiceUnavailable,
+                "Daemon change subscriber limit reached.", SnookErrorCode.StoreUnavailable, cancellationToken);
+            return;
+        }
+        var queue = Channel.CreateBounded<string>(new BoundedChannelOptions(256)
+        {
+            SingleReader = true,
+            FullMode = BoundedChannelFullMode.Wait
+        });
         var id = Guid.NewGuid();
-        _changeSubscribers[id] = writer;
         try
         {
-            await writer.WriteAsync(": connected\n\n");
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
+            context.Response.StatusCode = (int)HttpStatusCode.OK;
+            context.Response.ContentType = "text/event-stream";
+            context.Response.Headers["Cache-Control"] = "no-store";
+            context.Response.SendChunked = true;
+            context.Response.KeepAlive = true;
+            await using var writer = new StreamWriter(context.Response.OutputStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true)
+            {
+                AutoFlush = true
+            };
+            _changeSubscribers[id] = queue;
+            await WriteFrameAsync(writer, ": connected\n\n", cancellationToken);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                using var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                heartbeat.CancelAfter(TimeSpan.FromSeconds(10));
+                try
+                {
+                    if (!await queue.Reader.WaitToReadAsync(heartbeat.Token)) break;
+                    while (queue.Reader.TryRead(out var payload))
+                    {
+                        await WriteFrameAsync(writer, payload, cancellationToken);
+                    }
+                }
+                catch (OperationCanceledException) when (heartbeat.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    await WriteFrameAsync(writer, ": heartbeat\n\n", cancellationToken);
+                }
+            }
         }
         finally
         {
             _changeSubscribers.TryRemove(id, out _);
+            _subscriptions.Release();
         }
     }
 
-    private void OnBackendChanged(object? sender, ChangeNotification notification)
-        => _ = BroadcastChangeAsync(notification);
+    private static async Task WriteFrameAsync(StreamWriter writer, string payload, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        await writer.WriteAsync(payload.AsMemory(), deadline.Token);
+        await writer.FlushAsync(deadline.Token);
+    }
 
-    private async Task BroadcastChangeAsync(ChangeNotification notification)
+    private void OnBackendChanged(object? sender, ChangeNotification notification)
     {
         var payload = $"data: {JsonSerializer.Serialize(notification, JsonOptions)}\n\n";
         foreach (var subscriber in _changeSubscribers.ToArray())
         {
-            try
+            if (!subscriber.Value.Writer.TryWrite(payload))
             {
-                await subscriber.Value.WriteAsync(payload);
-            }
-            catch (IOException)
-            {
-                _changeSubscribers.TryRemove(subscriber.Key, out _);
-            }
-            catch (ObjectDisposedException)
-            {
+                // Disconnect on overflow; reconnecting clients obtain a fresh snapshot.
+                subscriber.Value.Writer.TryComplete();
                 _changeSubscribers.TryRemove(subscriber.Key, out _);
             }
         }
@@ -239,7 +387,8 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
     {
         var body = await ReadRequestBodyAsync(context.Request, cancellationToken);
         using var document = JsonDocument.Parse(body);
-        if (!document.RootElement.TryGetProperty("method", out var methodElement)
+        if (document.RootElement.ValueKind != JsonValueKind.Object
+            || !document.RootElement.TryGetProperty("method", out var methodElement)
             || methodElement.ValueKind != JsonValueKind.String
             || !document.RootElement.TryGetProperty("args", out var argsElement)
             || argsElement.ValueKind != JsonValueKind.Array)
@@ -248,14 +397,11 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         }
 
         var methodName = methodElement.GetString()!;
-        if (!_contractMethods.Contains(methodName))
+        if (!_contractMethods.TryGetValue(methodName, out var method))
         {
             throw new SnookException(SnookErrorCode.NotFound, "The requested backend method is not in the public contract.");
         }
 
-        var method = typeof(SnookBackend).GetMethods()
-            .SingleOrDefault(candidate => candidate.Name == methodName && typeof(Task).IsAssignableFrom(candidate.ReturnType))
-            ?? throw new SnookException(SnookErrorCode.NotFound, "The requested backend method is unavailable.");
         var parameters = method.GetParameters();
         var args = argsElement.EnumerateArray().ToArray();
         if (args.Length > MaxArgumentCount)
@@ -284,6 +430,13 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
                 continue;
             }
 
+            if (args[supplied].ValueKind == JsonValueKind.Null
+                && (parameter.ParameterType.IsValueType
+                    ? Nullable.GetUnderlyingType(parameter.ParameterType) is null
+                    : new System.Reflection.NullabilityInfoContext().Create(parameter).ReadState == System.Reflection.NullabilityState.NotNull))
+            {
+                throw new SnookException(SnookErrorCode.ValidationFailed, $"Argument '{parameter.Name}' cannot be null.");
+            }
             values[index] = args[supplied].ValueKind == JsonValueKind.Null
                 ? null
                 : args[supplied].Deserialize(parameter.ParameterType, JsonOptions);
@@ -295,9 +448,18 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
             throw new SnookException(SnookErrorCode.ValidationFailed, "Too many arguments for the requested backend method.");
         }
 
-        var task = (Task)(method.Invoke(_backend, values) ?? throw new SnookException(SnookErrorCode.InternalError, "The backend method returned no task."));
-        await task;
-        var result = task.GetType().GetProperty("Result")?.GetValue(task);
+        object? result;
+        await _dispatch.WaitAsync(cancellationToken);
+        try
+        {
+            var task = (Task)(method.Invoke(_backend, values) ?? throw new SnookException(SnookErrorCode.InternalError, "The backend method returned no task."));
+            await task;
+            result = method.ReturnType.IsGenericType ? method.ReturnType.GetProperty("Result")?.GetValue(task) : null;
+        }
+        finally
+        {
+            _dispatch.Release();
+        }
         await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { result }, cancellationToken);
     }
 
@@ -357,11 +519,10 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
     {
         _backend.Changed -= OnBackendChanged;
         _listener.Close();
-        foreach (var subscriber in _changeSubscribers.Values)
-        {
-            subscriber.Dispose();
-        }
+        foreach (var subscriber in _changeSubscribers.Values) subscriber.Writer.TryComplete();
         _changeSubscribers.Clear();
+        _dispatch.Dispose();
+        _subscriptions.Dispose();
         return ValueTask.CompletedTask;
     }
 }

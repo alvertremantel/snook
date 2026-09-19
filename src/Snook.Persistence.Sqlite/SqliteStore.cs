@@ -38,20 +38,27 @@ public sealed partial class SqliteStore : IAsyncDisposable
     private static readonly string SchemaChecksum = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(SchemaSql))).ToLowerInvariant();
     private readonly string _databasePath;
     private readonly string _leasePath;
+    private readonly TimeProvider _clock;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly SemaphoreSlim _connectionGate = new(1, 1);
+    private readonly object _disposeSync = new();
+    private Task? _disposeTask;
+    private volatile bool _disposing;
     private FileStream? _lease;
     private bool _initialized;
 
-    public SqliteStore(string databasePath)
+    public SqliteStore(string databasePath, TimeProvider? clock = null)
     {
         _databasePath = Path.GetFullPath(databasePath);
         _leasePath = _databasePath + ".owner";
+        _clock = clock ?? TimeProvider.System;
     }
 
     public string DatabasePath => _databasePath;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        ObjectDisposedException.ThrowIf(_disposing, this);
         if (_initialized)
         {
             return;
@@ -61,6 +68,11 @@ public sealed partial class SqliteStore : IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
+            if (!File.Exists(_databasePath)
+                && (Directory.EnumerateFiles(directory, Path.GetFileName(_databasePath) + ".before-restore-*").Any()
+                    || Directory.EnumerateDirectories(directory, ".snook-restore-*").Any()))
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    "The active workspace is missing but restore recovery files exist. Keep the host stopped and recover the retained workspace; a new empty database will not be created.");
         }
 
         try
@@ -77,7 +89,8 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         try
         {
-            await using var connection = await OpenConnectionAsync(cancellationToken);
+            await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+            var connection = connectionLease.Connection;
             await using var command = connection.CreateCommand();
             command.CommandText = SchemaSql;
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -85,11 +98,12 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await EnsureTaskWorkspaceMigrationAsync(connection, cancellationToken);
             await EnsureHabitsMigrationAsync(connection, cancellationToken);
             await EnsureJournalsMigrationAsync(connection, cancellationToken);
+            await EnsureExactReceiptsMigrationAsync(connection, cancellationToken);
             await SeedAsync(connection, cancellationToken);
             await EnsureDefaultSettingsAsync(connection, cancellationToken);
             await EnsureDefaultCalendarAsync(connection, cancellationToken);
             await ValidateIntegrityAsync(connection, cancellationToken);
-            await DetectRecoveryRequiredAsync(connection, DateTimeOffset.UtcNow, cancellationToken);
+            await DetectRecoveryRequiredAsync(connection, _clock.GetUtcNow(), cancellationToken);
             _initialized = true;
         }
         catch
@@ -161,7 +175,8 @@ public sealed partial class SqliteStore : IAsyncDisposable
     public async Task<StoreState> LoadStateAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
 
         var workspace = await ReadWorkspaceAsync(connection, cancellationToken);
         var settings = await ReadSettingsAsync(connection, workspace.Id, cancellationToken);
@@ -186,7 +201,8 @@ public sealed partial class SqliteStore : IAsyncDisposable
     public async Task<WorkspaceSettings> GetSettingsAsync(CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         var workspaceId = await ReadWorkspaceIdAsync(connection, null, cancellationToken);
         return await ReadSettingsAsync(connection, workspaceId, cancellationToken);
     }
@@ -197,10 +213,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         return await WriteAsync(async (connection, transaction) =>
         {
             var workspaceId = await ReadWorkspaceIdAsync(connection, transaction, cancellationToken);
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadSettingsAsync(connection, workspaceId, cancellationToken);
-            }
 
             var current = await ReadSettingsAsync(connection, workspaceId, cancellationToken);
             if (current.Revision != expectedRevision)
@@ -225,7 +237,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "workspace-settings", workspaceId, "updated", current.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, workspaceId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateSettingsAsync", new { settings, expectedRevision }));
     }
 
     public async Task<Board> CreateBoardAsync(string name, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -234,11 +246,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedName = Guard.Required(name, "name", 200);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadBoardByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var workspaceId = await ReadWorkspaceIdAsync(connection, transaction, cancellationToken);
             await EnsureNameAvailableAsync(connection, transaction, "boards", "workspace_id", workspaceId, validatedName, null, cancellationToken);
             var sortKey = await NextSortKeyAsync(connection, transaction, "boards", "workspace_id", workspaceId, cancellationToken);
@@ -254,7 +261,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "board", board.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, board.Id, 1, cancellationToken);
             return board;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateBoardAsync", new { name }));
     }
 
     public async Task<Board> UpdateBoardAsync(Guid boardId, BoardUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -263,11 +270,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedName = Guard.Required(update.Name, "name", 200);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadBoardByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var board = await ReadBoardAsync(connection, transaction, boardId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Board was not found.");
             if (board.Revision != expectedRevision)
@@ -282,7 +284,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "board", boardId, "updated", board.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, boardId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateBoardAsync", new { boardId, update, expectedRevision }));
     }
 
     public async Task<Board> ReorderBoardAsync(Guid boardId, ReorderDirection direction, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -295,11 +297,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadBoardByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var board = await ReadBoardAsync(connection, transaction, boardId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Board was not found.");
             if (board.Revision != expectedRevision)
@@ -333,7 +330,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "board", boardId, "reordered", board.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, boardId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "ReorderBoardAsync", new { boardId, direction, expectedRevision }));
     }
 
     public Task<Board> SetBoardArchivedAsync(Guid boardId, bool archived, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -344,11 +341,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadBoardByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var board = await ReadBoardAsync(connection, transaction, boardId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Board was not found.");
             if (board.Revision != expectedRevision)
@@ -362,7 +354,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "board", boardId, archived ? "archived" : "restored", board.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, boardId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetBoardArchivedCoreAsync", new { boardId, archived, expectedRevision }));
     }
 
     public Task<Board> SetBoardDeletedAsync(Guid boardId, bool deleted, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -373,11 +365,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadBoardByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var board = await ReadBoardAsync(connection, transaction, boardId, true, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Board was not found.");
             if (board.Revision != expectedRevision)
@@ -391,7 +378,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "board", boardId, deleted ? "deleted" : "restored-deleted", board.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, boardId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetBoardDeletedCoreAsync", new { boardId, deleted, expectedRevision }));
     }
 
     public async Task<Project> CreateProjectAsync(Guid boardId, string name, string description, bool starred, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -401,11 +388,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedDescription = string.IsNullOrWhiteSpace(description) ? string.Empty : Guard.Optional(description, "description", 20_000);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadProjectByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             await EnsureActiveExistsAsync(connection, transaction, "boards", boardId, "Board", cancellationToken);
             await EnsureNameAvailableAsync(connection, transaction, "projects", "board_id", boardId, validatedName, null, cancellationToken);
             var sortKey = await NextSortKeyAsync(connection, transaction, "projects", "board_id", boardId, cancellationToken);
@@ -423,7 +405,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "project", project.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, project.Id, 1, cancellationToken);
             return project;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateProjectAsync", new { boardId, name, description, starred }));
     }
 
     public async Task<Project> UpdateProjectAsync(Guid projectId, ProjectUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -433,11 +415,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedDescription = string.IsNullOrWhiteSpace(update.Description) ? string.Empty : Guard.Optional(update.Description, "description", 20_000);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadProjectByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var project = await ReadProjectAsync(connection, transaction, projectId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Project was not found.");
             if (project.Revision != expectedRevision)
@@ -465,7 +442,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "project", projectId, "updated", project.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, projectId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateProjectAsync", new { projectId, update, expectedRevision }));
     }
 
     public async Task<Project> ReorderProjectAsync(Guid projectId, ReorderDirection direction, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -478,11 +455,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadProjectByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var project = await ReadProjectAsync(connection, transaction, projectId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Project was not found.");
             if (project.Revision != expectedRevision)
@@ -516,7 +488,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "project", projectId, "reordered", project.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, projectId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "ReorderProjectAsync", new { projectId, direction, expectedRevision }));
     }
 
     public Task<Project> SetProjectArchivedAsync(Guid projectId, bool archived, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -527,11 +499,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadProjectByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var project = await ReadProjectAsync(connection, transaction, projectId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Project was not found.");
             if (project.Revision != expectedRevision)
@@ -545,7 +512,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "project", projectId, archived ? "archived" : "restored", project.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, projectId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetProjectArchivedCoreAsync", new { projectId, archived, expectedRevision }));
     }
 
     public Task<Project> SetProjectDeletedAsync(Guid projectId, bool deleted, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -556,11 +523,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadProjectByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var project = await ReadProjectAsync(connection, transaction, projectId, true, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Project was not found.");
             if (project.Revision != expectedRevision)
@@ -574,7 +536,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "project", projectId, deleted ? "deleted" : "restored-deleted", project.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, projectId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetProjectDeletedCoreAsync", new { projectId, deleted, expectedRevision }));
     }
 
     public async Task<ActivityGroup> CreateActivityGroupAsync(string name, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -583,11 +545,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedName = Guard.Required(name, "name", 200);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityGroupByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var workspaceId = await ReadWorkspaceIdAsync(connection, transaction, cancellationToken);
             await EnsureNameAvailableAsync(connection, transaction, "activity_groups", "workspace_id", workspaceId, validatedName, null, cancellationToken);
             var sortKey = await NextSortKeyAsync(connection, transaction, "activity_groups", "workspace_id", workspaceId, cancellationToken);
@@ -603,7 +560,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity-group", group.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, group.Id, 1, cancellationToken);
             return group;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateActivityGroupAsync", new { name }));
     }
 
     public async Task<ActivityGroup> UpdateActivityGroupAsync(Guid groupId, ActivityGroupUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -612,11 +569,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedName = Guard.Required(update.Name, "name", 200);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityGroupByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var group = await ReadActivityGroupAsync(connection, transaction, groupId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Activity group was not found.");
             if (group.Revision != expectedRevision)
@@ -642,7 +594,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity-group", groupId, "updated", group.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, groupId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateActivityGroupAsync", new { groupId, update, expectedRevision }));
     }
 
     public async Task<ActivityGroup> ReorderActivityGroupAsync(Guid groupId, ReorderDirection direction, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -655,11 +607,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityGroupByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var group = await ReadActivityGroupAsync(connection, transaction, groupId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Activity group was not found.");
             if (group.Revision != expectedRevision)
@@ -693,7 +640,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity-group", groupId, "reordered", group.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, groupId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "ReorderActivityGroupAsync", new { groupId, direction, expectedRevision }));
     }
 
     public Task<ActivityGroup> SetActivityGroupDeletedAsync(Guid groupId, bool deleted, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -704,11 +651,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityGroupByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var group = await ReadActivityGroupAsync(connection, transaction, groupId, true, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Activity group was not found.");
             if (group.Revision != expectedRevision)
@@ -727,7 +669,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity-group", groupId, deleted ? "deleted" : "restored-deleted", group.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, groupId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetActivityGroupDeletedCoreAsync", new { groupId, deleted, expectedRevision }));
     }
 
     public async Task<Activity> CreateActivityAsync(string name, string description, SessionLane defaultLane, Guid? groupId, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -742,11 +684,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var workspaceId = await ReadWorkspaceIdAsync(connection, transaction, cancellationToken);
             if (groupId is not null)
             {
@@ -767,7 +704,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity", activity.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, activity.Id, 1, cancellationToken);
             return activity;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateActivityAsync", new { name, description, defaultLane, groupId }));
     }
 
     public async Task<Activity> UpdateActivityAsync(Guid activityId, ActivityUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -782,11 +719,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var activity = await ReadActivityAsync(connection, transaction, activityId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Activity was not found.");
             if (activity.Revision != expectedRevision)
@@ -819,7 +751,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity", activityId, "updated", activity.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, activityId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateActivityAsync", new { activityId, update, expectedRevision }));
     }
 
     public Task<Activity> SetActivityArchivedAsync(Guid activityId, bool archived, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -830,11 +762,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var activity = await ReadActivityAsync(connection, transaction, activityId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Activity was not found.");
             if (activity.Revision != expectedRevision)
@@ -848,7 +775,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity", activityId, archived ? "archived" : "restored", activity.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, activityId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetActivityArchivedCoreAsync", new { activityId, archived, expectedRevision }));
     }
 
     public Task<Activity> SetActivityDeletedAsync(Guid activityId, bool deleted, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -859,11 +786,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadActivityByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var activity = await ReadActivityAsync(connection, transaction, activityId, true, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Activity was not found.");
             if (activity.Revision != expectedRevision)
@@ -877,7 +799,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "activity", activityId, deleted ? "deleted" : "restored-deleted", activity.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, activityId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetActivityDeletedCoreAsync", new { activityId, deleted, expectedRevision }));
     }
 
     public async Task<TaskItem> CreateTaskAsync(
@@ -892,11 +814,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTaskByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             await EnsureProjectAsync(connection, transaction, projectId, cancellationToken);
             var task = new TaskItem(
                 Guid.NewGuid(),
@@ -919,7 +836,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", task.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, task.Id, 1, cancellationToken);
             return task;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateTaskAsync", new { projectId, title, priority, dueDate }));
     }
 
     public async Task<TaskItem> UpdateTaskAsync(
@@ -940,11 +857,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTaskByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var task = await ReadTaskAsync(connection, transaction, taskId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Task was not found.");
             if (task.ArchivedAtUtc is not null)
@@ -966,14 +878,14 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                UPDATE tasks SET title=$title, description=$description, priority=$priority,
-                    due_date=$due_date,
-                    due_at_utc_ms=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_at_utc_ms END,
-                    due_time_zone=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_time_zone END,
-                    default_activity_id=$activity, starred=$starred,
-                    updated_at_utc_ms=$updated, revision=$revision
-                WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
-                """;
+        UPDATE tasks SET title=$title, description=$description, priority=$priority,
+            due_date=$due_date,
+            due_at_utc_ms=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_at_utc_ms END,
+            due_time_zone=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_time_zone END,
+            default_activity_id=$activity, starred=$starred,
+            updated_at_utc_ms=$updated, revision=$revision
+        WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
+        """;
             command.Parameters.AddWithValue("$title", title);
             command.Parameters.AddWithValue("$description", description);
             command.Parameters.AddWithValue("$priority", (int)update.Priority);
@@ -1004,7 +916,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", task.Id, "updated", task.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, task.Id, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateTaskAsync", new { taskId, update, expectedRevision }));
     }
 
     public async Task<TaskItem> MoveTaskAsync(Guid taskId, Guid projectId, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1012,11 +924,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTaskByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             await EnsureProjectAsync(connection, transaction, projectId, cancellationToken);
             var task = await ReadTaskAsync(connection, transaction, taskId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Task was not found.");
@@ -1048,7 +955,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", task.Id, "moved", task.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, task.Id, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "MoveTaskAsync", new { taskId, projectId, expectedRevision }));
     }
 
     public Task<TaskItem> SetTaskArchivedAsync(Guid taskId, bool archived, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1062,11 +969,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTaskByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var task = await ReadTaskAnyAsync(connection, transaction, taskId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Task was not found.");
             if (task.Revision != expectedRevision)
@@ -1104,13 +1006,14 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", task.Id, kind, task.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, task.Id, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetTaskSoftStateAsync", new { taskId, archived, deleted, expectedRevision }));
     }
 
     public async Task<TaskDetails> GetTaskDetailsAsync(Guid taskId, DateTimeOffset? nowUtc = null, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         var task = await ReadTaskAsync(connection, null, taskId, cancellationToken)
             ?? throw new SnookException(SnookErrorCode.NotFound, "Task was not found.");
         var tags = await ReadTaskTagsAsync(connection, taskId, cancellationToken);
@@ -1136,11 +1039,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTaskLinkByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             await EnsureTaskAsync(connection, transaction, taskId, cancellationToken);
             var link = new TaskLink(Guid.NewGuid(), taskId, string.IsNullOrWhiteSpace(label) ? null : Guard.Optional(label, "label", 300), validatedUri, Guard.Required(kind, "kind", 100));
             await using var command = connection.CreateCommand();
@@ -1156,7 +1054,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task-link", link.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, link.Id, 1, cancellationToken);
             return link;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "AddTaskLinkAsync", new { taskId, label, uri, kind }));
     }
 
     public async Task<Tag> AddTaskTagAsync(Guid taskId, string displayName, string? color, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1166,11 +1064,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var normalized = name.ToUpperInvariant();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTagByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var workspaceId = await ReadWorkspaceIdForTaskAsync(connection, transaction, taskId, cancellationToken);
             var tag = await ReadTagByNameAsync(connection, transaction, workspaceId, normalized, cancellationToken);
             if (tag is null)
@@ -1197,7 +1090,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", taskId, "tag-added", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, tag.Id, tag.Revision, cancellationToken);
             return tag;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "AddTaskTagAsync", new { taskId, displayName, color }));
     }
 
     public Task<Tag> AddProjectTagAsync(Guid projectId, string displayName, string? color, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1213,11 +1106,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var normalized = name.ToUpperInvariant();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTagByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var workspaceId = aggregateType switch
             {
                 "project" => await ReadWorkspaceIdForProjectAsync(connection, transaction, entityId, cancellationToken),
@@ -1249,7 +1137,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, aggregateType, entityId, "tag-added", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, tag.Id, tag.Revision, cancellationToken);
             return tag;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "AddOrganizationTagAsync", new { entityId, membershipTable, entityColumn, aggregateType, displayName, color }));
     }
 
     public async Task<TaskItem> SetTaskCompletionAsync(
@@ -1263,11 +1151,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadTaskByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var task = await ReadTaskAsync(connection, transaction, taskId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Task was not found.");
             if (task.Revision != expectedRevision)
@@ -1285,10 +1168,10 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                UPDATE tasks SET status = $status, completed_at_utc_ms = $completed_at,
-                    updated_at_utc_ms = $updated_at, revision = $revision
-                WHERE id = $id AND revision = $expected;
-                """;
+        UPDATE tasks SET status = $status, completed_at_utc_ms = $completed_at,
+            updated_at_utc_ms = $updated_at, revision = $revision
+        WHERE id = $id AND revision = $expected;
+        """;
             command.Parameters.AddWithValue("$status", completed ? "completed" : "open");
             command.Parameters.AddWithValue("$completed_at", completedAt is null ? DBNull.Value : completedAt.Value.ToUnixTimeMilliseconds());
             command.Parameters.AddWithValue("$updated_at", nowUtc.ToUnixTimeMilliseconds());
@@ -1304,7 +1187,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", task.Id, completed ? "completed" : "reopened", task.Revision, newRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, task.Id, newRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetTaskCompletionAsync", new { taskId, completed, expectedRevision }));
     }
 
     public async Task AddTaskDependencyAsync(Guid taskId, Guid prerequisiteTaskId, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1312,11 +1195,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return 0;
-            }
-
             if (taskId == prerequisiteTaskId)
             {
                 throw new SnookException(SnookErrorCode.ValidationFailed, "A task cannot depend on itself.");
@@ -1340,7 +1218,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "task", taskId, "dependency-added", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, taskId, 1, cancellationToken);
             return 0;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "AddTaskDependencyAsync", new { taskId, prerequisiteTaskId }));
     }
 
     public async Task<TrackingSession> StartSessionAsync(
@@ -1360,11 +1238,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadSessionByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             if (taskId is not null)
             {
                 var task = await ReadTaskAsync(connection, transaction, taskId.Value, cancellationToken)
@@ -1373,6 +1246,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 {
                     throw new SnookException(SnookErrorCode.InvalidTransition, "Archived or deleted tasks cannot be timed.");
                 }
+                activityId ??= task.DefaultActivityId;
             }
 
             if (activityId is not null)
@@ -1404,7 +1278,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "session", session.Id, "started", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, session.Id, 1, cancellationToken);
             return session;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "StartSessionAsync", new { taskId, activityId, lane }));
     }
 
     public Task<TrackingSession> TransitionSessionAsync(
@@ -1420,11 +1294,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadSessionByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var session = await ReadSessionAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Session was not found.");
             if (session.Revision != expectedRevision)
@@ -1468,10 +1337,10 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                UPDATE tracking_sessions SET state = $state, stopped_at_utc_ms = $stopped,
-                    notes = COALESCE($notes, notes), updated_at_utc_ms = $updated, revision = $revision
-                WHERE id = $id AND revision = $expected;
-                """;
+        UPDATE tracking_sessions SET state = $state, stopped_at_utc_ms = $stopped,
+            notes = COALESCE($notes, notes), updated_at_utc_ms = $updated, revision = $revision
+        WHERE id = $id AND revision = $expected;
+        """;
             command.Parameters.AddWithValue("$state", State(targetState));
             command.Parameters.AddWithValue("$stopped", targetState == SessionState.Stopped ? nowUtc.ToUnixTimeMilliseconds() : DBNull.Value);
             command.Parameters.AddWithValue("$notes", notes is null ? DBNull.Value : Guard.Optional(notes, "notes"));
@@ -1489,19 +1358,16 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "session", sessionId, targetState.ToString().ToLowerInvariant(), session.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, sessionId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "TransitionSessionAsync", new { sessionId, targetState, expectedRevision, notes }));
     }
 
-    public async Task<TrackingSession> ResolveRecoveryAsync(Guid sessionId, RecoveryDecision decision, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
+    public async Task<TrackingSession> ResolveRecoveryAsync(Guid sessionId, RecoveryDecision decision, long expectedRevision, Guid operationId, DateTimeOffset nowUtc,
+        bool? allowConcurrentForegroundOverride = null, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        if (!Enum.IsDefined(decision)) throw new SnookException(SnookErrorCode.ValidationFailed, "Choose a supported recovery decision.");
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadSessionByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var session = await ReadSessionAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Session was not found.");
             if (session.State != SessionState.RecoveryRequired)
@@ -1515,6 +1381,10 @@ public sealed partial class SqliteStore : IAsyncDisposable
             }
 
             var openInterval = session.Intervals.SingleOrDefault(interval => interval.EndedAtUtc is null);
+            var restored = session.RecoveryStatus == "workspace-restored";
+            var lastKnown = restored ? RestoredLastKnown(session) : Max(session.StartedAtUtc, Min(nowUtc, session.UpdatedAtUtc));
+            if (restored && decision != RecoveryDecision.StopAtLastKnown && nowUtc < lastKnown)
+                throw new SnookException(SnookErrorCode.ValidationFailed, "The current clock is before the restored time boundary. Correct the clock or choose Last known.");
             if (decision == RecoveryDecision.StopNow && nowUtc < session.StartedAtUtc)
             {
                 throw new SnookException(SnookErrorCode.ValidationFailed, "The current clock is before this session started; choose stop-at-last-known or continue.");
@@ -1527,14 +1397,21 @@ public sealed partial class SqliteStore : IAsyncDisposable
             {
                 stoppedAt = decision == RecoveryDecision.StopNow
                     ? nowUtc
-                    : Max(session.StartedAtUtc, Min(nowUtc, session.UpdatedAtUtc));
+                    : lastKnown;
                 if (openInterval is not null)
                 {
                     await CloseIntervalAtAsync(connection, transaction, openInterval.Id, Max(openInterval.StartedAtUtc, stoppedAt.Value), cancellationToken);
                 }
+                else if (restored && decision == RecoveryDecision.StopNow && nowUtc > lastKnown)
+                    await InsertIntervalAsync(connection, transaction, sessionId, new TimeInterval(Guid.NewGuid(), lastKnown, nowUtc, "recovery-stop-now"), cancellationToken);
             }
             else if (openInterval is null)
             {
+                if (session.TaskId is { } taskId) await EnsureActiveExistsAsync(connection, transaction, "tasks", taskId, "Task", cancellationToken);
+                if (session.ActivityId is { } activityId) await EnsureActivityAsync(connection, transaction, activityId, cancellationToken);
+                var settings = await ReadSettingsAsync(connection, session.WorkspaceId, cancellationToken);
+                if (session.Lane == SessionLane.Foreground && !(allowConcurrentForegroundOverride ?? settings.AllowConcurrentForeground))
+                    await PauseRunningForegroundAsync(connection, transaction, nowUtc, cancellationToken);
                 await InsertIntervalAsync(connection, transaction, sessionId, new TimeInterval(Guid.NewGuid(), nowUtc, null, "recovery-continue"), cancellationToken);
             }
             else if (openInterval.StartedAtUtc > nowUtc)
@@ -1552,14 +1429,16 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                UPDATE tracking_sessions SET state=$state, stopped_at_utc_ms=$stopped,
-                    notes=CASE WHEN notes='' THEN $decision_note ELSE notes || char(10) || $decision_note END,
-                    recovery_status=$recovery_status, updated_at_utc_ms=$updated, revision=$revision
-                WHERE id=$id AND revision=$expected;
-                """;
+        UPDATE tracking_sessions SET state=$state, stopped_at_utc_ms=$stopped,
+            notes=CASE WHEN notes='' THEN $decision_note ELSE notes || char(10) || $decision_note END,
+            recovery_status=$recovery_status, updated_at_utc_ms=$updated, revision=$revision
+        WHERE id=$id AND revision=$expected;
+        """;
             command.Parameters.AddWithValue("$state", State(nextState));
             command.Parameters.AddWithValue("$stopped", stoppedAt is null ? DBNull.Value : stoppedAt.Value.ToUnixTimeMilliseconds());
-            command.Parameters.AddWithValue("$decision_note", $"Recovery decision: {decisionName}.");
+            command.Parameters.AddWithValue("$decision_note", restored
+                ? $"Recovery decision after workspace restore: {decisionName}. {(decision == RecoveryDecision.StopNow ? "Credited the gap through now." : decision == RecoveryDecision.Continue ? "Started a new interval now without crediting the gap." : "Kept only recorded time at the backup boundary.")}"
+                : $"Recovery decision: {decisionName}.");
             command.Parameters.AddWithValue("$recovery_status", decisionName);
             command.Parameters.AddWithValue("$updated", nowUtc.ToUnixTimeMilliseconds());
             command.Parameters.AddWithValue("$revision", nextRevision);
@@ -1572,10 +1451,12 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
             var updated = await ReadSessionAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.InternalError, "Session disappeared during recovery.");
+            await InsertTrackingCorrectionAsync(connection, transaction, new TrackingCorrection(Guid.NewGuid(), sessionId, operationId,
+                $"Explicit recovery decision: {decisionName}.", session, updated, nowUtc), cancellationToken);
             await RecordMutationAsync(connection, transaction, operationId, "session", sessionId, $"recovery-{decisionName}", session.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, sessionId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "ResolveRecoveryAsync", new { sessionId, decision, expectedRevision }));
     }
 
     public async Task<DomainCalendar> CreateCalendarAsync(string name, string color, bool visible, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1585,11 +1466,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedColor = ValidateColor(color);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var workspaceId = await ReadWorkspaceIdAsync(connection, transaction, cancellationToken);
             await EnsureNameAvailableAsync(connection, transaction, "calendars", "workspace_id", workspaceId, validatedName, null, cancellationToken);
             var calendar = new DomainCalendar(Guid.NewGuid(), workspaceId, validatedName, validatedColor, visible, 1);
@@ -1605,7 +1481,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar", calendar.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, calendar.Id, 1, cancellationToken);
             return calendar;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateCalendarAsync", new { name, color, visible }));
     }
 
     public async Task<DomainCalendar> UpdateCalendarAsync(Guid calendarId, CalendarUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1615,11 +1491,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validatedColor = ValidateColor(update.Color);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var calendar = await ReadCalendarAsync(connection, transaction, calendarId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Calendar was not found.");
             if (calendar.Revision != expectedRevision)
@@ -1647,7 +1518,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar", calendarId, "updated", calendar.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, calendarId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateCalendarAsync", new { calendarId, update, expectedRevision }));
     }
 
     public Task<DomainCalendar> SetCalendarDeletedAsync(Guid calendarId, bool deleted, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1658,11 +1529,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var calendar = await ReadCalendarAsync(connection, transaction, calendarId, true, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Calendar was not found.");
             if (calendar.Revision != expectedRevision)
@@ -1692,7 +1558,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar", calendarId, deleted ? "deleted" : "restored-deleted", calendar.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, calendarId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetCalendarDeletedCoreAsync", new { calendarId, deleted, expectedRevision }));
     }
 
     public async Task<CalendarEvent> CreateCalendarEventAsync(
@@ -1715,18 +1581,13 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validated = ValidateCalendarEvent(title, description, location, color, startAtUtc, endAtUtc, timeZone, recurrenceRule, recurrenceEndUtc);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarEventByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             await EnsureCalendarAsync(connection, transaction, calendarId, cancellationToken);
             var item = new CalendarEvent(Guid.NewGuid(), calendarId, validated.Title, validated.Description, validated.Location, validated.Color, startAtUtc, endAtUtc, allDay, validated.TimeZone, validated.RecurrenceRule, recurrenceEndUtc, null, 1);
             await InsertCalendarEventAsync(connection, transaction, item, nowUtc, cancellationToken);
             await RecordMutationAsync(connection, transaction, operationId, "calendar-event", item.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, item.Id, 1, cancellationToken);
             return item;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateCalendarEventAsync", new { calendarId, title, startAtUtc, endAtUtc, description, location, color, allDay, timeZone, recurrenceRule, recurrenceEndUtc }));
     }
 
     public async Task<CalendarEvent> UpdateCalendarEventAsync(Guid eventId, CalendarEventUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1735,11 +1596,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var validated = ValidateCalendarEvent(update.Title, update.Description, update.Location, update.Color, update.StartAtUtc, update.EndAtUtc, update.TimeZone, update.RecurrenceRule, update.RecurrenceEndUtc);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarEventByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var before = await ReadCalendarEventAsync(connection, transaction, eventId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Calendar event was not found.");
             if (before.Revision != expectedRevision)
@@ -1751,11 +1607,11 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                UPDATE calendar_events SET title=$title,description=$description,location=$location,color=$color,
-                    start_at_utc_ms=$start,end_at_utc_ms=$end,all_day=$all_day,time_zone=$zone,
-                    recurrence_rule=$rule,recurrence_end_utc_ms=$recurrence_end,revision=$revision,updated_at_utc_ms=$updated
-                WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
-                """;
+        UPDATE calendar_events SET title=$title,description=$description,location=$location,color=$color,
+            start_at_utc_ms=$start,end_at_utc_ms=$end,all_day=$all_day,time_zone=$zone,
+            recurrence_rule=$rule,recurrence_end_utc_ms=$recurrence_end,revision=$revision,updated_at_utc_ms=$updated
+        WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
+        """;
             AddCalendarEventParameters(command, update.StartAtUtc, update.EndAtUtc, update.AllDay, validated, update.RecurrenceEndUtc, nextRevision, eventId, expectedRevision, nowUtc);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
             {
@@ -1779,7 +1635,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar-event", eventId, "updated", before.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, eventId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateCalendarEventAsync", new { eventId, update, expectedRevision }));
     }
 
     public Task<CalendarEvent> SetCalendarEventDeletedAsync(Guid eventId, bool deleted, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1790,11 +1646,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarEventByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var before = await ReadCalendarEventAsync(connection, transaction, eventId, true, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Calendar event was not found.");
             if (before.Revision != expectedRevision)
@@ -1820,7 +1671,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar-event", eventId, deleted ? "deleted" : "restored-deleted", before.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, eventId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "SetCalendarEventDeletedCoreAsync", new { eventId, deleted, expectedRevision }));
     }
 
     public async Task<CalendarEventOccurrenceOverride> UpsertCalendarEventExceptionAsync(Guid eventId, DateTimeOffset originalStartAtUtc, DateTimeOffset? newStartAtUtc, DateTimeOffset? newEndAtUtc, string? titleOverride, bool cancelled, long? expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1833,11 +1684,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadCalendarEventExceptionByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var calendarEvent = await ReadCalendarEventAsync(connection, transaction, eventId, false, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Calendar event was not found.");
             if (calendarEvent.RecurrenceRule is null)
@@ -1889,7 +1735,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar-event-exception", item.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, item.Id, 1, cancellationToken);
             return item;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpsertCalendarEventExceptionAsync", new { eventId, originalStartAtUtc, newStartAtUtc, newEndAtUtc, titleOverride, cancelled, expectedRevision }));
     }
 
     public async Task DeleteCalendarEventExceptionAsync(Guid exceptionId, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -1897,11 +1743,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         EnsureInitialized();
         await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return true;
-            }
-
             var exception = await ReadCalendarEventExceptionAsync(connection, transaction, exceptionId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Calendar event exception was not found.");
             if (exception.Revision != expectedRevision)
@@ -1922,7 +1763,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "calendar-event-exception", exceptionId, "deleted", exception.Revision, exception.Revision + 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, exceptionId, exception.Revision + 1, cancellationToken);
             return true;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "DeleteCalendarEventExceptionAsync", new { exceptionId, expectedRevision }));
     }
 
     public async Task<ScheduleBlock> CreateScheduleBlockAsync(
@@ -1954,11 +1795,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadScheduleBlockByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             await EnsureCalendarAsync(connection, transaction, calendarId, cancellationToken);
             if (taskId is not null)
             {
@@ -1989,7 +1825,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "schedule-block", stored.Id, "created", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, stored.Id, 1, cancellationToken);
             return stored;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateScheduleBlockAsync", new { calendarId, taskId, activityId, titleOverride, startAtUtc, endAtUtc, timeZone, recurrenceRule, recurrenceEndUtc }));
     }
 
     public async Task<ScheduleBlock> UpdateScheduleBlockAsync(Guid blockId, ScheduleBlockUpdate update, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -2003,11 +1839,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         ValidateRecurrence(update.RecurrenceRule, update.RecurrenceEndUtc, update.StartAtUtc);
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadScheduleBlockByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var block = await ReadScheduleBlockAsync(connection, transaction, blockId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Schedule block was not found.");
             if (block.Revision != expectedRevision)
@@ -2019,11 +1850,11 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                UPDATE schedule_blocks SET title_override=$title, start_at_utc_ms=$start,
-                    end_at_utc_ms=$end, time_zone=$zone, recurrence_rule=$rule,
-                    recurrence_end_utc_ms=$recurrence_end, revision=$revision, updated_at_utc_ms=$updated
-                WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
-                """;
+        UPDATE schedule_blocks SET title_override=$title, start_at_utc_ms=$start,
+            end_at_utc_ms=$end, time_zone=$zone, recurrence_rule=$rule,
+            recurrence_end_utc_ms=$recurrence_end, revision=$revision, updated_at_utc_ms=$updated
+        WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
+        """;
             command.Parameters.AddWithValue("$title", string.IsNullOrWhiteSpace(update.TitleOverride) ? DBNull.Value : Guard.Optional(update.TitleOverride, "titleOverride", 300));
             command.Parameters.AddWithValue("$start", update.StartAtUtc.ToUnixTimeMilliseconds());
             command.Parameters.AddWithValue("$end", update.EndAtUtc.ToUnixTimeMilliseconds());
@@ -2052,7 +1883,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "schedule-block", blockId, "updated", block.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, blockId, nextRevision, cancellationToken);
             return updated;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "UpdateScheduleBlockAsync", new { blockId, update, expectedRevision }));
     }
 
     public async Task<TrackingSession> CreateManualSessionAsync(
@@ -2078,11 +1909,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadSessionByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             if (taskId is not null)
             {
                 var task = await ReadTaskAsync(connection, transaction, taskId.Value, cancellationToken)
@@ -2116,7 +1942,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "session", session.Id, "manual", 0, 1, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, session.Id, 1, cancellationToken);
             return session;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CreateManualSessionAsync", new { taskId, activityId, startedAtUtc, endedAtUtc, notes }));
     }
 
     public async Task<TrackingSession> CorrectSessionAsync(Guid sessionId, SessionCorrection correction, long expectedRevision, Guid operationId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -2128,11 +1954,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
         return await WriteAsync(async (connection, transaction) =>
         {
-            if (await ReceiptExistsAsync(connection, transaction, operationId, cancellationToken))
-            {
-                return await ReadSessionByOperationAsync(connection, transaction, operationId, cancellationToken);
-            }
-
             var before = await ReadSessionAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new SnookException(SnookErrorCode.NotFound, "Session was not found.");
             if (before.State == SessionState.RecoveryRequired)
@@ -2192,11 +2013,11 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await using var update = connection.CreateCommand();
             update.Transaction = transaction;
             update.CommandText = """
-                UPDATE tracking_sessions SET task_id=$task, activity_id=$activity,
-                    started_at_utc_ms=$started, stopped_at_utc_ms=$stopped, notes=$notes,
-                    updated_at_utc_ms=$updated, revision=$revision
-                WHERE id=$id AND revision=$expected;
-                """;
+        UPDATE tracking_sessions SET task_id=$task, activity_id=$activity,
+            started_at_utc_ms=$started, stopped_at_utc_ms=$stopped, notes=$notes,
+            updated_at_utc_ms=$updated, revision=$revision
+        WHERE id=$id AND revision=$expected;
+        """;
             update.Parameters.AddWithValue("$task", after.TaskId is null ? DBNull.Value : Id(after.TaskId.Value));
             update.Parameters.AddWithValue("$activity", after.ActivityId is null ? DBNull.Value : Id(after.ActivityId.Value));
             update.Parameters.AddWithValue("$started", after.StartedAtUtc.ToUnixTimeMilliseconds());
@@ -2225,13 +2046,14 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await RecordMutationAsync(connection, transaction, operationId, "session", sessionId, "corrected", before.Revision, nextRevision, nowUtc, cancellationToken);
             await RecordReceiptAsync(connection, transaction, operationId, sessionId, nextRevision, cancellationToken);
             return after;
-        }, cancellationToken);
+        }, cancellationToken, new StoreWriteRequest(operationId, "CorrectSessionAsync", new { sessionId, correction, expectedRevision }));
     }
 
     public async Task<IReadOnlyList<TrackingCorrection>> GetSessionCorrectionsAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+        var connection = connectionLease.Connection;
         var result = new List<TrackingCorrection>();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT id,session_id,operation_id,reason,before_json,after_json,applied_at_utc_ms FROM tracking_corrections WHERE session_id=$session ORDER BY applied_at_utc_ms;";
@@ -2247,54 +2069,64 @@ public sealed partial class SqliteStore : IAsyncDisposable
         return result;
     }
 
-    public async Task<StoreBackupResult> CreateBackupAsync(string destinationPath, CancellationToken cancellationToken = default)
-    {
-        EnsureInitialized();
-        await _writeGate.WaitAsync(cancellationToken);
-        try
+    public Task<StoreBackupResult> CreateBackupAsync(string destinationPath, CancellationToken cancellationToken = default)
+        => WriteArtifactAsync(destinationPath, backup: true, async output =>
         {
-            var fullDestination = Path.GetFullPath(destinationPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(fullDestination) ?? Directory.GetCurrentDirectory());
-            await using var source = await OpenConnectionAsync(cancellationToken);
-            await using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = fullDestination, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
+            var fullDestination = output.Destination;
+            await using var sourceLease = await OpenConnectionAsync(cancellationToken);
+            var source = sourceLease.Connection;
+            await using (var size = source.CreateCommand())
+            {
+                size.CommandText = "PRAGMA page_count;";
+                var pages = Convert.ToInt64(await size.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+                size.CommandText = "PRAGMA page_size;";
+                var pageSize = Convert.ToInt64(await size.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+                if (pageSize <= 0 || pages > MaximumBackupBytes / pageSize)
+                    throw InvalidBackup("Backups larger than 16 GiB are not supported by this backup/restore path.");
+            }
+            await using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = output.StagingPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
             await destination.OpenAsync(cancellationToken);
+            var backupAtUtc = _clock.GetUtcNow();
             source.BackupDatabase(destination);
+            await ValidateIntegrityAsync(destination, cancellationToken);
             await destination.CloseAsync();
-            var bytes = new FileInfo(fullDestination).Length;
-            var sha256 = await HashFileAsync(fullDestination, cancellationToken);
-            var manifestPath = fullDestination + ".manifest.json";
+            var bytes = new FileInfo(output.StagingPath).Length;
+            if (bytes > MaximumBackupBytes) throw InvalidBackup("Backups larger than 16 GiB are not supported by this backup/restore path.");
+            var sha256 = await HashFileAsync(output.StagingPath, cancellationToken);
+            var manifestPath = output.ManifestPath;
             var manifest = new
             {
                 formatVersion = 1,
-                createdAtUtc = DateTimeOffset.UtcNow,
+                createdAtUtc = backupAtUtc,
                 databasePath = fullDestination,
                 bytes,
                 sha256,
                 integrity = "sqlite-backup-verified"
             };
-            await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest, ExportJsonOptions), cancellationToken);
+            await File.WriteAllTextAsync(output.StagingManifestPath, JsonSerializer.Serialize(manifest, ExportJsonOptions), cancellationToken);
             return new StoreBackupResult(fullDestination, bytes, sha256, manifestPath);
-        }
-        finally
-        {
-            _writeGate.Release();
-        }
-    }
+        }, cancellationToken);
 
-    public async Task<StoreExportResult> ExportJsonAsync(string destinationPath, CancellationToken cancellationToken = default)
+    public Task<StoreExportResult> ExportJsonAsync(string destinationPath, CancellationToken cancellationToken = default)
+        => WriteArtifactAsync(destinationPath, backup: false, output => ExportJsonCoreAsync(output, cancellationToken), cancellationToken);
+
+    private async Task<StoreExportResult> ExportJsonCoreAsync(MaintenanceOutput output, CancellationToken cancellationToken)
     {
         var state = await LoadStateAsync(DateTimeOffset.UtcNow, cancellationToken);
+        var sessions = await ReadExportSessionsAsync(cancellationToken);
         var corrections = new List<TrackingCorrection>();
-        foreach (var session in state.Sessions)
+        foreach (var session in sessions)
         {
             corrections.AddRange(await GetSessionCorrectionsAsync(session.Id, cancellationToken));
         }
 
         var payload = new
         {
-            schemaVersion = 4,
+            schemaVersion = JsonExportSchemaVersion,
             exportedAtUtc = DateTimeOffset.UtcNow,
+            committedCursor = state.Cursor,
             workspace = state.Workspace,
+            settings = state.Settings,
             boards = state.Boards,
             projects = state.Projects,
             activityGroups = state.ActivityGroups,
@@ -2303,24 +2135,31 @@ public sealed partial class SqliteStore : IAsyncDisposable
             scheduleBlocks = state.ScheduleBlocks,
             calendarEvents = state.CalendarEvents,
             calendarEventExceptions = state.CalendarEventExceptions,
-            tags = state.Tags,
+            tags = await ReadExportTagsAsync(cancellationToken),
             taskTagIds = state.TaskTagIds,
             projectTagIds = state.ProjectTagIds,
             activityTagIds = state.ActivityTagIds,
             tasks = state.Tasks,
-            sessions = state.Sessions,
+            taskLinks = await ReadExportTaskLinksAsync(cancellationToken),
+            taskDependencies = await ReadExportTaskDependenciesAsync(cancellationToken),
+            sessions,
             corrections,
             habitTracking = await ExportHabitsAsync(cancellationToken),
             journaling = await ExportJournalsAsync(cancellationToken)
         };
-        var fullDestination = Path.GetFullPath(destinationPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullDestination) ?? Directory.GetCurrentDirectory());
-        await File.WriteAllTextAsync(fullDestination, JsonSerializer.Serialize(payload, ExportJsonOptions), cancellationToken);
-        var bytes = new FileInfo(fullDestination).Length;
-        return new StoreExportResult(fullDestination, bytes, await HashFileAsync(fullDestination, cancellationToken), 4);
+        await using (var stream = new FileStream(output.StagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+            bufferSize: 64 * 1024, useAsync: true))
+        {
+            await JsonSerializer.SerializeAsync(stream, payload, ExportJsonOptions, cancellationToken);
+        }
+        var bytes = new FileInfo(output.StagingPath).Length;
+        return new StoreExportResult(output.Destination, bytes, await HashFileAsync(output.StagingPath, cancellationToken), JsonExportSchemaVersion);
     }
 
-    public async Task<StoreExportResult> ExportCsvAsync(string destinationPath, DateTimeOffset rangeStartUtc, DateTimeOffset rangeEndUtc, CancellationToken cancellationToken = default)
+    public Task<StoreExportResult> ExportCsvAsync(string destinationPath, DateTimeOffset rangeStartUtc, DateTimeOffset rangeEndUtc, CancellationToken cancellationToken = default)
+        => WriteArtifactAsync(destinationPath, backup: false, output => ExportCsvCoreAsync(output, rangeStartUtc, rangeEndUtc, cancellationToken), cancellationToken);
+
+    private async Task<StoreExportResult> ExportCsvCoreAsync(MaintenanceOutput output, DateTimeOffset rangeStartUtc, DateTimeOffset rangeEndUtc, CancellationToken cancellationToken)
     {
         if (rangeEndUtc <= rangeStartUtc)
         {
@@ -2361,58 +2200,32 @@ public sealed partial class SqliteStore : IAsyncDisposable
             }
         }
 
-        var fullDestination = Path.GetFullPath(destinationPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullDestination) ?? Directory.GetCurrentDirectory());
-        await File.WriteAllTextAsync(fullDestination, csv.ToString(), cancellationToken);
-        var bytes = new FileInfo(fullDestination).Length;
-        return new StoreExportResult(fullDestination, bytes, await HashFileAsync(fullDestination, cancellationToken), 1);
+        await File.WriteAllTextAsync(output.StagingPath, csv.ToString(), cancellationToken);
+        var bytes = new FileInfo(output.StagingPath).Length;
+        return new StoreExportResult(output.Destination, bytes, await HashFileAsync(output.StagingPath, cancellationToken), 1);
     }
 
     public async Task<StoreBackupResult> RestoreBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        var fullSource = Path.GetFullPath(sourcePath);
-        if (!File.Exists(fullSource))
-        {
-            throw new SnookException(SnookErrorCode.NotFound, "The selected backup file was not found.");
-        }
+        var fullSource = ValidateOutputPath(sourcePath);
 
+        var restoredAtUtc = _clock.GetUtcNow();
+        var archivePath = _databasePath + $".before-restore-{restoredAtUtc:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}";
         await _writeGate.WaitAsync(cancellationToken);
-        var stagingPath = _databasePath + $".restore-{Guid.NewGuid():N}";
-        var stagingBasePath = stagingPath;
-        var archivePath = _databasePath + $".before-restore-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmssfff}";
         var activeMoved = false;
         var walMoved = false;
         var shmMoved = false;
+        var connectionLocked = false;
         try
         {
-            await using (var source = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = fullSource,
-                Mode = SqliteOpenMode.ReadOnly,
-                Cache = SqliteCacheMode.Private,
-                Pooling = false
-            }.ToString()))
-            {
-                await source.OpenAsync(cancellationToken);
-                await using var sourceCheck = source.CreateCommand();
-                sourceCheck.CommandText = "PRAGMA quick_check;";
-                var sourceResult = Convert.ToString(await sourceCheck.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
-                if (!string.Equals(sourceResult, "ok", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new SnookException(SnookErrorCode.SchemaIncompatible, "The selected backup failed SQLite integrity validation.");
-                }
-
-                await using var staging = new SqliteConnection(new SqliteConnectionStringBuilder
-                {
-                    DataSource = stagingPath,
-                    Mode = SqliteOpenMode.ReadWriteCreate,
-                    Cache = SqliteCacheMode.Private,
-                    Pooling = false
-                }.ToString());
-                await staging.OpenAsync(cancellationToken);
-                source.BackupDatabase(staging);
-            }
+            ObjectDisposedException.ThrowIf(_disposing, this);
+            await _connectionGate.WaitAsync(cancellationToken);
+            connectionLocked = true;
+            using var staged = await StageVerifiedBackupAsync(fullSource, cancellationToken);
+            var stagingPath = staged.Path;
+            Workspace restoredWorkspace;
+            long restoredCursor;
 
             await using (var validation = new SqliteConnection(new SqliteConnectionStringBuilder
             {
@@ -2424,7 +2237,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             {
                 await validation.OpenAsync(cancellationToken);
                 await using var pragma = validation.CreateCommand();
-                pragma.CommandText = "PRAGMA foreign_keys = ON;";
+                pragma.CommandText = "PRAGMA trusted_schema = OFF; PRAGMA foreign_keys = ON;";
                 await pragma.ExecuteNonQueryAsync(cancellationToken);
                 await ValidateIntegrityAsync(validation, cancellationToken);
                 _ = await ReadWorkspaceAsync(validation, cancellationToken);
@@ -2434,12 +2247,22 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 await EnsureTaskWorkspaceMigrationAsync(validation, cancellationToken);
                 await EnsureHabitsMigrationAsync(validation, cancellationToken);
                 await EnsureJournalsMigrationAsync(validation, cancellationToken);
+                await EnsureExactReceiptsMigrationAsync(validation, cancellationToken);
+                await ReconcileRestoredTimersAsync(validation, staged.BackupCreatedAtUtc, restoredAtUtc, cancellationToken);
                 await ValidateIntegrityAsync(validation, cancellationToken);
                 await using var checkpoint = validation.CreateCommand();
                 checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
                 await checkpoint.ExecuteNonQueryAsync(cancellationToken);
+                restoredWorkspace = await ReadWorkspaceAsync(validation, cancellationToken);
+                restoredCursor = await ReadCursorAsync(validation, cancellationToken);
             }
 
+            // Complete all cancellable reads/hashing before switching files.
+            using (var file = new FileStream(stagingPath, FileMode.Open, FileAccess.Write, FileShare.None))
+                file.Flush(flushToDisk: true);
+            var result = new StoreBackupResult(fullSource, new FileInfo(stagingPath).Length,
+                await HashFileAsync(stagingPath, cancellationToken), fullSource + ".manifest.json");
+            cancellationToken.ThrowIfCancellationRequested();
             if (File.Exists(_databasePath))
             {
                 File.Move(_databasePath, archivePath);
@@ -2449,11 +2272,11 @@ public sealed partial class SqliteStore : IAsyncDisposable
             }
 
             File.Move(stagingPath, _databasePath);
-            stagingPath = string.Empty;
-            var restoredManifestPath = fullSource + ".manifest.json";
-            return new StoreBackupResult(fullSource, new FileInfo(_databasePath).Length, await HashFileAsync(_databasePath, cancellationToken), File.Exists(restoredManifestPath) ? restoredManifestPath : null);
+            _committedChanges.Enqueue(new StoreCommittedChange(restoredCursor, Guid.Empty, "workspace", restoredWorkspace.Id,
+                "restored", restoredWorkspace.Revision, DateTimeOffset.FromUnixTimeMilliseconds(_clock.GetUtcNow().ToUnixTimeMilliseconds())));
+            return result;
         }
-        catch
+        catch (Exception exception)
         {
             if (activeMoved && !File.Exists(_databasePath) && File.Exists(archivePath))
             {
@@ -2468,32 +2291,45 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 }
             }
 
+            if (exception is SqliteException)
+                throw new SnookException(SnookErrorCode.SchemaIncompatible, "The verified backup failed SQLite schema or integrity checks. The current workspace was not replaced.", exception);
+            if (exception is IOException or UnauthorizedAccessException)
+                throw new SnookException(SnookErrorCode.StoreUnavailable, "Restore could not read, stage or activate the backup. Check access and free space before retrying; inspect workspace state after any uncertain result.", exception);
             throw;
         }
         finally
         {
-            if (!string.IsNullOrEmpty(stagingPath) && File.Exists(stagingPath))
-            {
-                File.Delete(stagingPath);
-            }
-            DeleteIfExists(stagingBasePath + "-wal");
-            DeleteIfExists(stagingBasePath + "-shm");
-
+            if (connectionLocked) _connectionGate.Release();
             _writeGate.Release();
+            DeliverCommittedChanges();
         }
     }
 
-    private async Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, Task<T>> action, CancellationToken cancellationToken)
+    private async Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, Task<T>> action,
+        CancellationToken cancellationToken, StoreWriteRequest? request = null)
     {
         await _writeGate.WaitAsync(cancellationToken);
         try
         {
-            await using var connection = await OpenConnectionAsync(cancellationToken);
+            await using var connectionLease = await OpenConnectionAsync(cancellationToken);
+            var connection = connectionLease.Connection;
+            var previousCursor = await ReadCursorAsync(connection, cancellationToken);
             await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
             try
             {
+                if (request is not null)
+                {
+                    var saved = await ReadExactReceiptAsync<T>(connection, transaction, request, cancellationToken);
+                    if (saved.Found) return saved.Value!;
+                    if (await ReceiptExistsAsync(connection, transaction, request.OperationId, cancellationToken))
+                        throw new SnookException(SnookErrorCode.ValidationFailed,
+                            "This operation has an older or different receipt that cannot verify an exact retry. Refresh current data before starting a new operation.");
+                }
                 var result = await action(connection, transaction);
+                if (request is not null) await SaveExactReceiptAsync(connection, transaction, request, result, cancellationToken);
+                var changes = await ReadTransactionChangesAsync(connection, transaction, previousCursor, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
+                foreach (var change in changes) _committedChanges.Enqueue(change);
                 return result;
             }
             catch
@@ -2505,23 +2341,47 @@ public sealed partial class SqliteStore : IAsyncDisposable
         finally
         {
             _writeGate.Release();
+            DeliverCommittedChanges();
         }
     }
 
-    private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
+    private async Task<StoreConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        ObjectDisposedException.ThrowIf(_disposing, this);
+        await _connectionGate.WaitAsync(cancellationToken);
+        SqliteConnection? connection = null;
+        try
         {
-            DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
-            Pooling = false
-        }.ToString());
-        await connection.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        return connection;
+            ObjectDisposedException.ThrowIf(_disposing, this);
+            connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = _databasePath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Cache = SqliteCacheMode.Shared,
+                Pooling = false
+            }.ToString());
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            return new StoreConnection(connection, _connectionGate);
+        }
+        catch
+        {
+            try { if (connection is not null) await connection.DisposeAsync(); }
+            finally { _connectionGate.Release(); }
+            throw;
+        }
+    }
+
+    private sealed class StoreConnection(SqliteConnection connection, SemaphoreSlim gate) : IAsyncDisposable
+    {
+        public SqliteConnection Connection => connection;
+        public async ValueTask DisposeAsync()
+        {
+            try { await connection.DisposeAsync(); }
+            finally { gate.Release(); }
+        }
     }
 
     private static async Task SeedAsync(SqliteConnection connection, CancellationToken cancellationToken)
@@ -2589,9 +2449,13 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var sequence = reader.GetInt32(0);
         var current = reader.GetString(1);
         await reader.DisposeAsync();
-        if (sequence > 9 || (sequence == 9 && current != JournalsChecksum) || (sequence == 8 && current != HabitsChecksum) || (sequence == 7 && current != TaskWorkspaceChecksum))
+        if (sequence > 10)
             throw new SnookException(SnookErrorCode.SchemaIncompatible, "The workspace schema is newer or incompatible with this Snook build.");
-        if (sequence >= 7) return;
+        if (sequence >= 7)
+        {
+            await ValidateAdditiveMigrationsAsync(connection, sequence, cancellationToken);
+            return;
+        }
         if (string.Equals(current, SchemaChecksum, StringComparison.Ordinal))
         {
             return;
@@ -3239,99 +3103,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         command.CommandText = "SELECT 1 FROM operation_receipts WHERE operation_id = $id LIMIT 1;";
         command.Parameters.AddWithValue("$id", Id(operationId));
         return await command.ExecuteScalarAsync(cancellationToken) is not null;
-    }
-
-    private static async Task<TaskItem> ReadTaskByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        await using var receipt = connection.CreateCommand();
-        receipt.Transaction = transaction;
-        receipt.CommandText = "SELECT aggregate_id FROM operation_receipts WHERE operation_id = $id;";
-        receipt.Parameters.AddWithValue("$id", Id(operationId));
-        var id = Guid.Parse((string)(await receipt.ExecuteScalarAsync(cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt is incomplete.")));
-        return await ReadTaskAnyAsync(connection, transaction, id, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing task.");
-    }
-
-    private static async Task<TaskLink> ReadTaskLinkByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadTaskLinkAsync(connection, transaction, id, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing task link.");
-    }
-
-    private static async Task<Board> ReadBoardByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadBoardAsync(connection, transaction, id, true, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing board.");
-    }
-
-    private static async Task<Project> ReadProjectByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadProjectAsync(connection, transaction, id, true, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing project.");
-    }
-
-    private static async Task<Activity> ReadActivityByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadActivityAsync(connection, transaction, id, true, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing activity.");
-    }
-
-    private static async Task<ActivityGroup> ReadActivityGroupByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadActivityGroupAsync(connection, transaction, id, true, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing activity group.");
-    }
-
-    private static async Task<Tag> ReadTagByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadTagAsync(connection, transaction, id, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing tag.");
-    }
-
-    private static async Task<DomainCalendar> ReadCalendarByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadCalendarAsync(connection, transaction, id, true, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing calendar.");
-    }
-
-    private static async Task<CalendarEvent> ReadCalendarEventByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadCalendarEventAsync(connection, transaction, id, true, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing calendar event.");
-    }
-
-    private static async Task<CalendarEventOccurrenceOverride> ReadCalendarEventExceptionByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        var id = await ReadAggregateIdByOperationAsync(connection, transaction, operationId, cancellationToken);
-        return await ReadCalendarEventExceptionAsync(connection, transaction, id, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing calendar event exception.");
-    }
-
-    private static async Task<Guid> ReadAggregateIdByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        await using var receipt = connection.CreateCommand();
-        receipt.Transaction = transaction;
-        receipt.CommandText = "SELECT aggregate_id FROM operation_receipts WHERE operation_id = $id;";
-        receipt.Parameters.AddWithValue("$id", Id(operationId));
-        return Guid.Parse((string)(await receipt.ExecuteScalarAsync(cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt is incomplete.")));
-    }
-
-    private static async Task<TrackingSession> ReadSessionByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        await using var receipt = connection.CreateCommand();
-        receipt.Transaction = transaction;
-        receipt.CommandText = "SELECT aggregate_id FROM operation_receipts WHERE operation_id = $id;";
-        receipt.Parameters.AddWithValue("$id", Id(operationId));
-        var id = Guid.Parse((string)(await receipt.ExecuteScalarAsync(cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt is incomplete.")));
-        return await ReadSessionAsync(connection, transaction, id, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing session.");
-    }
-
-    private static async Task<ScheduleBlock> ReadScheduleBlockByOperationAsync(SqliteConnection connection, SqliteTransaction transaction, Guid operationId, CancellationToken cancellationToken)
-    {
-        await using var receipt = connection.CreateCommand();
-        receipt.Transaction = transaction;
-        receipt.CommandText = "SELECT aggregate_id FROM operation_receipts WHERE operation_id = $id;";
-        receipt.Parameters.AddWithValue("$id", Id(operationId));
-        var id = Guid.Parse((string)(await receipt.ExecuteScalarAsync(cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt is incomplete.")));
-        return await ReadScheduleBlockAsync(connection, transaction, id, cancellationToken) ?? throw new SnookException(SnookErrorCode.InternalError, "Operation receipt points to a missing schedule block.");
     }
 
     private static async Task<Guid> ReadWorkspaceIdForProjectAsync(SqliteConnection connection, SqliteTransaction transaction, Guid projectId, CancellationToken cancellationToken)
@@ -4122,13 +3893,6 @@ public sealed partial class SqliteStore : IAsyncDisposable
         File.Move(sourcePath, destinationPath);
         return true;
     }
-    private static void DeleteIfExists(string path)
-    {
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-    }
     private static string Lane(SessionLane lane) => lane == SessionLane.Background ? "background" : "foreground";
     private static string State(SessionState state) => state switch { SessionState.Running => "running", SessionState.Paused => "paused", SessionState.Stopped => "stopped", SessionState.RecoveryRequired => "recovery-required", _ => throw new ArgumentOutOfRangeException(nameof(state)) };
     private static string State(TaskState state) => state == TaskState.Completed ? "completed" : "open";
@@ -4138,12 +3902,33 @@ public sealed partial class SqliteStore : IAsyncDisposable
     private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken) { await using var stream = File.OpenRead(path); var hash = await SHA256.HashDataAsync(stream, cancellationToken); return Convert.ToHexString(hash).ToLowerInvariant(); }
     private void EnsureInitialized() { if (!_initialized) throw new InvalidOperationException("The Snook store must be initialized before use."); }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        _lease?.Dispose();
-        _lease = null;
-        _writeGate.Dispose();
-        await Task.CompletedTask;
+        lock (_disposeSync)
+        {
+            _disposing = true;
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+        }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        await _writeGate.WaitAsync();
+        try
+        {
+            await _connectionGate.WaitAsync();
+            try
+            {
+                _initialized = false;
+                _lease?.Dispose();
+                _lease = null;
+            }
+            finally { _connectionGate.Release(); }
+        }
+        finally { _writeGate.Release(); }
+        // Do not dispose these purely managed semaphores: queued callers must
+        // wake, observe _disposing, and fail instead of remaining stuck. No
+        // AvailableWaitHandle is allocated. Both gates die with the store.
     }
 
     private const string SchemaSql = """

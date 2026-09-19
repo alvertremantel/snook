@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 5;
+    public const int Minor = 6;
 }
 
 public sealed record OperationRequest(
@@ -143,7 +143,10 @@ public interface IBackendClient : IAsyncDisposable
         bool includeDeleted = false,
         CancellationToken cancellationToken = default);
 
-    Task<Board> CreateBoardAsync(string name, CancellationToken cancellationToken = default);
+    // Contract 1.6: convenience create/add methods accept a stable caller request.
+    // Omission preserves older clients' new-operation semantics, not safe retries.
+    // Supply nonempty operation/device IDs and no expected aggregate revision.
+    Task<Board> CreateBoardAsync(string name, OperationRequest? request = null, CancellationToken cancellationToken = default);
     Task<Board> UpdateBoardAsync(Guid boardId, BoardUpdate update, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Board> ReorderBoardAsync(Guid boardId, ReorderDirection direction, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Board> ArchiveBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default);
@@ -151,7 +154,7 @@ public interface IBackendClient : IAsyncDisposable
     Task<Board> DeleteBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Board> RestoreDeletedBoardAsync(Guid boardId, OperationRequest request, CancellationToken cancellationToken = default);
 
-    Task<Project> CreateProjectAsync(Guid boardId, string name, string description = "", bool starred = false, CancellationToken cancellationToken = default);
+    Task<Project> CreateProjectAsync(Guid boardId, string name, string description = "", bool starred = false, OperationRequest? request = null, CancellationToken cancellationToken = default);
     Task<Project> UpdateProjectAsync(Guid projectId, ProjectUpdate update, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Project> ReorderProjectAsync(Guid projectId, ReorderDirection direction, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Project> ArchiveProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default);
@@ -159,14 +162,14 @@ public interface IBackendClient : IAsyncDisposable
     Task<Project> DeleteProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Project> RestoreDeletedProjectAsync(Guid projectId, OperationRequest request, CancellationToken cancellationToken = default);
 
-    Task<Activity> CreateActivityAsync(string name, string description = "", SessionLane defaultLane = SessionLane.Foreground, Guid? groupId = null, CancellationToken cancellationToken = default);
+    Task<Activity> CreateActivityAsync(string name, string description = "", SessionLane defaultLane = SessionLane.Foreground, Guid? groupId = null, OperationRequest? request = null, CancellationToken cancellationToken = default);
     Task<Activity> UpdateActivityAsync(Guid activityId, ActivityUpdate update, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Activity> ArchiveActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Activity> RestoreActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Activity> DeleteActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default);
     Task<Activity> RestoreDeletedActivityAsync(Guid activityId, OperationRequest request, CancellationToken cancellationToken = default);
 
-    Task<ActivityGroup> CreateActivityGroupAsync(string name, CancellationToken cancellationToken = default);
+    Task<ActivityGroup> CreateActivityGroupAsync(string name, OperationRequest? request = null, CancellationToken cancellationToken = default);
     Task<ActivityGroup> UpdateActivityGroupAsync(Guid groupId, ActivityGroupUpdate update, OperationRequest request, CancellationToken cancellationToken = default);
     Task<ActivityGroup> ReorderActivityGroupAsync(Guid groupId, ReorderDirection direction, OperationRequest request, CancellationToken cancellationToken = default);
     Task<ActivityGroup> DeleteActivityGroupAsync(Guid groupId, OperationRequest request, CancellationToken cancellationToken = default);
@@ -191,6 +194,7 @@ public interface IBackendClient : IAsyncDisposable
         string name,
         string color = "#6767F2",
         bool visible = true,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<Calendar> UpdateCalendarAsync(
@@ -225,6 +229,7 @@ public interface IBackendClient : IAsyncDisposable
         string timeZone = "UTC",
         string? recurrenceRule = null,
         DateTimeOffset? recurrenceEndUtc = null,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<CalendarEvent> UpdateCalendarEventAsync(
@@ -268,6 +273,7 @@ public interface IBackendClient : IAsyncDisposable
         string timeZone,
         string? recurrenceRule = null,
         DateTimeOffset? recurrenceEndUtc = null,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<ScheduleBlock> UpdateScheduleBlockAsync(
@@ -281,6 +287,7 @@ public interface IBackendClient : IAsyncDisposable
         string title,
         Priority priority = Priority.None,
         DateOnly? dueDate = null,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<TaskItem> UpdateTaskAsync(
@@ -328,24 +335,28 @@ public interface IBackendClient : IAsyncDisposable
         string? label,
         string uri,
         string kind = "reference",
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<Tag> AddTaskTagAsync(
         Guid taskId,
         string displayName,
         string? color = null,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<Tag> AddProjectTagAsync(
         Guid projectId,
         string displayName,
         string? color = null,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<Tag> AddActivityTagAsync(
         Guid activityId,
         string displayName,
         string? color = null,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<TaskItem> CompleteTaskAsync(
@@ -361,6 +372,7 @@ public interface IBackendClient : IAsyncDisposable
     Task AddTaskDependencyAsync(
         Guid taskId,
         Guid prerequisiteTaskId,
+        OperationRequest? request = null,
         CancellationToken cancellationToken = default);
 
     Task<TrackingSession> StartSessionAsync(
@@ -411,6 +423,9 @@ public interface IBackendClient : IAsyncDisposable
         OperationRequest request,
         CancellationToken cancellationToken = default);
 
+    // Maintenance output paths are host-local, fully qualified and unused.
+    // Existing files/companions, workspace names and linked paths are rejected.
+    // These operations do not use entity receipts: inspect output after uncertainty.
     Task<BackupResult> CreateBackupAsync(
         string destinationPath,
         CancellationToken cancellationToken = default);
@@ -425,6 +440,8 @@ public interface IBackendClient : IAsyncDisposable
         DateTimeOffset rangeEndUtc,
         CancellationToken cancellationToken = default);
 
+    // Requires a standalone backup and matching format-1 .manifest.json.
+    // The original manifest path is informational; moved valid pairs are supported.
     Task<RestoreResult> RestoreBackupAsync(
         string sourcePath,
         CancellationToken cancellationToken = default);
