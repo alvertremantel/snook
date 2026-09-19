@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
@@ -89,10 +90,12 @@ internal static class Program
             await using var backend = new SnookBackend(store);
             await backend.InitializeAsync(cancellationSource.Token);
             var token = await LoadOrCreateTokenAsync(Path.Combine(snookRoot, "daemon.token"));
-            await using var server = new DaemonRpcServer(backend, token, port);
+            using var credentials = await DaemonCredentialRegistry.OpenAsync(Path.Combine(snookRoot, "daemon-auth.json"), cancellationSource.Token);
+            await using var server = new DaemonRpcServer(backend, token, credentials, port);
             server.Start();
             var descriptorPath = Path.Combine(snookRoot, "daemon.endpoint.json");
-            var descriptor = new DaemonEndpointDescriptor(1, Guid.NewGuid(), server.Endpoint.AbsoluteUri, ContractInfo.Major, ContractInfo.Minor);
+            var descriptor = new DaemonEndpointDescriptor(1, Guid.NewGuid(), server.Endpoint.AbsoluteUri,
+                ContractInfo.Major, ContractInfo.Minor);
             await WriteDescriptorAsync(descriptorPath, descriptor, cancellationSource.Token);
             try
             {
@@ -188,21 +191,30 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
     private const int MaxArgumentCount = 64;
     private const int MaxRequests = 64;
     private const int MaxSubscribers = 16;
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+    };
     private readonly IBackendClient _backend;
-    private readonly string _token;
+    private readonly string _recoveryToken;
+    private readonly DaemonCredentialRegistry _credentials;
+    private readonly PairingSessions _pairings;
     private readonly HttpListener _listener = new();
     private readonly Dictionary<string, System.Reflection.MethodInfo> _contractMethods = typeof(IBackendClient).GetMethods()
         .Where(method => typeof(Task).IsAssignableFrom(method.ReturnType))
         .ToDictionary(method => method.Name, StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<Guid, Channel<string>> _changeSubscribers = new();
+    private readonly ConcurrentDictionary<Guid, ChangeSubscriber> _changeSubscribers = new();
     private readonly SemaphoreSlim _dispatch = new(1, 1);
     private readonly SemaphoreSlim _subscriptions = new(MaxSubscribers, MaxSubscribers);
+    private readonly SemaphoreSlim _pairingDispatch = new(4, 4);
 
-    public DaemonRpcServer(IBackendClient backend, string token, int port)
+    public DaemonRpcServer(IBackendClient backend, string recoveryToken, DaemonCredentialRegistry credentials,
+        int port, TimeProvider? timeProvider = null)
     {
         _backend = backend;
-        _token = token;
+        _recoveryToken = recoveryToken;
+        _credentials = credentials;
+        _pairings = new PairingSessions(timeProvider);
         Endpoint = new Uri($"http://127.0.0.1:{port}/");
         _listener.Prefixes.Add(Endpoint.AbsoluteUri);
         _backend.Changed += OnBackendChanged;
@@ -254,21 +266,77 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
-            if (!IsAuthorized(context.Request))
+            var path = context.Request.Url?.AbsolutePath;
+            if (context.Request.HttpMethod == "POST" && path == "/transport/v1/pair")
+            {
+                await HandlePairAsync(context, deadline.Token);
+                return;
+            }
+
+            var authenticated = Authenticate(context.Request);
+            if (authenticated is null)
+            {
+                await WriteErrorAsync(context.Response, HttpStatusCode.Unauthorized, "Unauthorized daemon client.", SnookErrorCode.StoreUnavailable, cancellationToken);
+                return;
+            }
+            if (authenticated.IsPending)
+            {
+                var activates = context.Request.HttpMethod == "POST" && path == "/v1/call"
+                    || context.Request.HttpMethod == "GET" && path == "/v1/changes";
+                var allowedWithoutActivation = context.Request.HttpMethod == "GET" && path == "/v1/health"
+                    || context.Request.HttpMethod == "POST" && path == "/transport/v1/pairings/cancel";
+                if (activates)
+                {
+                    if (!await _credentials.PromoteAsync(authenticated.CredentialId,
+                        _pairings.UtcNow, deadline.Token))
+                    {
+                        await WriteErrorAsync(context.Response, HttpStatusCode.Unauthorized,
+                            "Unauthorized daemon client.", SnookErrorCode.StoreUnavailable,
+                            cancellationToken);
+                        return;
+                    }
+                    authenticated = authenticated with { IsPending = false };
+                }
+                else if (!allowedWithoutActivation)
+                {
+                    await WriteErrorAsync(context.Response, HttpStatusCode.Unauthorized,
+                        "Unauthorized daemon client.", SnookErrorCode.StoreUnavailable, cancellationToken);
+                    return;
+                }
+            }
+            if (!authenticated.IsRecoveryAdministrator && !authenticated.IsPending)
+                await _credentials.TouchAsync(authenticated.CredentialId, _pairings.UtcNow, deadline.Token);
+
+            if (path?.StartsWith("/transport/v1/admin/", StringComparison.Ordinal) == true && !authenticated.IsRecoveryAdministrator)
             {
                 await WriteErrorAsync(context.Response, HttpStatusCode.Unauthorized, "Unauthorized daemon client.", SnookErrorCode.StoreUnavailable, cancellationToken);
                 return;
             }
 
-            if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/v1/health")
+            if (context.Request.HttpMethod == "POST" && path == "/transport/v1/pairings/cancel")
             {
-                await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { ready = true, contract = $"{ContractInfo.Major}.{ContractInfo.Minor}" }, cancellationToken);
+                await HandleSelfCancelAsync(context, authenticated, deadline.Token);
+                return;
+            }
+
+            if (path?.StartsWith("/transport/v1/admin/", StringComparison.Ordinal) == true)
+            {
+                await HandleAdministrationAsync(context, path, deadline.Token);
+                return;
+            }
+
+            if (context.Request.HttpMethod == "GET" && path == "/v1/health")
+            {
+                var workspace = (await _backend.GetBootstrapAsync(deadline.Token)).Workspace;
+                await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { ready = true,
+                    contract = $"{ContractInfo.Major}.{ContractInfo.Minor}", serverId = _credentials.ServerId,
+                    workspaceId = workspace.Id }, cancellationToken);
                 return;
             }
 
             if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/v1/changes")
             {
-                await HandleChangesAsync(context, cancellationToken);
+                await HandleChangesAsync(context, authenticated, cancellationToken);
                 return;
             }
 
@@ -309,7 +377,105 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         }
     }
 
-    private async Task HandleChangesAsync(HttpListenerContext context, CancellationToken cancellationToken)
+    private async Task HandleAdministrationAsync(HttpListenerContext context, string path, CancellationToken cancellationToken)
+    {
+        if (context.Request.HttpMethod == "POST" && path == "/transport/v1/admin/pairings")
+        {
+            var request = await ReadJsonAsync<CreatePairingRequest>(context.Request, 16 * 1024, cancellationToken);
+            if (!Uri.TryCreate(request.ServeOrigin, UriKind.Absolute, out var serveOrigin))
+                throw new SnookException(SnookErrorCode.ValidationFailed, "A canonical Tailscale Serve origin is required.");
+            var invitation = _pairings.Arm(request.DeviceName, serveOrigin, request.IntendedTailscaleLogin);
+            await WriteJsonAsync(context.Response, HttpStatusCode.OK, invitation, cancellationToken);
+            return;
+        }
+        if (context.Request.HttpMethod == "POST" && path == "/transport/v1/admin/pairings/cancel")
+        {
+            var request = await ReadJsonAsync<CancelPairingRequest>(context.Request, 4096, cancellationToken);
+            _pairings.Cancel(request.PairingCode);
+            await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { cancelled = true }, cancellationToken);
+            return;
+        }
+        if (context.Request.HttpMethod == "GET" && path == "/transport/v1/admin/devices")
+        {
+            await WriteJsonAsync(context.Response, HttpStatusCode.OK, _credentials.List(), cancellationToken);
+            return;
+        }
+        if (context.Request.HttpMethod == "POST" && path == "/transport/v1/admin/devices/revoke")
+        {
+            var request = await ReadJsonAsync<RevokeDeviceRequest>(context.Request, 4096, cancellationToken);
+            await _credentials.RevokeAsync(request.CredentialId, cancellationToken);
+            DisconnectCredential(request.CredentialId);
+            await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { revoked = true }, cancellationToken);
+            return;
+        }
+        await WriteErrorAsync(context.Response, HttpStatusCode.NotFound, "Daemon route was not found.", SnookErrorCode.NotFound, cancellationToken);
+    }
+
+    private async Task HandlePairAsync(HttpListenerContext context, CancellationToken cancellationToken)
+    {
+        if (!await _pairingDispatch.WaitAsync(0, cancellationToken))
+        {
+            await PairingDeniedAsync(context, cancellationToken);
+            return;
+        }
+        try
+        {
+            var request = await ReadJsonAsync<RedeemPairingRequest>(context.Request, 16 * 1024, cancellationToken);
+            var login = PairingSessions.NormalizeLogin(context.Request.Headers["Tailscale-User-Login"]);
+            var remote = context.Request.RemoteEndPoint?.Address.ToString() ?? "unknown";
+            var session = _pairings.Redeem(request.PairingCode, $"{login ?? "anonymous"}|{remote}", login,
+                request.DeviceName);
+            if (session is null) { await PairingDeniedAsync(context, cancellationToken); return; }
+            var deviceName = session.DeviceName;
+            var issued = await _credentials.CreateAsync(deviceName, login, _pairings.UtcNow, cancellationToken);
+            try
+            {
+                var workspace = (await _backend.GetBootstrapAsync(cancellationToken)).Workspace;
+                await WriteJsonAsync(context.Response, HttpStatusCode.OK, new
+                {
+                    serveOrigin = session.ServeOrigin.AbsoluteUri,
+                    serverId = _credentials.ServerId,
+                    workspaceId = workspace.Id,
+                    workspaceName = workspace.Name,
+                    contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
+                    credentialId = issued.Id,
+                    deviceName,
+                    tailscaleLogin = login,
+                    credential = issued.Credential
+                }, cancellationToken);
+            }
+            catch
+            {
+                // A client that never receives the one-time response cannot
+                // self-cancel. Fail closed by revoking the just-issued record.
+                await _credentials.RevokeAsync(issued.Id, CancellationToken.None);
+                throw;
+            }
+        }
+        finally { _pairingDispatch.Release(); }
+    }
+
+    private async Task HandleSelfCancelAsync(HttpListenerContext context, AuthenticatedDevice authenticated, CancellationToken cancellationToken)
+    {
+        if (authenticated.IsRecoveryAdministrator)
+        {
+            await PairingDeniedAsync(context, cancellationToken);
+            return;
+        }
+        var request = await ReadJsonAsync<RevokeDeviceRequest>(context.Request, 4096, cancellationToken);
+        if (request.CredentialId != authenticated.CredentialId) { await PairingDeniedAsync(context, cancellationToken); return; }
+        await _credentials.RevokeAsync(request.CredentialId, cancellationToken);
+        DisconnectCredential(request.CredentialId);
+        await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { revoked = true }, cancellationToken);
+    }
+
+    private static Task PairingDeniedAsync(HttpListenerContext context, CancellationToken cancellationToken)
+        => WriteErrorAsync(context.Response, HttpStatusCode.Unauthorized,
+            "Pairing was not accepted. The invitation may be invalid, expired, already used, restricted to another login, or rate-limited.",
+            SnookErrorCode.StoreUnavailable, cancellationToken);
+
+    private async Task HandleChangesAsync(HttpListenerContext context, AuthenticatedDevice authenticated,
+        CancellationToken cancellationToken)
     {
         if (!await _subscriptions.WaitAsync(0, cancellationToken))
         {
@@ -334,7 +500,12 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
             {
                 AutoFlush = true
             };
-            _changeSubscribers[id] = queue;
+            _changeSubscribers[id] = new(authenticated.CredentialId, queue);
+            if (!authenticated.IsRecoveryAdministrator && !_credentials.IsActive(authenticated.CredentialId))
+            {
+                queue.Writer.TryComplete();
+                _changeSubscribers.TryRemove(id, out _);
+            }
             await WriteFrameAsync(writer, ": connected\n\n", cancellationToken);
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -374,20 +545,37 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         var payload = $"data: {JsonSerializer.Serialize(notification, JsonOptions)}\n\n";
         foreach (var subscriber in _changeSubscribers.ToArray())
         {
-            if (!subscriber.Value.Writer.TryWrite(payload))
+            if (!subscriber.Value.Queue.Writer.TryWrite(payload))
             {
                 // Disconnect on overflow; reconnecting clients obtain a fresh snapshot.
-                subscriber.Value.Writer.TryComplete();
+                subscriber.Value.Queue.Writer.TryComplete();
                 _changeSubscribers.TryRemove(subscriber.Key, out _);
             }
+        }
+    }
+
+    private void DisconnectCredential(Guid credentialId)
+    {
+        foreach (var subscriber in _changeSubscribers.ToArray())
+        {
+            if (subscriber.Value.CredentialId != credentialId) continue;
+            subscriber.Value.Queue.Writer.TryComplete();
+            _changeSubscribers.TryRemove(subscriber.Key, out _);
         }
     }
 
     private async Task HandleCallAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
         var body = await ReadRequestBodyAsync(context.Request, cancellationToken);
-        using var document = JsonDocument.Parse(body);
+        using var document = JsonDocument.Parse(body,
+            new JsonDocumentOptions { MaxDepth = 32, CommentHandling = JsonCommentHandling.Disallow });
+        RejectDuplicateJsonProperties(document.RootElement);
+        var envelopeProperties = document.RootElement.ValueKind == JsonValueKind.Object
+            ? document.RootElement.EnumerateObject().Select(property => property.Name).ToArray()
+            : [];
         if (document.RootElement.ValueKind != JsonValueKind.Object
+            || envelopeProperties.Length != 2
+            || envelopeProperties.Any(name => name is not ("method" or "args"))
             || !document.RootElement.TryGetProperty("method", out var methodElement)
             || methodElement.ValueKind != JsonValueKind.String
             || !document.RootElement.TryGetProperty("args", out var argsElement)
@@ -463,15 +651,16 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         await WriteJsonAsync(context.Response, HttpStatusCode.OK, new { result }, cancellationToken);
     }
 
-    private static async Task<byte[]> ReadRequestBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadRequestBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken,
+        int maximumBytes = MaxRequestBytes)
     {
-        if (request.ContentLength64 > MaxRequestBytes)
+        if (request.ContentLength64 > maximumBytes)
         {
-            throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon request bodies are limited to {MaxRequestBytes} bytes.");
+            throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon request body exceeds its {maximumBytes}-byte limit.");
         }
 
         await using var input = request.InputStream;
-        await using var body = new MemoryStream(capacity: request.ContentLength64 is > 0 and <= MaxRequestBytes
+        await using var body = new MemoryStream(capacity: request.ContentLength64 is > 0 && request.ContentLength64 <= maximumBytes
             ? (int)request.ContentLength64
             : 4096);
         var buffer = new byte[81920];
@@ -485,9 +674,9 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
             }
 
             total += read;
-            if (total > MaxRequestBytes)
+            if (total > maximumBytes)
             {
-                throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon request bodies are limited to {MaxRequestBytes} bytes.");
+                throw new SnookException(SnookErrorCode.ValidationFailed, $"Daemon request body exceeds its {maximumBytes}-byte limit.");
             }
 
             await body.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
@@ -496,10 +685,57 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         return body.ToArray();
     }
 
-    private bool IsAuthorized(HttpListenerRequest request)
+    private static async Task<T> ReadJsonAsync<T>(HttpListenerRequest request, int maximumBytes, CancellationToken cancellationToken)
+    {
+        using var document = JsonDocument.Parse(await ReadRequestBodyAsync(request, cancellationToken, maximumBytes),
+            new JsonDocumentOptions { MaxDepth = 8, CommentHandling = JsonCommentHandling.Disallow });
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            throw new SnookException(SnookErrorCode.ValidationFailed, "Request JSON is invalid.");
+        RejectDuplicateJsonProperties(document.RootElement);
+        return document.RootElement.Deserialize<T>(JsonOptions)
+            ?? throw new SnookException(SnookErrorCode.ValidationFailed, "Request JSON is invalid.");
+    }
+
+    private static void RejectDuplicateJsonProperties(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                    throw new SnookException(SnookErrorCode.ValidationFailed,
+                        "Request JSON contains duplicate fields.");
+                RejectDuplicateJsonProperties(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) RejectDuplicateJsonProperties(item);
+    }
+
+    private AuthenticatedDevice? Authenticate(HttpListenerRequest request)
     {
         var supplied = request.Headers["X-Snook-Token"] ?? string.Empty;
-        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(supplied), Encoding.UTF8.GetBytes(_token));
+        if (supplied.Length is < 32 or > 512) return null;
+        var suppliedBytes = Encoding.UTF8.GetBytes(supplied);
+        var recoveryBytes = Encoding.UTF8.GetBytes(_recoveryToken);
+        var suppliedHash = SHA256.HashData(suppliedBytes);
+        var recoveryHash = SHA256.HashData(recoveryBytes);
+        try
+        {
+            if (CryptographicOperations.FixedTimeEquals(suppliedHash, recoveryHash))
+                return new AuthenticatedDevice(Guid.Empty,
+                    PairingSessions.NormalizeLogin(request.Headers["Tailscale-User-Login"]), true, false);
+            return _credentials.Authenticate(supplied,
+                PairingSessions.NormalizeLogin(request.Headers["Tailscale-User-Login"]), _pairings.UtcNow);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(suppliedBytes);
+            CryptographicOperations.ZeroMemory(recoveryBytes);
+            CryptographicOperations.ZeroMemory(suppliedHash);
+            CryptographicOperations.ZeroMemory(recoveryHash);
+        }
     }
 
     private static async Task WriteErrorAsync(HttpListenerResponse response, HttpStatusCode status, string message, SnookErrorCode code, CancellationToken cancellationToken)
@@ -510,6 +746,7 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
         response.StatusCode = (int)status;
         response.ContentType = "application/json";
+        response.Headers["Cache-Control"] = "no-store";
         response.ContentLength64 = bytes.Length;
         await response.OutputStream.WriteAsync(bytes, cancellationToken);
         await response.OutputStream.FlushAsync(cancellationToken);
@@ -519,10 +756,18 @@ internal sealed class DaemonRpcServer : IAsyncDisposable
     {
         _backend.Changed -= OnBackendChanged;
         _listener.Close();
-        foreach (var subscriber in _changeSubscribers.Values) subscriber.Writer.TryComplete();
+        foreach (var subscriber in _changeSubscribers.Values) subscriber.Queue.Writer.TryComplete();
         _changeSubscribers.Clear();
+        _pairings.Clear();
         _dispatch.Dispose();
         _subscriptions.Dispose();
+        _pairingDispatch.Dispose();
         return ValueTask.CompletedTask;
     }
+
+    private sealed record CreatePairingRequest(string DeviceName, string ServeOrigin, string? IntendedTailscaleLogin);
+    private sealed record CancelPairingRequest(string PairingCode);
+    private sealed record RedeemPairingRequest(string PairingCode, string DeviceName);
+    private sealed record RevokeDeviceRequest(Guid CredentialId);
+    private sealed record ChangeSubscriber(Guid CredentialId, Channel<string> Queue);
 }

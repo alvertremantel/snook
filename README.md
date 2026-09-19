@@ -183,8 +183,10 @@ the default for both hosts and clients. Once listening, the daemon publishes a
 private `Snook/daemon.endpoint.json`; both clients discover its custom port from
 the selected data directory unless an endpoint or port was explicitly configured.
 The daemon also accepts `--data-dir PATH`, `--port PORT`, and `--help`.
-Connections accept HTTP loopback URLs
-only. Tokens default to `<data-dir>/Snook/daemon.token`. GUI `--help` lists its
+Local profiles accept HTTP loopback URLs. Version-2 tailnet profiles accept only a
+canonical `https://<machine>.<tailnet>.ts.net/` Tailscale Serve root on port 443.
+Redirects and HTTP proxies remain disabled and normal TLS validation is required.
+Tokens default to `<data-dir>/Snook/daemon.token`. GUI `--help` lists its
 connection options without opening a window or database. See
 [daemon operations](docs/operations.md#daemon-profile) for failures, retries,
 permissions and token rotation, and [the daemon plan](docs/daemon-plan.md) for
@@ -196,13 +198,52 @@ opening a workspace. At startup, check **Remember these settings** before Connec
 Both GUI and CLI read `<launch-data-dir>/Snook/client-profile.json`; that launch
 directory comes from `--data-dir`, `SNOOK_DATA_DIR`, or the platform default before
 reading saved settings. Flags override environment values, which override the saved
-profile. It saves mode, data directory, optional endpoint and token-file path—not
-credentials. Invalid profiles fail closed. `--no-profile --host daemon` explicitly
+profile. Version-1 profiles retain local behavior. Version-2 profiles add the
+transport kind, canonical origin, protected credential reference, expected
+server/workspace IDs, friendly name and negotiated contract metadata—not the
+credential. Invalid profiles fail closed. `--no-profile --host daemon` explicitly
 bypasses a bad profile; CLI requires a host selection with `--no-profile`.
 GUI startup failures keep the settings and a visible Retry action. Changes made
 from the running workspace apply on the next launch and do not discard drafts or
 switch an active workspace. An outage shows a stale-data warning and Retry refresh;
 there is no offline write queue or automatic embedded fallback.
+
+### Experimental Tailscale Serve workflow
+
+Snook keeps `snookd` bound to loopback and uses Tailscale Serve as the only remote
+topology. Funnel, LAN binds, raw Tailscale IPs, HTTP MagicDNS, custom domains and
+generic reverse proxies are rejected or unsupported. This implementation is not
+release-supported until the live-tailnet and platform gates in
+[production readiness](docs/production-readiness.md) pass.
+The implemented trust boundaries and versioned transport schemas are recorded in
+[the Tailscale threat model](docs/tailscale-threat-model.md).
+
+With `snookd` running locally, inspect first and explicitly apply only after
+reviewing the printed command:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root tailnet status
+snook-cli --host daemon --data-dir /absolute/host-root tailnet setup
+snook-cli --host daemon --data-dir /absolute/host-root tailnet setup --apply
+```
+
+The helper reads the private daemon descriptor, detects the current `.ts.net`
+name and existing Serve JSON, refuses Funnel or an occupied HTTPS root, and never
+runs `serve reset`. The documented manual equivalent uses the actual discovered
+port: `tailscale serve --bg http://127.0.0.1:<port>`.
+
+Create an invitation from Settings → General & data on a locally connected host,
+or with `pair create`. The remote desktop selects **Tailnet daemon**, enters the
+Serve URL and one-time code, reviews server/workspace identity, then confirms.
+Per-device credentials are verifier-only on the host and use Linux Secret Service,
+Windows Credential Manager, or macOS Keychain on clients. An owner-only file is an
+explicit fallback; the profile stores only a reference. Issued credentials remain
+provisional during the official client's health-only identity review and expire
+after five minutes unless a confirmed, durably saved client uses RPC/SSE to promote
+them. Use `devices list` and
+`devices revoke` locally. A host invitation can be revoked before redemption with
+the visible **Cancel invitation** action or `pair cancel PRIVATE_CODE_FILE`. See [operations](docs/operations.md#tailscale-serve-experimental)
+and [CLI details](docs/cli.md#tailscale-serve-and-pairing).
 
 Contract 1.6 supports caller-owned operation IDs for entity create/add actions.
 The GUI preserves an unchanged creation attempt after an uncertain response;
@@ -314,7 +355,8 @@ It also installs `/usr/bin/snook-cli`, `/usr/bin/snookd`, a per-user
 `snookd.service`, and CLI/operations documentation under `/usr/share/doc/snook`.
 The three self-contained payloads live separately under `/usr/lib64/snook`.
 Native OS dependencies, including ICU, time-zone data and OpenSSL, are declared
-by the package; no separate .NET installation is needed. See Microsoft's
+by the package; it also requires `/usr/bin/secret-tool` for the default Linux
+Secret Service credential adapter. No separate .NET installation is needed. See Microsoft's
 [Fedora dependency reference](https://learn.microsoft.com/en-us/dotnet/core/install/linux-fedora#dependencies).
 Workspace data remains in the user's local application-data directory. No service
 is enabled or started, and no workspace is opened by installation. To opt in,
@@ -360,6 +402,15 @@ This imports the extracted unit's properties into a uniquely named transient use
 unit with a fresh workspace and port. It checks readiness, restart, stop and lease
 reopening, then stops/removes the temporary unit. It never enables the normal
 `snookd.service`; it is not an install/upgrade/uninstall test.
+
+Opt in to an actual DNF install → upgrade → removal cycle inside a disposable
+Fedora 44 Podman container. This downloads the configured Fedora image and package
+dependencies but does not install the RPM or enable services on the host:
+
+```bash
+SNOOK_VERIFY_RPM_LIFECYCLE=1 \
+  ./scripts/verify-rpm-lifecycle-container.sh /path/to/previous.rpm /path/to/current.rpm
+```
 
 If `rpmbuild` cannot be installed,
 `scripts/package-rpm.sh` is also the reproducible installation script to run
@@ -424,6 +475,15 @@ check settings validation, retained drafts, Escape, focus return and next-launch
 save without switching the active backend. Dialogs are captured at 620×600; use
 `SNOOK_SCREENSHOT_SIZE=980x640` for the workspace. Existing workspace/timer checks
 can run against this same daemon with their usual verification switches.
+Add `SNOOK_SCREENSHOT_VERIFY_TAILNET_UI=1` to capture both the pre-pairing form
+and a deterministic saved server/workspace identity with its protected-store label.
+For a disposable local daemon, request `settings-bottom` and set
+`SNOOK_SCREENSHOT_VERIFY_TAILNET_ADMIN=1` to create, render, and cancel a real
+short-lived host invitation through pointer actions. The harness substitutes an
+explicit redaction for the live code before capturing pixels while retaining the
+real code internally for the cancellation check. It also redeems a second
+invitation locally, renders the provisional-expiry state, and revokes that record
+through the visible device action.
 For an externally controlled shutdown/restart check, also set
 `SNOOK_SCREENSHOT_VERIFY_OUTAGE=1`. The harness prints `WAIT` before each phase:
 stop that disposable daemon, then restart it with the same data root and port.

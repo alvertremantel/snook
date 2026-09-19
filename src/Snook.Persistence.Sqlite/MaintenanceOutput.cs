@@ -46,6 +46,10 @@ public sealed partial class SqliteStore
             var directory = Path.GetDirectoryName(fullPath)!;
             foreach (var workspacePath in new[] { _databasePath, ResolveWorkspacePath(_databasePath) })
             {
+                var workspaceDirectory = Path.GetDirectoryName(workspacePath)!;
+                var credentialDirectory = Path.Combine(workspaceDirectory, "client-credentials") + Path.DirectorySeparatorChar;
+                if (fullPath.StartsWith(credentialDirectory, StringComparison.OrdinalIgnoreCase))
+                    throw InvalidOutput("Client credentials cannot be artifact destinations.");
                 if (!string.Equals(directory, Path.GetDirectoryName(workspacePath), StringComparison.OrdinalIgnoreCase)) continue;
                 var name = Path.GetFileName(fullPath);
                 var databaseName = Path.GetFileName(workspacePath);
@@ -53,6 +57,8 @@ public sealed partial class SqliteStore
                     || name.StartsWith(databaseName + ".", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith(databaseName + "-", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("daemon.", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("daemon-auth.json", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("tailscale-serve.json", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("client-profile.json", StringComparison.OrdinalIgnoreCase))
                     throw InvalidOutput("Workspace files, SQLite sidecars, ownership files and daemon credentials/discovery are not artifact destinations.");
             }

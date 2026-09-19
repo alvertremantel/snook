@@ -8,7 +8,19 @@ using Snook.Persistence.Sqlite;
 namespace Snook.Application;
 
 // Device-local client configuration, never a workspace/export or wire DTO.
-public sealed record ClientConnectionProfile(int Version, string Host, string DataDirectory, string? Endpoint = null, string? TokenFile = null);
+public sealed record ClientConnectionProfile(
+    int Version,
+    string Host,
+    string DataDirectory,
+    string? Endpoint = null,
+    string? TokenFile = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TransportKind = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CredentialReference = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ExpectedServerId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ExpectedWorkspaceId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FriendlyName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ContractMajor = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ContractMinor = null);
 public sealed record ClientProfileSnapshot(ClientConnectionProfile? Profile, string? Stamp);
 
 public sealed class ClientProfileStore
@@ -95,15 +107,51 @@ public sealed class ClientProfileStore
     public static ClientConnectionProfile Validate(ClientConnectionProfile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        if (profile.Version != 1 || profile.Host is not ("embedded" or "daemon")) throw InvalidProfile();
+        if (profile.Version is not (1 or 2) || profile.Host is not ("embedded" or "daemon")) throw InvalidProfile();
         var dataDirectory = ValidateDirectory(profile.DataDirectory);
         var endpoint = profile.Host == "embedded" || string.IsNullOrWhiteSpace(profile.Endpoint) ? null : profile.Endpoint.Trim();
         if (endpoint?.Length > 4096) throw InvalidProfile();
-        if (endpoint is not null) DaemonBackendClient.ValidateEndpoint(endpoint);
+        var transportKind = profile.TransportKind?.Trim().ToLowerInvariant();
+        if (profile.Version == 1 && (transportKind is not null || profile.CredentialReference is not null
+            || profile.ExpectedServerId is not null || profile.ExpectedWorkspaceId is not null
+            || profile.FriendlyName is not null || profile.ContractMajor is not null || profile.ContractMinor is not null))
+            throw InvalidProfile();
+        if (profile.Version == 2)
+        {
+            if (profile.Host == "embedded") throw InvalidProfile();
+            else if (transportKind is not ("local-loopback" or "tailscale-serve")) throw InvalidProfile();
+        }
+        if (endpoint is not null)
+        {
+            var required = transportKind switch
+            {
+                "local-loopback" => DaemonEndpointKind.LocalLoopback,
+                "tailscale-serve" => DaemonEndpointKind.TailscaleServe,
+                _ when profile.Version == 1 => DaemonEndpointKind.LocalLoopback,
+                _ => (DaemonEndpointKind?)null
+            };
+            endpoint = DaemonEndpoint.Parse(endpoint, required).Origin.AbsoluteUri;
+        }
+        if (profile.Version == 2 && transportKind == "tailscale-serve" && endpoint is null) throw InvalidProfile();
         var tokenFile = profile.Host == "embedded" || string.IsNullOrWhiteSpace(profile.TokenFile) ? null : profile.TokenFile.Trim();
         if (tokenFile is not null && (!Path.IsPathFullyQualified(tokenFile) || tokenFile.Length > 4096))
             throw new SnookException(SnookErrorCode.ValidationFailed, "The token file must be an absolute path of at most 4096 characters.");
-        return profile with { DataDirectory = dataDirectory, Endpoint = endpoint, TokenFile = tokenFile };
+        var credentialReference = Normalize(profile.CredentialReference, 256);
+        var friendlyName = Normalize(profile.FriendlyName, 100);
+        if (transportKind != "tailscale-serve" && (credentialReference is not null
+            || profile.ExpectedServerId is not null || profile.ExpectedWorkspaceId is not null
+            || friendlyName is not null || profile.ContractMajor is not null || profile.ContractMinor is not null))
+            throw InvalidProfile();
+        if (transportKind == "tailscale-serve" && (tokenFile is null) == (credentialReference is null))
+            throw new SnookException(SnookErrorCode.ValidationFailed, "A tailnet daemon profile requires exactly one protected credential reference or explicit owner-only token file.");
+        if (transportKind == "tailscale-serve" && (profile.ExpectedServerId is null || profile.ExpectedServerId == Guid.Empty
+            || profile.ExpectedWorkspaceId is null || profile.ExpectedWorkspaceId == Guid.Empty)) throw InvalidProfile();
+        if (transportKind == "tailscale-serve"
+            && (profile.ContractMajor is null) != (profile.ContractMinor is null)) throw InvalidProfile();
+        if (profile.ExpectedServerId == Guid.Empty || profile.ExpectedWorkspaceId == Guid.Empty
+            || profile.ContractMajor is < 0 || profile.ContractMinor is < 0) throw InvalidProfile();
+        return profile with { DataDirectory = dataDirectory, Endpoint = endpoint, TokenFile = tokenFile,
+            TransportKind = transportKind, CredentialReference = credentialReference, FriendlyName = friendlyName };
     }
 
     public static string LaunchDataDirectory(string? selected = null)
@@ -112,7 +160,8 @@ public sealed class ClientProfileStore
 
     public static ClientConnectionProfile Resolve(ClientConnectionProfile? saved, string launchDataDirectory,
         string? host = null, string? dataDirectory = null, string? endpoint = null, string? tokenFile = null,
-        Func<string, string?>? environment = null)
+        Func<string, string?>? environment = null, string? transportKind = null, string? credentialReference = null,
+        Guid? expectedServerId = null, Guid? expectedWorkspaceId = null)
     {
         environment ??= Environment.GetEnvironmentVariable;
         var selectedHost = (host ?? environment("SNOOK_HOST_MODE") ?? saved?.Host ?? "embedded").ToLowerInvariant();
@@ -123,11 +172,29 @@ public sealed class ClientProfileStore
                 throw new SnookException(SnookErrorCode.ValidationFailed, "SNOOK_DAEMON_PORT must be between 1024 and 65535.");
             environmentEndpoint = $"http://127.0.0.1:{port}/";
         }
-        return Validate(new ClientConnectionProfile(1,
+        var environmentTokenFile = environment("SNOOK_DAEMON_TOKEN_FILE");
+        var selectedTransport = selectedHost == "daemon"
+            ? transportKind?.Trim().ToLowerInvariant() ?? saved?.TransportKind
+            : null;
+        var version = selectedHost == "daemon" && selectedTransport is not null ? 2 : 1;
+        var selectedTokenFile = tokenFile ?? environmentTokenFile ?? saved?.TokenFile;
+        var selectedCredentialReference = selectedTransport == "tailscale-serve"
+            ? credentialReference ?? (tokenFile is null && environmentTokenFile is null ? saved?.CredentialReference : null)
+            : null;
+        if (selectedTransport == "tailscale-serve" && credentialReference is not null
+            && tokenFile is null && environmentTokenFile is null) selectedTokenFile = null;
+        return Validate(new ClientConnectionProfile(version,
             selectedHost,
             dataDirectory ?? environment("SNOOK_DATA_DIR") ?? saved?.DataDirectory ?? launchDataDirectory,
             endpoint ?? environmentEndpoint ?? saved?.Endpoint,
-            tokenFile ?? environment("SNOOK_DAEMON_TOKEN_FILE") ?? saved?.TokenFile));
+            selectedTokenFile,
+            selectedTransport,
+            selectedCredentialReference,
+            selectedTransport == "tailscale-serve" ? expectedServerId ?? saved?.ExpectedServerId : null,
+            selectedTransport == "tailscale-serve" ? expectedWorkspaceId ?? saved?.ExpectedWorkspaceId : null,
+            selectedTransport == "tailscale-serve" ? saved?.FriendlyName : null,
+            selectedTransport == "tailscale-serve" ? saved?.ContractMajor : null,
+            selectedTransport == "tailscale-serve" ? saved?.ContractMinor : null));
     }
 
     public static async Task<IBackendClient> OpenAsync(ClientConnectionProfile profile, string? token = null,
@@ -149,8 +216,15 @@ public sealed class ClientProfileStore
         return Path.GetFullPath(path);
     }
 
+    private static string? Normalize(string? value, int maximum)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        value = value.Trim();
+        return value.Length <= maximum && !value.Any(char.IsControl) ? value : throw InvalidProfile();
+    }
+
     private static SnookException InvalidProfile() => new(SnookErrorCode.ValidationFailed,
-        "The saved connection must be a bounded version-1 profile with embedded or daemon mode. Credentials cannot be stored in a profile.");
+        "The saved connection must be a bounded version-1 local profile or version-2 local-loopback/tailscale-serve profile. Credentials cannot be stored in a profile.");
 
     private static bool Exists(string path)
     {

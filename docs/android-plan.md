@@ -138,10 +138,17 @@ mixed compiled-binding policy until every inherited binding is resolved.
 
 ### Daemon-attached mode
 
-The existing daemon is loopback-only. A phone cannot attach to a daemon on another
-machine through the current transport. Do not weaken its loopback bind, add a LAN
-listener, or send the existing bearer token over an ordinary network. Tailscale is
-the sole supported remote transport; Tailscale Funnel is explicitly prohibited.
+The daemon remains loopback-only. The shared desktop transport now has an
+implemented Tailscale Serve path with strict endpoint classification, profile v2,
+stable server/workspace identity, one-time per-device pairing, reconnect handling,
+and credential revocation. Its official pairing/profile/backend flow is covered
+through a `.ts.net`-shaped HTTPS boundary, including RPC, SSE interruption and
+reconnect, identity pinning, revocation, and proof that the attached client creates
+no SQLite workspace. Android must reuse that protocol and its bounds rather than
+create a mobile-only transport. Android still owns its Keystore adapter, profile
+lifecycle and UI, and the real-device roaming/live-tailnet acceptance matrix. Do not
+weaken the loopback bind, add a LAN listener, or copy the local recovery token.
+Tailscale is the sole planned remote transport; Tailscale Funnel is prohibited.
 
 The reference topology is:
 
@@ -152,34 +159,41 @@ The reference topology is:
    port through its tailnet-only HTTPS name. Tailscale terminates HTTPS with its
    automatically provisioned certificate. Never document or automate `tailscale
    funnel`, router port forwarding, a public reverse proxy, or a `0.0.0.0` bind.
-2. Require MagicDNS and HTTPS certificates in the tailnet. Accept only an HTTPS
-   `*.ts.net` Serve URL (or an explicitly approved Tailscale Service name) in the
-   Android profile. Disable redirects, cleartext traffic, system HTTP proxies, and
-   alternate-host credential forwarding. All health, RPC, SSE, pairing, and
-   maintenance traffic uses this one origin.
+2. Require MagicDNS and HTTPS certificates in the tailnet. Match the implemented
+   `DaemonEndpoint` policy: accept only a canonical
+   `https://<machine>.<tailnet>.ts.net/` root on port 443, with no path, query,
+   fragment, user information, IDN, raw IP, custom domain, or Tailscale Service
+   alias. Disable redirects, cleartext traffic, system HTTP proxies, and
+   alternate-host credential forwarding. All health, RPC, SSE and pairing traffic
+   uses this one origin.
 3. Publish a least-privilege Tailscale grant/ACL example that permits the intended
    Android user/device or tag to reach only the Snook Serve HTTPS endpoint. Treat
    tailnet membership alone as insufficient authorization. Acceptance must prove an
    allowed device works and a second tailnet device outside the grant is denied.
-4. Write and threat-model the boundary between Tailscale identity and Snook
-   authentication. Tailscale provides the private authenticated network and Serve
-   identity headers; Snook still requires a short-lived pairing ceremony and issues
-   a per-install, revocable application credential. Only trust Serve identity
-   headers because the backend stays on loopback behind Serve, which strips
-   spoofed incoming identity headers. Bind the Snook credential to the observed
-   tailnet user/node identity and workspace policy where the platform exposes it.
-5. Pair in person through the Serve URL using a short-lived, single-use QR code or
-   manually entered code. Display the MagicDNS/Serve hostname, tailnet identity,
-   daemon instance, and workspace name before confirmation. Pairing cannot enable
-   Serve, alter tailnet policy, or enroll the phone in Tailscale automatically.
+4. Preserve the implemented boundary between Tailscale identity and Snook
+   authentication. Tailscale provides the private network and grant enforcement;
+   Snook still requires a five-minute, single-use pairing ceremony and issues a
+   random per-install credential whose host copy is only a salted verifier. An
+   invitation may require the normalized `Tailscale-User-Login`, and the observed
+   login is inventory metadata, but no identity header may bypass the Snook
+   credential. Any stronger Android user/node binding needs a reviewed shared
+   protocol revision, not a mobile-only assumption.
+5. Reuse `/transport/v1/pair` and the authenticated local administration routes.
+   Pair in person through the Serve URL using the current short-lived code, with a
+   QR wrapper only as a future encoding of the same bounded invitation. Display the
+   canonical origin, stable server ID, stable workspace ID, workspace name and
+   contract before confirmation. Cancellation revokes the just-issued credential.
+   Pairing cannot enable Serve, alter policy, or enroll the phone in Tailscale.
 6. Store the private Snook client credential using Android Keystore-backed
    encryption. Store only non-secret Serve URL, tailnet/server/workspace identity,
    and preferences in the profile. Support list, rename, test, revoke, repair, and
    re-pair flows; never export secrets in logs, backup, clipboard, screenshots, QR
    codes after enrollment, or Tailscale configuration.
-7. Extend `DaemonBackendClient` through a transport abstraction so contract
-   serialization, version negotiation, error mapping, exact receipts, SSE/change
-   semantics, and cancellation remain shared. Long-lived SSE must be verified
+7. Reuse the existing classified `DaemonBackendClient` transport so contract
+   serialization, version negotiation, server/workspace identity checks, error
+   mapping, exact receipts, SSE/change semantics, and cancellation remain shared.
+   Android profile migration must preserve the version-2 transport kind, canonical
+   origin, protected credential reference and expected identities. Long-lived SSE must be verified
    through Tailscale Serve, including roaming between Wi-Fi and mobile data and
    direct-to-relayed path changes. Avoid a mobile-only API surface.
 8. Define Tailscale-disabled/not-connected, tailnet policy denial, MagicDNS failure,
@@ -496,9 +510,10 @@ URI sharing. Complete battery and process-death tests.
 
 ### Phase 4 — Tailnet-only daemon attachment
 
-Implement loopback daemon hosting behind Tailscale Serve, documented MagicDNS/HTTPS
-and grant configuration, pairing and revocation, Android Keystore credentials,
-tailnet-only profiles, shared transport, snapshot/stream reconciliation, outage UX,
+Reuse the implemented loopback daemon, Tailscale Serve configuration contract,
+MagicDNS/HTTPS grant guidance, pairing/revocation routes and profile-v2 identity
+model. Add Android Keystore credentials, Android profile persistence,
+snapshot/stream reconciliation, outage UX,
 and actual daemon-backed notification/widget behavior. Run the entire contract suite
 through the Serve origin, including mobile roaming, DERP-relayed paths, policy denial,
 wrong-tailnet, Serve-down, and node-revocation cases. Ship attached mode only after

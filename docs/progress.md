@@ -1,12 +1,108 @@
 # Snook implementation progress
 
-Updated: 2026-09-18
+Updated: 2026-09-19
 
 ## Current state
 
-Snook is a working desktop vertical slice for local work organization and time tracking. It builds as a .NET 10 Avalonia application, persists to SQLite, and can optionally use an authenticated local daemon. The UI is ready for a human visual pass; this is not yet a finished multi-platform release.
+Snook is a working desktop vertical slice for local work organization and time tracking. It builds as a .NET 10 Avalonia application, persists to SQLite, and can optionally use an authenticated local or paired Tailscale Serve daemon. The tailnet path remains experimental pending live and platform gates; this is not yet a finished multi-platform release.
 
 ## Implemented surface
+
+- The Tailscale operability implementation now keeps `snookd` loopback-only while
+  accepting strictly canonical `.ts.net` HTTPS origins in explicit version-2
+  profiles. Redirects/proxies stay disabled and standard TLS validation remains.
+  A private verifier-only host registry supplies stable server identity and
+  revocable per-device credentials; bounded five-minute, 128-bit, one-use pairing
+  routes are separate from `IBackendClient`, rate-limited, optionally login-bound,
+  and cancel/revoke on aborted confirmation or failed response delivery. Invitations
+  can also be cancelled explicitly before expiry. The desktop has Embedded, Local daemon
+  and Tailnet daemon modes with identity review; locally attached Settings can arm
+  invitations, cancel them, and list/revoke devices. CLI parity covers pairing, inventory,
+  structured doctor metadata and conflict-safe Tailscale status/setup/disable.
+  The Serve adapter bounds processes/output/JSON, refuses Funnel or occupied roots,
+  never resets Serve, durably records the exact planned ownership before mutation,
+  and verifies the same origin/upstream afterward. Pairing/admin responses and Serve
+  state/receipt JSON reject duplicate, unknown, mistyped and future-version data;
+  pairing/admin requests are equally strict, and local endpoint validation rejects
+  numeric IPv4 shorthand and every `127/8` address except exact `127.0.0.1`.
+  The host verifier registry also rejects case-variant duplicate properties, null
+  structures, invalid timestamps and duplicate scopes deterministically. Normal
+  GUI/CLI transport failures now preserve cautious DNS, TLS, tailnet-connectivity,
+  and local-loopback guidance instead of collapsing every failure into one message.
+  Local discovery descriptors are strict, duplicate-safe and loopback-only before
+  token loading. Shared pairing confirmation now authenticates the issued credential
+  and rechecks reviewed server/workspace identity before any protected-store write;
+  Serve receipts are private, atomic and non-link-following. Focused endpoint/profile/parser
+  and real daemon-process tests pass; the full baseline is 204 tests (186 application,
+  18 domain) with a zero-warning build. Fresh 620×600 tailnet pre-pairing and
+  saved-identity states plus 980×640 daemon Settings form/invitation renders were
+  inspected (`/tmp/snook-tailnet-ui-images-20260919a` and
+  `/tmp/snook-tailnet-admin-ui-images-20260919b`). A
+  read-only live query against Tailscale 1.102.4 confirmed a logged-in node,
+  MagicDNS/HTTPS, empty Serve state and Snook's exact `ready-to-apply` preview;
+  the opt-in `scripts/verify-tailscale-operability.sh` check passed again with the
+  audited release-5 package CLI (`/tmp/snook-tailnet-readonly-status-6.json`) and
+  Serve was not changed. Linux Secret Service, Windows
+  Credential Manager and macOS Keychain adapters are implemented without placing
+  secrets in process arguments; the owner-only file is now explicit. This is not
+  a support claim: native platform acceptance, independent security review, live
+  allowed/denied nodes, direct/DERP/roaming/restart acceptance and native package
+  install/upgrade/uninstall remain release gates in `tailscale-operability-plan.md`.
+  Setup status now emits public host/client pairing next-step commands alongside
+  its validated grant template. The Fedora RPM explicitly requires
+  `/usr/bin/secret-tool`, matching the default Linux protected-store adapter.
+  A current-tree Fedora `linux-x64` RPM was built without installation at
+  `/tmp/snook-rpm-tailnet-audited-9/snook-0.1.0-5.fc44.x86_64.rpm` (SHA-256
+  `e19306a2e2a6354fde188fe99e12cc286356da1d3f6c39bb5799a22b4d4e2917`). Extracted payload,
+  paths, launcher, docs, user unit, private token, daemon/CLI/watch, restart/stop
+  and lease-reopening checks passed; the transient service was removed and no
+  normal service was installed or enabled. A later disposable Fedora 44 DNF
+  install stopped before transaction because `liblttng-ust.so.0` was not
+  resolvable; the native lifecycle gate remains open and packaging repair is
+  deferred from the functional tailnet implementation.
+
+  A subsequent privacy audit removed the user-chosen workspace name from `doctor`
+  output and changed the host screenshot flow to replace the live single-use code
+  with an explicit redaction before pixels are captured; creation and cancellation
+  still exercise the real in-memory invitation. The fresh 980×640 result was
+  visually inspected at
+  `/tmp/snook-tailnet-redaction-images-20260919b/settings-tailnet-invitation.png`.
+  Unhandled CLI failures now emit a fixed redacted message rather than raw
+  exception text. Pairing device-name and intended-login checks occur inside the
+  atomic redemption decision, so a mismatched request counts toward limits but
+  cannot consume an otherwise valid invitation before a successful exchange.
+  Revoking a paired credential now also completes its already-open SSE streams;
+  subscriber registration rechecks active state so a concurrent revoke cannot
+  leave a stream attached. Real daemon coverage verifies the stream reaches EOF.
+  Redeemed credentials are now durable five-minute provisional records. The
+  official client uses health for identity review, saves the protected credential
+  and profile, and only then lets the first RPC/SSE request atomically promote the
+  record. Unused records expire across daemon restart and
+  remain visible with their deadline in the host inventory. A fresh 980×640
+  render and pointer-driven revoke passed at
+  `/tmp/snook-tailnet-provisional-ui-images-20260919c/settings-tailnet-provisional.png`;
+  the live invitation code was redacted before capture.
+  A global five-minute pairing-attempt budget now backs the per-session and
+  per-source limits, preventing forged source-signal cycling from enabling
+  unbounded guesses.
+  Daemon health and pairing metadata now read the current workspace identity
+  instead of a startup snapshot. Restore responses/notifications invalidate client
+  negotiation, and bootstrap rechecks the pinned workspace ID; a real daemon test
+  restores a different workspace, observes the new health identity, rejects the
+  old pinned profile, and restores the original workspace.
+  Health and RPC response envelopes reject case-variant duplicate root fields;
+  authenticated RPC results and SSE notifications reject nested duplicates too,
+  and all three parse with depth/frame bounds. Every daemon JSON response and the
+  SSE stream carry `Cache-Control: no-store`. A client now treats 30 seconds
+  without an SSE line as a broken heartbeat and enters its existing reconnect,
+  renegotiation and snapshot-refresh path. `doctor` keeps loopback connectivity
+  guidance distinct from Tailscale/grant failures.
+  A dedicated tailnet acceptance test now drives the official pairing client,
+  protected-reference profile save, authenticated RPC, SSE notification,
+  transient stream reconnect with identity/snapshot revalidation, and credential
+  revocation through a `.ts.net`-shaped Serve boundary. It also proves that the
+  remote profile creates no SQLite workspace. This is strong local transport
+  evidence, not a substitute for the separate two-node live-tailnet gate.
 
 - Saved version-1 client profiles now let both the GUI and CLI select embedded or
   authenticated daemon mode without repeating connection flags. Profiles retain
@@ -27,7 +123,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   reconnected at the same endpoint and retained the typed draft; both 980×640 frames
   were inspected. Live credential/endpoint switching and broader update/lifecycle
   retry coverage remain open. No RPM was rebuilt;
-  release 3 predates this connection-profile and later restore work. See the current
+  the then-existing release-3 RPM predated this connection-profile and later restore work. See the current
   [production-readiness summary](production-readiness.md) and the detailed
   [daemon plan](daemon-plan.md).
 
@@ -49,7 +145,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   pointer-driven recovery checks persisted all three decisions with provenance.
   See [daemon-plan.md](daemon-plan.md#restored-timer-reconciliation-pass) for
   evidence paths and remaining acceptance. No package was rebuilt or installed;
-  release 3 still predates these restore changes.
+  the then-existing release-3 RPM still predated these restore changes.
 
 - Restore now requires and verifies the matching format-1 manifest, staged byte
   count and SHA-256 before SQLite validation/upgrade. Inputs reject links and
@@ -65,7 +161,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   tests and cancellation/observer cases passed with disposable profiles.
   Crash-consistent activation/recovery, active-timer reconciliation and broader
   daemon/GUI acceptance remain tracked in [daemon-plan.md](daemon-plan.md).
-  The release-3 RPM predates these new restore changes. No UI layout changed.
+  The then-existing release-3 RPM predated these new restore changes. No UI layout changed.
 
 - JSON export schema 5 adds persisted settings, a snapshot cursor, task links and
   dependency edges. Dedicated export reads preserve links under deleted tasks,

@@ -23,17 +23,23 @@ Global options precede the command.
 | --- | --- | --- |
 | `--data-dir PATH` | `SNOOK_DATA_DIR` | Root containing the `Snook` data directory. |
 | `--host embedded\|daemon` | `SNOOK_HOST_MODE` | Select SQLite ownership or remote daemon transport. |
-| `--endpoint URL` | `SNOOK_DAEMON_ENDPOINT` | HTTP loopback endpoint with no path, query or credentials. |
+| `--endpoint URL` | `SNOOK_DAEMON_ENDPOINT` | Local HTTP loopback root, or a canonical `.ts.net` HTTPS root for a provisioned v2 tailnet profile. |
 | `--token TOKEN` | `SNOOK_DAEMON_TOKEN` | Daemon authentication token. Prefer a token file. |
 | `--token-file PATH` | `SNOOK_DAEMON_TOKEN_FILE` | Private file containing the daemon token. |
+| `--transport local-loopback\|tailscale-serve` | — | Explicit profile-v2 transport kind. Required with the identity options when bypassing a saved tailnet profile. |
+| `--credential-ref REF` | — | Protected native-store reference for an already provisioned tailnet credential; never the credential itself. |
+| `--expect-server GUID` | — | Expected daemon identity for a tailnet connection. |
+| `--expect-workspace GUID` | — | Expected workspace identity for a tailnet connection. |
 | `--no-profile` | — | Explicitly ignore saved settings; requires `--host` or `SNOOK_HOST_MODE`. |
 
-Clients read the shared version-1 `<launch-data-dir>/Snook/client-profile.json`.
+Clients read the shared versioned `<launch-data-dir>/Snook/client-profile.json`.
 The launch directory is selected from `--data-dir`, `SNOOK_DATA_DIR`, or the
 platform local-application-data default before reading the saved profile. Each
 explicit flag overrides the matching environment value, then the saved value.
-GUI **Connection…** / `snook --configure` manages the profile. It contains only
-host mode, data directory, endpoint and token-file path, never the token itself.
+GUI **Connection…** / `snook --configure` manages the profile. Version 1 stores
+local host/data-directory/endpoint/token-file behavior. Version 2 adds transport
+kind, protected credential reference, expected server/workspace identity, friendly
+name and negotiated contract metadata, never the credential itself.
 `SNOOK_DAEMON_PORT`, when present without an explicit endpoint, overrides a saved
 endpoint; blank endpoint/token-file overrides restore discovery/default-file use.
 Malformed, unsupported, oversized, nonprivate or linked profiles fail before a
@@ -43,9 +49,9 @@ or explicitly use `--no-profile --host daemon` with the required connection opti
 Without overrides or a saved profile, embedded mode is the default and opens `<data-dir>/Snook/workspace.db`.
 Daemon mode uses the endpoint and token above; when no token is supplied it
 reads `<data-dir>/Snook/daemon.token`. It never opens SQLite, including after an
-authentication or connection failure. A daemon currently means the authenticated
-loopback `snookd` host, but this boundary is intentionally the configuration
-point for a later server implementation.
+authentication or connection failure. A daemon is either the authenticated
+loopback host or an explicitly paired Tailscale Serve origin. Tailnet mode never
+opens a client SQLite database.
 
 An explicitly selected token file takes precedence over `SNOOK_DAEMON_TOKEN`.
 The desktop supports the same host/data-directory/endpoint/token-file options.
@@ -54,7 +60,74 @@ the daemon owns the workspace. `doctor` reports the resolved endpoint (including
 discovered/custom ports) and checks the
 connection and negotiated contract, and `watch` follows committed changes.
 Invalid port settings fail explicitly. Clients bypass HTTP proxies and refuse
-redirects so the authentication token stays on the selected loopback endpoint.
+redirects so credentials stay on the selected authority. Tailnet profiles also
+retain normal Web PKI validation of the `.ts.net` certificate.
+
+## Tailscale Serve and pairing
+
+Host-side commands require the local recovery credential and loopback profile:
+
+```bash
+snook-cli --host daemon --data-dir /host/root tailnet status
+snook-cli --host daemon --data-dir /host/root tailnet setup
+snook-cli --host daemon --data-dir /host/root tailnet setup --apply
+snook-cli --host daemon --data-dir /host/root pair create DEVICE SERVE_URL [LOGIN]
+snook-cli --host daemon --data-dir /host/root pair cancel PRIVATE_CODE_FILE
+snook-cli --host daemon --data-dir /host/root devices list
+snook-cli --host daemon --data-dir /host/root devices revoke CREDENTIAL_ID
+snook-cli --host daemon --data-dir /host/root tailnet disable --apply
+```
+
+`tailnet setup` is preview-only without `--apply`. It reports unavailable,
+not-running, MagicDNS, HTTPS-consent, root-conflict and Funnel-conflict states;
+it never enables Funnel or resets unrelated Serve configuration. Before mutation,
+setup validates or durably writes the private exact origin/upstream receipt.
+`disable` requires that receipt and an exact live mapping match. Status/setup JSON
+also includes a validated least-privilege grant template and separate
+`nextSteps.hostPairingCommand` and `nextSteps.clientPairingCommand` strings. These
+commands contain only the public Serve URL and explicit placeholders, never a
+credential or pairing code.
+
+Remote pairing material comes from an owner-only file, not a command argument or
+environment variable. Redemption prints public identity and requires typing the
+exact server/workspace IDs before storing the credential and profile:
+
+```bash
+snook-cli --data-dir /client/root \
+  pair redeem https://snook-host.example-tailnet.ts.net/ /private/code-file DEVICE [native|owner-file]
+```
+
+`native` is the default and selects Linux Secret Service, Windows Credential
+Manager, or macOS Keychain. `owner-file` is an explicit private-file fallback;
+native-store failure never selects it silently.
+
+The returned credential is provisional for five minutes, and the official client
+uses it only for authenticated health during identity review. The CLI saves the
+protected credential and profile first, then its verified RPC connection promotes
+the server record. If that final
+connection is interrupted, retry promptly with the saved profile; after expiry,
+pair again. An unused provisional credential never becomes permanent.
+
+For unattended use, prefer the saved profile created by redemption. A caller that
+intentionally bypasses it must provide the complete v2 identity boundary, for example:
+
+```bash
+snook-cli --no-profile --host daemon --data-dir /client/root \
+  --transport tailscale-serve \
+  --endpoint https://snook-host.example-tailnet.ts.net/ \
+  --credential-ref secret-service:snook/device-1 \
+  --expect-server 11111111-1111-1111-1111-111111111111 \
+  --expect-workspace 22222222-2222-2222-2222-222222222222 doctor
+```
+
+An absolute owner-only `--token-file` may replace `--credential-ref` when the
+operator has explicitly chosen that fallback. Omitting either expected identity,
+or mixing a tailnet transport with a loopback/public/custom origin, fails closed.
+
+`SNOOK_DAEMON_TOKEN` and `--token` remain legacy/testing escape hatches;
+environment, process inspection and shell history can expose them. Prefer a
+protected reference or owner-only file. Funnel, public/custom domains, raw IPs,
+non-default HTTPS ports, paths, redirects, proxies and TLS bypasses are unsupported.
 
 Exit codes are `0` for success, `2` for a domain or validation error, `64` for
 CLI syntax/argument errors, `1` for an unexpected host error, and
@@ -118,7 +191,8 @@ snook-cli bootstrap
 `IBackendClient` method, its exact named arguments, defaults, and return type.
 It is generated from the interface, so additions to the desktop/backend contract
 automatically appear in the CLI. `doctor` verifies the selected host and reports
-the workspace and advertised capabilities. `bootstrap` returns the complete
+only the workspace identity plus advertised capabilities; it omits the user-chosen
+workspace name and other workspace content. `bootstrap` returns the complete
 initial workspace projection: hierarchy, settings, today state, calendars,
 deleted items, capabilities, and committed cursor.
 

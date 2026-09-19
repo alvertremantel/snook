@@ -8,17 +8,19 @@
     <StackPanel Spacing="6" Margin="0,0,0,18">
       <TextBlock Text="SNOOK · CONNECTION" Classes="eyebrow" />
       <TextBlock Text="Your workspace, your host." Classes="title" TextWrapping="Wrap" />
-      <TextBlock Text="A local daemon lets the desktop and CLI share one workspace." Classes="muted" TextWrapping="Wrap" />
+      <TextBlock Text="Choose embedded ownership, a same-machine daemon, or a tailnet-only Tailscale Serve connection." Classes="muted" TextWrapping="Wrap" />
     </StackPanel>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Spacing="14" IsEnabled="{Binding CanEdit}">
         <StackPanel Spacing="8">
           <TextBlock Text="HOST MODE" Classes="eyebrow" />
-          <RadioButton GroupName="HostMode" Content="Local daemon — connect without opening SQLite" IsChecked="{Binding UseDaemon, Mode=TwoWay}" AutomationProperties.Name="Use local daemon" />
           <RadioButton GroupName="HostMode" Content="Embedded — this app owns the local database" IsChecked="{Binding UseEmbedded, Mode=TwoWay}" AutomationProperties.Name="Use embedded workspace" />
+          <RadioButton GroupName="HostMode" Content="Local daemon — same-machine loopback connection" IsChecked="{Binding UseDaemon, Mode=TwoWay}" AutomationProperties.Name="Use local daemon" />
+          <RadioButton GroupName="HostMode" Content="Tailnet daemon — Tailscale Serve HTTPS connection" IsChecked="{Binding UseTailnet, Mode=TwoWay}" AutomationProperties.Name="Use tailnet daemon" />
           <TextBlock Text="Embedded mode requires the daemon and other workspace owners to be stopped. Selecting it is an explicit change, never a fallback." IsVisible="{Binding UseEmbedded}" Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="Install and sign in to Tailscale separately. Snook does not control the VPN, and Funnel/public access is unsupported." IsVisible="{Binding UseTailnet}" Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
-        <StackPanel Spacing="5">
+        <StackPanel Spacing="5" IsVisible="{Binding !UseTailnet}">
           <TextBlock Text="Data directory" FontWeight="SemiBold" />
           <TextBox Text="{Binding DataDirectory, Mode=TwoWay}" AutomationProperties.Name="Connection data directory" />
           <TextBlock Text="Use the daemon's data root, not the workspace.db file." Classes="muted" FontSize="12" TextWrapping="Wrap" />
@@ -34,6 +36,37 @@
             <TextBox Text="{Binding TokenFile, Mode=TwoWay}" PlaceholderText="Use Snook/daemon.token in the data directory" AutomationProperties.Name="Daemon token file" />
             <TextBlock Text="The profile saves a file path, never the token itself." Classes="muted" FontSize="12" TextWrapping="Wrap" />
           </StackPanel>
+        </StackPanel>
+        <StackPanel Spacing="12" IsVisible="{Binding UseTailnet}">
+          <StackPanel Spacing="5">
+            <TextBlock Text="Tailscale Serve URL" FontWeight="SemiBold" />
+            <TextBox Text="{Binding Endpoint, Mode=TwoWay}" PlaceholderText="https://snook-host.example-tailnet.ts.net/" AutomationProperties.Name="Tailnet daemon Serve URL" />
+            <TextBlock Text="Only a canonical .ts.net HTTPS root on port 443 is accepted. Redirects, proxies, Funnel, raw IPs, and custom domains are rejected." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <Border Classes="card" Padding="12" IsVisible="{Binding HasSavedTailnetIdentity}">
+            <StackPanel Spacing="4">
+              <TextBlock Text="SAVED TAILNET IDENTITY" Classes="eyebrow" />
+              <TextBlock Text="{Binding TailnetServerSummary}" Classes="muted" FontSize="12" TextWrapping="Wrap" AutomationProperties.Name="Saved tailnet server name" />
+              <TextBlock Text="{Binding TailnetIdentitySummary}" Classes="muted" FontSize="12" TextWrapping="Wrap" AutomationProperties.Name="Saved tailnet server and workspace identity" />
+              <TextBlock Text="{Binding TailnetNegotiationSummary}" Classes="muted" FontSize="12" TextWrapping="Wrap" AutomationProperties.Name="Saved tailnet negotiation state" />
+              <TextBlock Text="{Binding TailnetCredentialSummary}" Classes="muted" FontSize="12" TextWrapping="Wrap" AutomationProperties.Name="Saved tailnet credential label" />
+            </StackPanel>
+          </Border>
+          <StackPanel Spacing="5">
+            <TextBlock Text="This device name" FontWeight="SemiBold" />
+            <TextBox Text="{Binding DeviceName, Mode=TwoWay}" AutomationProperties.Name="Paired device name" />
+          </StackPanel>
+          <StackPanel Spacing="5">
+            <TextBlock Text="Single-use pairing code" FontWeight="SemiBold" />
+            <TextBox Text="{Binding PairingCode, Mode=TwoWay}" PasswordChar="●" AutomationProperties.Name="Tailnet pairing code" />
+            <TextBlock Text="Create this short-lived code from the already connected host. Both devices must be on the intended tailnet." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Content="Pair / Review identity" Command="{Binding PairCommand}" AutomationProperties.Name="Pair tailnet device" />
+            <Button Content="Confirm identity &amp; save" Classes="primary" Command="{Binding ConfirmPairingCommand}" IsVisible="{Binding HasPendingPairing}" AutomationProperties.Name="Confirm paired server identity" />
+          </StackPanel>
+          <CheckBox IsChecked="{Binding UseOwnerOnlyCredentialFile, Mode=TwoWay}" Content="Use Snook's owner-only credential file instead of the native protected store" AutomationProperties.Name="Use owner-only credential file fallback" />
+          <TextBlock Text="The native protected store is preferred. Select the owner-only file only as an explicit fallback when the platform store is unavailable. The secret is never written to the connection profile." Classes="muted" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
         <CheckBox Content="Remember these settings for future GUI and CLI launches" IsChecked="{Binding SaveForNextLaunch, Mode=TwoWay}" IsVisible="{Binding IsStartup}" AutomationProperties.Name="Remember connection settings" />
         <TextBlock Text="{Binding ProfilePath}" Classes="muted" FontSize="11" TextWrapping="Wrap" />

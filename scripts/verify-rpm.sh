@@ -27,14 +27,15 @@ grep -qx 'Exec=snook' "$verify_dir/usr/share/applications/com.snook.Snook.deskto
 grep -qx 'Terminal=false' "$verify_dir/usr/share/applications/com.snook.Snook.desktop"
 cmp "$ROOT/packaging/rpm/com.snook.Snook.desktop" "$verify_dir/usr/share/applications/com.snook.Snook.desktop"
 cmp "$ROOT/deploy/systemd/snookd.service" "$verify_dir/usr/lib/systemd/user/snookd.service"
-for document in README.md docs/operations.md docs/cli.md docs/json-export.md; do
+for document in README.md docs/operations.md docs/cli.md docs/json-export.md docs/tailscale-threat-model.md; do
   [[ -s "$verify_dir/usr/share/doc/snook/$document" ]]
   cmp "$ROOT/$document" "$verify_dir/usr/share/doc/snook/$document"
 done
 [[ -z $(rpm -qp --scripts "$rpm_file") ]]
 requires=$(rpm -qp --requires "$rpm_file")
 for dependency in 'glibc(x86-64)' 'libgcc(x86-64)' 'libstdc++(x86-64)' \
-  'openssl-libs(x86-64)' 'libicu(x86-64)' 'krb5-libs(x86-64)' ca-certificates tzdata systemd; do
+  'openssl-libs(x86-64)' 'libicu(x86-64)' 'krb5-libs(x86-64)' ca-certificates tzdata systemd \
+  '/usr/bin/secret-tool'; do
   grep -qxF "$dependency" <<< "$requires"
 done
 provides=$(rpm -qp --provides "$rpm_file")

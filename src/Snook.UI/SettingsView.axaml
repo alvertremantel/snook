@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Snook.UI" x:Class="Snook.UI.SettingsView"
+             xmlns:app="clr-namespace:Snook.Application;assembly=Snook.Application"
              x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
   <UserControl.Styles>
     <Style Selector="Border.catalog-row.deleted">
@@ -40,6 +41,36 @@
               <Button Classes="ghost" Content="Export worklog CSV" AutomationProperties.Name="Export CSV worklog" Command="{Binding ExportCsvCommand}" />
             </StackPanel>
           </Grid>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24" IsVisible="{Binding IsDaemonHostAdministrator}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="TAILNET DEVICES" Classes="eyebrow" />
+          <TextBlock Text="Pair a tailnet device" Classes="section-heading" AutomationProperties.Name="Tailnet device administration" />
+          <TextBlock Text="The daemon stays on loopback. Tailscale Serve supplies tailnet-only HTTPS; Snook keeps separate revocable credentials. Funnel is public and unsupported." Classes="muted" TextWrapping="Wrap" />
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+            <StackPanel Spacing="5">
+              <TextBlock Text="Device name" FontWeight="SemiBold" />
+              <TextBox Text="{Binding PairDeviceName}" AutomationProperties.Name="Pairing device name" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="5">
+              <TextBlock Text="Tailscale login · optional" FontWeight="SemiBold" />
+              <TextBox Text="{Binding PairIntendedLogin}" AutomationProperties.Name="Intended Tailscale login" />
+            </StackPanel>
+          </Grid>
+          <StackPanel Spacing="5">
+            <TextBlock Text="Tailscale Serve URL" FontWeight="SemiBold" />
+            <TextBox Text="{Binding PairServeOrigin}" PlaceholderText="https://snook-host.example-tailnet.ts.net/" AutomationProperties.Name="Pairing Serve URL" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Classes="primary" Content="Create single-use invitation" Command="{Binding CreatePairingInvitationCommand}" AutomationProperties.Name="Create tailnet pairing invitation" />
+            <Button Classes="ghost" Content="Cancel invitation" Command="{Binding CancelPairingInvitationCommand}" IsVisible="{Binding HasPairingInvitation}" AutomationProperties.Name="Cancel tailnet pairing invitation" />
+          </StackPanel>
+          <TextBox Text="{Binding PairingInvitationText, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" MinHeight="72" PlaceholderText="The Serve URL, code, and expiration appear here." AutomationProperties.Name="Pairing invitation payload" />
+          <Grid ColumnDefinitions="*,Auto"><TextBlock Text="Paired credentials" FontWeight="SemiBold" /><Button Grid.Column="1" Classes="ghost" Content="Refresh" Command="{Binding RefreshPairedDevicesCommand}" /></Grid>
+          <ItemsControl ItemsSource="{Binding PairedDevices}"><ItemsControl.ItemTemplate><DataTemplate x:DataType="app:PairedDeviceInfo">
+            <Border Classes="catalog-row"><Grid ColumnDefinitions="*,Auto" ColumnSpacing="10"><StackPanel Spacing="3"><TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" /><TextBlock Text="{Binding CredentialId}" Classes="muted" FontSize="11" /><TextBlock Text="{Binding TailscaleLogin}" Classes="muted" FontSize="11" /><TextBlock Text="{Binding CreatedAtUtc, StringFormat='Created {0:u}'}" Classes="muted" FontSize="11" /><TextBlock Text="{Binding PendingUntilUtc, StringFormat='Awaiting client confirmation until {0:u}'}" Classes="muted" FontSize="11" AutomationProperties.Name="Provisional credential expiry" /><TextBlock Text="{Binding LastSeenAtUtc, StringFormat='Last seen {0:u}'}" Classes="muted" FontSize="11" /><TextBlock Text="{Binding Revoked, StringFormat='Revoked: {0}'}" Classes="muted" FontSize="11" /></StackPanel><Button Grid.Column="1" Classes="ghost" Content="Revoke" IsEnabled="{Binding !Revoked}" Command="{Binding $parent[local:SettingsView].((local:MainWindowViewModel)DataContext).RevokePairedDeviceCommand}" CommandParameter="{Binding}" AutomationProperties.Name="Revoke paired device" /></Grid></Border>
+          </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
         </StackPanel>
       </Border>
       <Border Classes="card" Padding="24">

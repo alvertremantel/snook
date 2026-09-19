@@ -40,6 +40,36 @@ public sealed class ClientConnectionTests
         finally { root.Delete(true); }
     }
 
+    [Fact]
+    public async Task VersionTwoTailnetProfileStoresIdentityAndReferenceButNoCredential()
+    {
+        var root = Directory.CreateTempSubdirectory("snook-tailnet-profile-");
+        try
+        {
+            var credentialStore = new OwnerOnlyFileCredentialStore(root.FullName);
+            var secret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            var reference = await credentialStore.StoreAsync(secret, "Laptop");
+            var serverId = Guid.NewGuid();
+            var workspaceId = Guid.NewGuid();
+            var profile = new ClientConnectionProfile(2, "daemon", root.FullName,
+                "https://snook-host.example-tailnet.ts.net/", TransportKind: "tailscale-serve",
+                CredentialReference: reference, ExpectedServerId: serverId, ExpectedWorkspaceId: workspaceId,
+                FriendlyName: "Laptop", ContractMajor: ContractInfo.Major, ContractMinor: ContractInfo.Minor);
+            var profiles = new ClientProfileStore(root.FullName);
+            await profiles.SaveAsync(profile, null);
+            Assert.Equal(profile, (await profiles.ReadAsync()).Profile);
+            var json = await File.ReadAllTextAsync(profiles.ProfilePath);
+            Assert.DoesNotContain(secret, json, StringComparison.Ordinal);
+            Assert.Contains(reference, json, StringComparison.Ordinal);
+            Assert.Throws<SnookException>(() => ClientProfileStore.Validate(profile with { Endpoint = "http://127.0.0.1:43871/" }));
+            Assert.Throws<SnookException>(() => ClientProfileStore.Validate(profile with { CredentialReference = null }));
+            Assert.Throws<SnookException>(() => ClientProfileStore.Validate(profile with { TokenFile = Path.Combine(root.FullName, "device.token") }));
+            await credentialStore.DeleteAsync(reference);
+        }
+        finally { root.Delete(true); }
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("null")]
@@ -88,6 +118,110 @@ public sealed class ClientConnectionTests
         environment["SNOOK_DAEMON_PORT"] = "invalid";
         Assert.Throws<SnookException>(() => ClientProfileStore.Resolve(saved, root, environment: Env));
         Assert.Equal("embedded", ClientProfileStore.Resolve(saved, root, host: "embedded", environment: Env).Host);
+    }
+
+    [Fact]
+    public void TailnetProfileResolutionPreservesSavedMetadataAndSupportsExplicitProvisioning()
+    {
+        var root = Path.GetTempPath();
+        var serverId = Guid.NewGuid();
+        var workspaceId = Guid.NewGuid();
+        var saved = new ClientConnectionProfile(2, "daemon", root,
+            "https://snook-host.example-tailnet.ts.net/", TransportKind: "tailscale-serve",
+            CredentialReference: "secret-service:snook/device-1", ExpectedServerId: serverId,
+            ExpectedWorkspaceId: workspaceId, FriendlyName: "Travel laptop",
+            ContractMajor: ContractInfo.Major, ContractMinor: ContractInfo.Minor);
+        string? EmptyEnvironment(string _) => null;
+
+        Assert.Equal(saved, ClientProfileStore.Resolve(saved, root, environment: EmptyEnvironment));
+
+        var explicitProfile = ClientProfileStore.Resolve(null, root, host: "daemon", dataDirectory: root,
+            endpoint: "https://snook-host.example-tailnet.ts.net/", tokenFile: Path.Combine(root, "device.token"),
+            environment: EmptyEnvironment, transportKind: "TAILSCALE-SERVE",
+            expectedServerId: serverId, expectedWorkspaceId: workspaceId);
+        Assert.Equal(2, explicitProfile.Version);
+        Assert.Equal("tailscale-serve", explicitProfile.TransportKind);
+        Assert.Equal(serverId, explicitProfile.ExpectedServerId);
+        Assert.Equal(workspaceId, explicitProfile.ExpectedWorkspaceId);
+
+        var ownerFile = Path.Combine(root, "explicit-device.token");
+        var ownerOverride = ClientProfileStore.Resolve(saved, root, tokenFile: ownerFile, environment: EmptyEnvironment);
+        Assert.Equal(ownerFile, ownerOverride.TokenFile);
+        Assert.Null(ownerOverride.CredentialReference);
+
+        var savedOwnerFile = saved with { TokenFile = ownerFile, CredentialReference = null };
+        var referenceOverride = ClientProfileStore.Resolve(savedOwnerFile, root,
+            environment: EmptyEnvironment, credentialReference: "secret-service:" + Guid.NewGuid().ToString("N"));
+        Assert.Null(referenceOverride.TokenFile);
+        Assert.NotNull(referenceOverride.CredentialReference);
+    }
+
+    [Fact]
+    public async Task VersionTwoProfilesRejectMixedTransportIdentityAndCredentialSources()
+    {
+        var root = Path.GetTempPath();
+        var serverId = Guid.NewGuid();
+        var workspaceId = Guid.NewGuid();
+        var tailnet = new ClientConnectionProfile(2, "daemon", root,
+            "https://snook-host.example-tailnet.ts.net/", TransportKind: "tailscale-serve",
+            CredentialReference: "secret-service:" + Guid.NewGuid().ToString("N"),
+            ExpectedServerId: serverId, ExpectedWorkspaceId: workspaceId,
+            ContractMajor: ContractInfo.Major, ContractMinor: ContractInfo.Minor);
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with
+        {
+            TokenFile = Path.Combine(root, "also-a-token.token")
+        }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with { ExpectedServerId = null }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with { ExpectedWorkspaceId = null }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with { ContractMinor = null }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with { ContractMajor = null }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with { TransportKind = "local-loopback" }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with
+        {
+            Endpoint = "http://127.0.0.1:43871/"
+        }));
+        Assert.Throws<SnookException>(() => ClientProfileStore.Validate(tailnet with
+        {
+            Host = "embedded"
+        }));
+
+        var profiles = new ClientProfileStore(root);
+        await using var view = new ConnectionViewModel(profiles, new(tailnet, "stamp"), tailnet);
+        Assert.True(view.HasSavedTailnetIdentity);
+        Assert.Contains(serverId.ToString(), view.TailnetIdentitySummary, StringComparison.Ordinal);
+        Assert.Contains(workspaceId.ToString(), view.TailnetIdentitySummary, StringComparison.Ordinal);
+        Assert.Contains("snook-host.example-tailnet.ts.net", view.TailnetServerSummary, StringComparison.Ordinal);
+        Assert.Contains($"{ContractInfo.Major}.{ContractInfo.Minor}", view.TailnetNegotiationSummary, StringComparison.Ordinal);
+        Assert.Contains("Linux Secret Service", view.TailnetCredentialSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DoctorUsesLocalGuidanceForLoopbackConnectivityFailures()
+    {
+        var root = Directory.CreateTempSubdirectory("snook-local-doctor-");
+        try
+        {
+            using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            probe.Start();
+            var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            var tokenPath = Path.Combine(root.FullName, "local.token");
+            await File.WriteAllTextAsync(tokenPath, new string('a', 64));
+            MakePrivate(tokenPath);
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            Assert.Equal(2, await Cli.Program.RunAsync(["--no-profile", "--host", "daemon",
+                "--data-dir", root.FullName, "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token-file", tokenPath, "doctor"], stdout, stderr));
+            using var diagnosis = JsonDocument.Parse(stderr.ToString());
+            var error = diagnosis.RootElement.GetProperty("error");
+            Assert.Equal("connectivity", error.GetProperty("stage").GetString());
+            Assert.Contains("local daemon", error.GetProperty("message").GetString(),
+                StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Tailscale", error.GetProperty("message").GetString(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally { root.Delete(true); }
     }
 
     [Fact]
@@ -183,6 +317,8 @@ public sealed class ClientConnectionTests
             Assert.Equal(0, await Cli.Program.RunAsync(["--data-dir", root.FullName, "doctor"], stdout, stderr));
             Assert.Contains("daemon-client", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains(endpoint.AbsoluteUri, stdout.ToString(), StringComparison.Ordinal);
+            using (var diagnosis = JsonDocument.Parse(stdout.ToString()))
+                Assert.False(diagnosis.RootElement.TryGetProperty("workspaceName", out _));
             Assert.False(File.Exists(Path.Combine(root.FullName, "Snook", "workspace.db")));
             var discovered = new ClientProfileStore(daemonRoot);
             var original = await discovered.ReadAsync();

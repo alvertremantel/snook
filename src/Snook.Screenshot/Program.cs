@@ -188,5 +188,7 @@ internal static class Program
             await InteractionChecks.CheckRecoveryAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_CONNECTION") == "1")
             await InteractionChecks.CheckConnectionSettingsAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_TAILNET_ADMIN") == "1")
+            await InteractionChecks.CheckTailnetAdministrationAsync(window, path);
     }
 }

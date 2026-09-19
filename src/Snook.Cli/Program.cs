@@ -15,6 +15,9 @@ namespace Snook.Cli;
 /// </summary>
 public static class Program
 {
+    private static readonly string[] GrantSources = ["group:snook-users"];
+    private static readonly string[] GrantDestinations = ["tag:snook-host"];
+    private static readonly string[] GrantPorts = ["tcp:443"];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -59,6 +62,19 @@ public static class Program
                 return 0;
             }
 
+            if (invocation.Command == "tailnet")
+                return await RunTailnetAsync(invocation.Options, invocation.Arguments, stdout, cancellationToken);
+            if (invocation.Command == "pair")
+                return await RunPairAsync(invocation.Options, invocation.Arguments, stdout, stderr, cancellationToken);
+            if (invocation.Command == "devices")
+                return await RunDeviceAdministrationAsync(invocation.Options, invocation.Arguments, stdout, cancellationToken);
+            if (invocation.Command == "doctor")
+            {
+                var diagnosis = await RunDoctorCommandAsync(invocation.Options, cancellationToken);
+                WriteJson(diagnosis.Result, diagnosis.ExitCode == 0 ? stdout : stderr);
+                return diagnosis.ExitCode;
+            }
+
             await using var backend = await CreateBackendAsync(invocation.Options, cancellationToken);
             if (invocation.Command == "watch")
             {
@@ -77,7 +93,6 @@ public static class Program
                 "history" => await RunHistoryAsync(backend, invocation.Arguments, cancellationToken),
                 "calendar" => await RunCalendarAsync(backend, invocation.Arguments, cancellationToken),
                 "task-batch" => await RunTaskBatchAsync(backend, invocation.Arguments, cancellationToken),
-                "doctor" => await RunDoctorAsync(backend, invocation.Options, cancellationToken),
                 "call" => await RunCallAsync(backend, invocation.Arguments, cancellationToken),
                 _ => throw new CliUsageException($"Unknown command '{invocation.Command}'.")
             };
@@ -104,9 +119,10 @@ public static class Program
             WriteJson(new { error = new { code = "Cancelled", message = "The command was cancelled." } }, stderr);
             return 130;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            WriteJson(new { error = new { code = SnookErrorCode.InternalError.ToString(), message = exception.Message } }, stderr);
+            WriteJson(new { error = new { code = SnookErrorCode.InternalError.ToString(),
+                message = "The command failed unexpectedly. Check configuration and retry; sensitive exception details were not emitted." } }, stderr);
             return 1;
         }
     }
@@ -117,7 +133,7 @@ public static class Program
             throw new CliUsageException("--no-profile requires an explicit --host embedded|daemon (or SNOOK_HOST_MODE).");
         var launchRoot = ClientProfileStore.LaunchDataDirectory(options.DataDirectory);
         var saved = options.IgnoreProfile ? null : (await new ClientProfileStore(launchRoot).ReadAsync(cancellationToken)).Profile;
-        var profile = ClientProfileStore.Resolve(saved, launchRoot, options.Host, options.DataDirectory, options.Endpoint, options.TokenFile);
+        var profile = ResolveProfile(saved, launchRoot, options);
         var token = options.Token ?? (profile.TokenFile is null ? Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN") : null);
         return await ClientProfileStore.OpenAsync(profile, token, cancellationToken: cancellationToken);
     }
@@ -421,19 +437,455 @@ public static class Program
         return tags.Select(tag => tag.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private static async Task<object> RunDoctorAsync(IBackendClient backend, CliOptions options, CancellationToken cancellationToken)
+    private static async Task<(int ExitCode, object Result)> RunDoctorCommandAsync(CliOptions options,
+        CancellationToken cancellationToken)
     {
-        var bootstrap = await backend.GetBootstrapAsync(cancellationToken);
-        return new
+        if (options.IgnoreProfile && options.Host is null && Environment.GetEnvironmentVariable("SNOOK_HOST_MODE") is null)
+            throw new CliUsageException("--no-profile requires an explicit --host embedded|daemon (or SNOOK_HOST_MODE).");
+        ClientConnectionProfile? profile = null;
+        IBackendClient? backend = null;
+        try
         {
-            ready = true,
-            workspaceId = bootstrap.Workspace.Id,
-            workspaceName = bootstrap.Workspace.Name,
-            host = bootstrap.Capabilities.HostMode,
-            endpoint = (backend as DaemonBackendClient)?.Endpoint.AbsoluteUri,
-            contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
-            capabilities = bootstrap.Capabilities
-        };
+            var launchRoot = ClientProfileStore.LaunchDataDirectory(options.DataDirectory);
+            var saved = options.IgnoreProfile ? null : (await new ClientProfileStore(launchRoot).ReadAsync(cancellationToken)).Profile;
+            profile = ResolveProfile(saved, launchRoot, options);
+            var token = options.Token ?? (profile.TokenFile is null ? Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN") : null);
+            backend = await ClientProfileStore.OpenAsync(profile, token, cancellationToken: cancellationToken);
+            var bootstrap = await backend.GetBootstrapAsync(cancellationToken);
+            if (backend is DaemonBackendClient streamClient)
+            {
+                for (var attempt = 0; attempt < 20 && !streamClient.IsConnected; attempt++)
+                    await Task.Delay(100, cancellationToken);
+                if (!streamClient.IsConnected)
+                    throw new DoctorStageException("stream", "The authenticated change stream did not become ready.");
+            }
+            var daemon = backend as DaemonBackendClient;
+            return (0, new
+            {
+                ready = true,
+                workspaceId = bootstrap.Workspace.Id,
+                host = bootstrap.Capabilities.HostMode,
+                endpoint = daemon?.Endpoint.AbsoluteUri,
+                endpointKind = daemon?.EndpointKind.ToString(),
+                contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
+                stages = daemon is null ? null : new
+                {
+                    canonicalOrigin = "passed",
+                    dns = daemon.EndpointKind == DaemonEndpointKind.TailscaleServe ? "passed" : "not-applicable",
+                    tls = daemon.EndpointKind == DaemonEndpointKind.TailscaleServe ? "passed" : "not-applicable",
+                    connectivity = "passed",
+                    authentication = "passed",
+                    contract = "passed",
+                    identity = "passed",
+                    expectedServerId = daemon.ExpectedServerId,
+                    actualServerId = daemon.NegotiatedServerId,
+                    expectedWorkspaceId = daemon.ExpectedWorkspaceId,
+                    actualWorkspaceId = daemon.NegotiatedWorkspaceId ?? bootstrap.Workspace.Id,
+                    stream = "passed"
+                },
+                capabilities = bootstrap.Capabilities
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            var failedStage = ClassifyDoctorFailure(exception, profile);
+            var endpoint = profile?.Endpoint;
+            DaemonEndpointKind? endpointKind = null;
+            if (endpoint is not null)
+            {
+                try { endpointKind = DaemonEndpoint.Parse(endpoint).Kind; }
+                catch (SnookException) { }
+            }
+            var tailnet = endpointKind == DaemonEndpointKind.TailscaleServe || profile?.TransportKind == "tailscale-serve";
+            string Stage(string name, bool applicable = true) => !applicable ? "not-applicable"
+                : name == failedStage.Stage ? "failed" : "not-run";
+            return (2, new
+            {
+                ready = false,
+                host = profile?.Host ?? options.Host ?? "unresolved",
+                endpoint,
+                endpointKind = endpointKind?.ToString() ?? profile?.TransportKind,
+                stages = new
+                {
+                    canonicalOrigin = Stage("canonical-origin"),
+                    credential = Stage("credential", profile?.Host == "daemon"),
+                    dns = Stage("dns", tailnet),
+                    tls = Stage("tls", tailnet),
+                    connectivity = Stage("connectivity", profile?.Host == "daemon"),
+                    authentication = Stage("authentication", profile?.Host == "daemon"),
+                    contract = Stage("contract", profile?.Host == "daemon"),
+                    identity = Stage("identity", tailnet),
+                    stream = Stage("stream", profile?.Host == "daemon"),
+                    workspace = Stage("workspace", profile?.Host == "embedded"),
+                    expectedServerId = profile?.ExpectedServerId,
+                    expectedWorkspaceId = profile?.ExpectedWorkspaceId
+                },
+                error = new { code = exception is SnookException snook ? snook.Code.ToString() : SnookErrorCode.StoreUnavailable.ToString(),
+                    stage = failedStage.Stage, message = failedStage.Message }
+            });
+        }
+        finally { if (backend is not null) await backend.DisposeAsync(); }
+    }
+
+    private static (string Stage, string Message) ClassifyDoctorFailure(Exception exception, ClientConnectionProfile? profile)
+    {
+        if (exception is DoctorStageException doctor) return (doctor.Stage, doctor.Message);
+        var tailnet = profile?.TransportKind == "tailscale-serve";
+        if (!tailnet && profile?.Endpoint is { } endpoint)
+        {
+            try { tailnet = DaemonEndpoint.Parse(endpoint).Kind == DaemonEndpointKind.TailscaleServe; }
+            catch (SnookException) { }
+        }
+        var http = FindInner<HttpRequestException>(exception);
+        if (http is not null)
+        {
+            return http.HttpRequestError switch
+            {
+                HttpRequestError.NameResolutionError when tailnet => ("dns", "The .ts.net name could not be resolved through the operating system. Check Tailscale and MagicDNS."),
+                HttpRequestError.NameResolutionError => ("connectivity", "The local daemon name could not be resolved. Check the selected loopback endpoint."),
+                HttpRequestError.SecureConnectionError => ("tls", "TLS certificate or handshake validation failed. Check the canonical .ts.net name and system trust; no bypass is supported."),
+                HttpRequestError.ConnectionError when tailnet => ("connectivity", "The tailnet daemon could not be reached. Check Tailscale connectivity, grants, Serve, and snookd."),
+                HttpRequestError.ConnectionError => ("connectivity", "The local daemon could not be reached. Check that snookd is running on the selected loopback port."),
+                _ => ("connectivity", "The daemon transport failed before a valid authenticated response was received.")
+            };
+        }
+        var message = exception.Message;
+        if (message.Contains("credential", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("token file", StringComparison.OrdinalIgnoreCase))
+            return ("credential", "The selected protected credential could not be loaded safely. Unlock the native store, select the intended owner-only file, or re-pair.");
+        if (message.Contains("authentication", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase))
+            return ("authentication", "Daemon authentication was rejected. The credential may be unknown or revoked.");
+        if (message.Contains("contract", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("protocol", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("health metadata", StringComparison.OrdinalIgnoreCase))
+            return ("contract", "The daemon contract is incompatible. Upgrade daemon and client together.");
+        if (message.Contains("identity", StringComparison.OrdinalIgnoreCase))
+            return ("identity", "The actual server or workspace identity did not match the saved profile.");
+        if (profile is null || exception is SnookException { Code: SnookErrorCode.ValidationFailed })
+            return ("canonical-origin", "Connection configuration is invalid or unsafe. Open connection settings; no workspace was opened.");
+        return profile.Host == "embedded" ? ("workspace", "The embedded workspace could not be opened safely.")
+            : ("connectivity", "The daemon did not complete the required health, authentication, and negotiation stages.");
+    }
+
+    private static T? FindInner<T>(Exception exception) where T : Exception
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is T match) return match;
+        return null;
+    }
+
+    private static async Task<int> RunTailnetAsync(CliOptions options, IReadOnlyList<string> args,
+        TextWriter stdout, CancellationToken cancellationToken)
+    {
+        if (args.Count is < 1 or > 2 || args[0] is not ("status" or "setup" or "disable")
+            || args.Count == 2 && args[1] != "--apply")
+            throw new CliUsageException("tailnet requires 'status', 'setup [--apply]', or 'disable --apply'. Setup never enables Funnel or edits tailnet policy.");
+        if (args[0] == "disable" && args.Count != 2)
+            throw new CliUsageException("tailnet disable requires --apply and removes only the exact mapping recorded by Snook setup.");
+        var local = await OpenLocalAdministratorAsync(options, cancellationToken);
+        await using var client = local.Client;
+        var manager = new TailscaleServeManager();
+        TailscaleServeStatus status;
+        var receiptPath = Path.Combine(local.DataDirectory, "Snook", "tailscale-serve.json");
+        if (args is ["setup", "--apply"])
+        {
+            status = await manager.ApplyAsync(client.Endpoint, async (planned, token) =>
+            {
+                if (planned.ServeOrigin is null)
+                    throw new SnookException(SnookErrorCode.StoreUnavailable,
+                        "Tailscale did not return a Serve origin to record; no mapping was changed.");
+                await EnsureServeReceiptAsync(receiptPath, planned.ServeOrigin, planned.Upstream, token);
+            }, cancellationToken);
+        }
+        else if (args is ["disable", "--apply"])
+        {
+            var receipt = await ReadServeReceiptAsync(receiptPath, cancellationToken);
+            status = await manager.DisableExactAsync(client.Endpoint, receipt.Origin, receipt.Upstream, cancellationToken);
+            File.Delete(receiptPath);
+        }
+        else status = await manager.InspectAsync(client.Endpoint, cancellationToken);
+        WriteJson(new
+        {
+            status.State,
+            serveOrigin = status.ServeOrigin?.AbsoluteUri,
+            upstream = status.Upstream.AbsoluteUri,
+            status.Running,
+            status.MagicDnsEnabled,
+            status.HttpsEnabled,
+            status.FunnelConflict,
+            status.CurrentRootProxy,
+            preview = string.Join(' ', status.PreviewCommand),
+            status.Guidance,
+            funnel = "unsupported-public",
+            grantTemplate = new
+            {
+                grants = new[] { new { src = GrantSources, dst = GrantDestinations, ip = GrantPorts } }
+            },
+            nextSteps = BuildTailnetNextSteps(status)
+        }, stdout);
+        return status.State is "ready" or "ready-to-apply" or "https-consent-required" or "disabled" ? 0 : 2;
+    }
+
+    internal static TailnetSetupNextSteps BuildTailnetNextSteps(TailscaleServeStatus status)
+    {
+        var origin = status.ServeOrigin?.AbsoluteUri ?? "SERVE_URL";
+        return new TailnetSetupNextSteps(
+            $"snook-cli --host daemon --data-dir HOST_DATA_ROOT pair create DEVICE_NAME {origin} [LOGIN]",
+            $"snook-cli --data-dir CLIENT_DATA_ROOT pair redeem {origin} PRIVATE_CODE_FILE DEVICE_NAME [native|owner-file]");
+    }
+
+    internal static async Task WriteServeReceiptAsync(string path, Uri origin, Uri upstream, CancellationToken cancellationToken)
+        => await WriteServeReceiptAsync(path, origin, upstream, replaceExisting: true, cancellationToken);
+
+    private static async Task WriteServeReceiptAsync(string path, Uri origin, Uri upstream, bool replaceExisting,
+        CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        ValidateServeReceiptAncestors(directory);
+        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(directory);
+        else Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        ValidateServeReceiptAncestors(directory);
+        var staging = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None,
+                Options = FileOptions.Asynchronous | FileOptions.WriteThrough };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            await using var stream = new FileStream(staging, options);
+            await JsonSerializer.SerializeAsync(stream, new { version = 1, origin = origin.AbsoluteUri, upstream = upstream.AbsoluteUri }, cancellationToken: cancellationToken);
+            stream.Flush(flushToDisk: true);
+            if (File.Exists(path)) CheckServeReceiptFile(path, requirePrivate: true);
+            File.Move(staging, path, replaceExisting);
+        }
+        finally { if (File.Exists(staging)) File.Delete(staging); }
+    }
+
+    internal static async Task EnsureServeReceiptAsync(string path, Uri origin, Uri upstream,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(path))
+        {
+            await RequireMatchingServeReceiptAsync(path, origin, upstream, cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await WriteServeReceiptAsync(path, origin, upstream, replaceExisting: false, cancellationToken);
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            await RequireMatchingServeReceiptAsync(path, origin, upstream, cancellationToken);
+        }
+    }
+
+    private static async Task RequireMatchingServeReceiptAsync(string path, Uri origin, Uri upstream,
+        CancellationToken cancellationToken)
+    {
+        var existing = await ReadServeReceiptAsync(path, cancellationToken);
+        if (existing.Origin != origin || existing.Upstream != upstream)
+            throw new SnookException(SnookErrorCode.StoreUnavailable,
+                "A different Serve setup receipt already exists; no mapping was changed.");
+    }
+
+    internal static async Task<(Uri Origin, Uri Upstream)> ReadServeReceiptAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            ValidateServeReceiptAncestors(Path.GetDirectoryName(path)!);
+            var info = new FileInfo(path);
+            CheckServeReceiptFile(path, requirePrivate: true);
+            if (info.Length is <= 0 or > 8192) throw UnsafeServeReceipt();
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken),
+                new JsonDocumentOptions { MaxDepth = 8, CommentHandling = JsonCommentHandling.Disallow });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw new JsonException();
+            var properties = root.EnumerateObject().ToArray();
+            if (properties.Length != 3
+                || properties.Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() != 3
+                || properties.Any(property => property.Name is not ("version" or "origin" or "upstream"))
+                || !root.TryGetProperty("version", out var version) || !version.TryGetInt32(out var versionNumber) || versionNumber != 1
+                || !root.TryGetProperty("origin", out var originElement) || originElement.ValueKind != JsonValueKind.String
+                || !Uri.TryCreate(originElement.GetString(), UriKind.Absolute, out var origin)
+                || !root.TryGetProperty("upstream", out var upstreamElement) || upstreamElement.ValueKind != JsonValueKind.String
+                || !Uri.TryCreate(upstreamElement.GetString(), UriKind.Absolute, out var upstream)) throw new JsonException();
+            return (DaemonEndpoint.Parse(origin.OriginalString, DaemonEndpointKind.TailscaleServe).Origin,
+                DaemonEndpoint.Parse(upstream.OriginalString, DaemonEndpointKind.LocalLoopback).Origin);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or KeyNotFoundException)
+        {
+            throw new SnookException(SnookErrorCode.StoreUnavailable, "The Serve setup receipt is missing, corrupt, or unsafe; no mapping was changed.", exception);
+        }
+    }
+
+    private static void ValidateServeReceiptAncestors(string path)
+    {
+        for (string? current = path; current is not null; current = Path.GetDirectoryName(current))
+            if ((File.Exists(current) || Directory.Exists(current))
+                && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw UnsafeServeReceipt();
+    }
+
+    private static void CheckServeReceiptFile(string path, bool requirePrivate)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0
+            || requirePrivate && !OperatingSystem.IsWindows() && (File.GetUnixFileMode(path)
+                & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                    | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
+            throw UnsafeServeReceipt();
+    }
+
+    private static SnookException UnsafeServeReceipt() => new(SnookErrorCode.ValidationFailed,
+        "The Serve setup receipt is missing or unsafe; no mapping was changed.");
+
+    private static async Task<int> RunPairAsync(CliOptions options, IReadOnlyList<string> args,
+        TextWriter stdout, TextWriter stderr, CancellationToken cancellationToken)
+    {
+        if (args.Count == 2 && args[0] == "cancel")
+        {
+            var code = await ReadPrivatePairingCodeAsync(args[1], cancellationToken);
+            var local = await OpenLocalAdministratorAsync(options, cancellationToken);
+            await using var client = local.Client;
+            using var administrator = new DaemonAdministrationClient(client.Endpoint, local.RecoveryToken);
+            await administrator.CancelPairingAsync(code, cancellationToken);
+            WriteJson(new { cancelled = true }, stdout);
+            return 0;
+        }
+        if (args.Count is >= 3 and <= 4 && args[0] == "create")
+        {
+            if (!Uri.TryCreate(args[2], UriKind.Absolute, out var serveOrigin))
+                throw new CliUsageException("SERVE_URL must be an absolute canonical .ts.net HTTPS root.");
+            var local = await OpenLocalAdministratorAsync(options, cancellationToken);
+            await using var client = local.Client;
+            using var administrator = new DaemonAdministrationClient(client.Endpoint, local.RecoveryToken);
+            var invitation = await administrator.CreatePairingAsync(args[1], serveOrigin,
+                args.Count == 4 ? args[3] : null, cancellationToken);
+            WriteJson(new
+            {
+                invitation.Version,
+                invitation.ServeOrigin,
+                invitation.PairingCode,
+                invitation.ExpiresAtUtc,
+                invitation.DeviceName,
+                invitation.IntendedTailscaleLogin,
+                warning = "Both devices must be on the intended tailnet. Treat the single-use code as a short-lived secret. Funnel is public and unsupported."
+            }, stdout);
+            return 0;
+        }
+        if (args.Count is 4 or 5 && args[0] == "redeem")
+        {
+            if (!Uri.TryCreate(args[1], UriKind.Absolute, out var serveOrigin))
+                throw new CliUsageException("SERVE_URL must be an absolute canonical .ts.net HTTPS root.");
+            var code = await ReadPrivatePairingCodeAsync(args[2], cancellationToken);
+            await using var pending = await TailnetPairingClient.RedeemAsync(serveOrigin, code, args[3], cancellationToken: cancellationToken);
+            var identity = pending.Identity;
+            var phrase = $"{identity.ServerId} {identity.WorkspaceId}";
+            WriteJson(new
+            {
+                confirmationRequired = true,
+                serveOrigin = identity.ServeOrigin.AbsoluteUri,
+                identity.ServerId,
+                identity.WorkspaceId,
+                identity.WorkspaceName,
+                contract = identity.Contract.ToString(),
+                identity.CredentialId,
+                identity.DeviceName,
+                identity.TailscaleLogin,
+                prompt = $"Type the exact server and workspace IDs separated by one space: {phrase}"
+            }, stdout);
+            await stderr.WriteLineAsync("Review the identity JSON above. To confirm, type the exact server and workspace IDs separated by one space; any other input revokes the issued credential.");
+            var confirmation = await Console.In.ReadLineAsync(cancellationToken);
+            if (!string.Equals(confirmation, phrase, StringComparison.Ordinal))
+            {
+                await pending.CancelAsync(cancellationToken);
+                throw new CliUsageException("Pairing confirmation did not match; the issued credential was revoked and no profile was saved.");
+            }
+            var launchRoot = ClientProfileStore.LaunchDataDirectory(options.DataDirectory);
+            var profiles = new ClientProfileStore(launchRoot);
+            var current = options.IgnoreProfile ? new ClientProfileSnapshot(null, null) : await profiles.ReadAsync(cancellationToken);
+            var storeChoice = args.Count == 5 ? args[4] : "native";
+            IClientCredentialStore credentialStore = storeChoice switch
+            {
+                "native" => ClientCredentialStores.CreateNative(),
+                "owner-file" => new OwnerOnlyFileCredentialStore(launchRoot),
+                _ => throw new CliUsageException("Credential store must be 'native' or the explicitly selected 'owner-file' fallback.")
+            };
+            var profile = await pending.ConfirmAsync(launchRoot, credentialStore, args[3], cancellationToken);
+            await profiles.SaveAsync(profile, current.Stamp, cancellationToken);
+            pending.Complete();
+            try
+            {
+                await using var verified = await ClientProfileStore.OpenAsync(profile,
+                    cancellationToken: cancellationToken);
+                _ = await verified.GetBootstrapAsync(cancellationToken);
+            }
+            catch (Exception exception) when (exception is SnookException or IOException
+                or HttpRequestException or OperationCanceledException)
+            {
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    "The reviewed profile was saved, but its provisional credential could not be activated. Retry a connection promptly; if the five-minute window expires, pair again.", exception);
+            }
+            WriteJson(new { paired = true, profile = profiles.ProfilePath, identity.ServerId, identity.WorkspaceId,
+                credentialStore = storeChoice, credentialReference = profile.CredentialReference }, stdout);
+            return 0;
+        }
+        throw new CliUsageException("pair requires 'create DEVICE_NAME SERVE_URL [LOGIN]' or 'cancel PRIVATE_CODE_FILE' locally, or 'redeem SERVE_URL PRIVATE_CODE_FILE DEVICE_NAME [native|owner-file]' on the client.");
+    }
+
+    private static async Task<string> ReadPrivatePairingCodeAsync(string path, CancellationToken cancellationToken)
+    {
+        if (!Path.IsPathFullyQualified(path)) throw new CliUsageException("PRIVATE_CODE_FILE must be an absolute owner-only file path.");
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Length is <= 0 or > 1024 || info.LinkTarget is not null
+                || !OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+                    | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
+                throw new CliUsageException("PRIVATE_CODE_FILE must be a bounded owner-only regular file, not a link.");
+            var code = (await File.ReadAllTextAsync(path, cancellationToken)).Trim();
+            if (code.Length is < 20 or > 64 || code.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_'))
+                throw new CliUsageException("PRIVATE_CODE_FILE does not contain a valid bounded pairing code.");
+            return code;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new CliUsageException("PRIVATE_CODE_FILE could not be read safely.");
+        }
+    }
+
+    private static async Task<int> RunDeviceAdministrationAsync(CliOptions options, IReadOnlyList<string> args,
+        TextWriter stdout, CancellationToken cancellationToken)
+    {
+        if (args.Count is < 1 or > 2 || args[0] is not ("list" or "revoke") || args[0] == "revoke" && args.Count != 2)
+            throw new CliUsageException("devices requires 'list' or 'revoke CREDENTIAL_ID'. Run it against the host's local daemon profile.");
+        var local = await OpenLocalAdministratorAsync(options, cancellationToken);
+        await using var client = local.Client;
+        using var administrator = new DaemonAdministrationClient(client.Endpoint, local.RecoveryToken);
+        if (args[0] == "list") WriteJson(await administrator.ListDevicesAsync(cancellationToken), stdout);
+        else
+        {
+            if (!Guid.TryParse(args[1], out var id) || id == Guid.Empty) throw new CliUsageException("CREDENTIAL_ID must be a nonempty GUID.");
+            await administrator.RevokeDeviceAsync(id, cancellationToken);
+            WriteJson(new { revoked = true, credentialId = id }, stdout);
+        }
+        return 0;
+    }
+
+    private static async Task<LocalAdministrator> OpenLocalAdministratorAsync(CliOptions options, CancellationToken cancellationToken)
+    {
+        var launchRoot = ClientProfileStore.LaunchDataDirectory(options.DataDirectory);
+        var saved = options.IgnoreProfile ? null : (await new ClientProfileStore(launchRoot).ReadAsync(cancellationToken)).Profile;
+        var profile = ResolveProfile(saved, launchRoot, options);
+        if (profile.Host != "daemon" || profile.TransportKind == "tailscale-serve")
+            throw new CliUsageException("Host administration requires a local daemon profile. Use --no-profile --host daemon --data-dir HOST_DATA_ROOT if a tailnet profile is saved.");
+        var token = options.Token ?? (profile.TokenFile is null ? Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN") : null);
+        var tokenPath = profile.TokenFile ?? Path.Combine(profile.DataDirectory, "Snook", "daemon.token");
+        token ??= await DaemonConnection.ReadPrivateTokenFileAsync(tokenPath, cancellationToken);
+        var client = await DaemonConnection.ConnectProfileAsync(profile, token, cancellationToken);
+        try { _ = await client.GetBootstrapAsync(cancellationToken); return new LocalAdministrator(client, token, profile.DataDirectory); }
+        catch { await client.DisposeAsync(); throw; }
     }
 
     private static async Task RunWatchAsync(IBackendClient backend, IReadOnlyList<string> args, TextWriter stdout, CancellationToken cancellationToken)
@@ -635,6 +1087,10 @@ public static class Program
                 "--endpoint" => options with { Endpoint = value },
                 "--token" => options with { Token = value },
                 "--token-file" => options with { TokenFile = value },
+                "--transport" => options with { TransportKind = value },
+                "--credential-ref" => options with { CredentialReference = value },
+                "--expect-server" => options with { ExpectedServerId = value },
+                "--expect-workspace" => options with { ExpectedWorkspaceId = value },
                 _ => throw new CliUsageException($"Unknown global option '{option}'.")
             };
         }
@@ -670,12 +1126,28 @@ public static class Program
 
     private static void WriteJson(object value, TextWriter writer) => writer.WriteLine(JsonSerializer.Serialize(value, JsonOptions));
 
+    private static ClientConnectionProfile ResolveProfile(ClientConnectionProfile? saved, string launchRoot, CliOptions options)
+    {
+        Guid? ParseExpected(string? value, string option)
+        {
+            if (value is null) return null;
+            if (!Guid.TryParse(value, out var parsed) || parsed == Guid.Empty)
+                throw new CliUsageException($"{option} requires a nonempty GUID.");
+            return parsed;
+        }
+        return ClientProfileStore.Resolve(saved, launchRoot, options.Host, options.DataDirectory, options.Endpoint,
+            options.TokenFile, transportKind: options.TransportKind, credentialReference: options.CredentialReference,
+            expectedServerId: ParseExpected(options.ExpectedServerId, "--expect-server"),
+            expectedWorkspaceId: ParseExpected(options.ExpectedWorkspaceId, "--expect-workspace"));
+    }
+
     private static void PrintUsage(TextWriter writer)
     {
         writer.WriteLine("Snook — structured JSON workspace client");
         writer.WriteLine();
         writer.WriteLine("Usage: snook-cli [global options] <command> [arguments]");
         writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH --no-profile");
+        writer.WriteLine("Tailnet options: --transport tailscale-serve --credential-ref REF --expect-server GUID --expect-workspace GUID");
         writer.WriteLine("Clients read <launch-data-dir>/Snook/client-profile.json. Flags override environment, then saved settings. --no-profile ignores that file explicitly.");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
         writer.WriteLine("          habits [HabitQuery JSON] (read-only daily progress and check-ins)");
@@ -684,6 +1156,10 @@ public static class Program
         writer.WriteLine("          call create-journal-entry|update-journal-entry|set-journal-entry-deleted JSON");
         writer.WriteLine("          call get-journal-entry|get-journal-tags JSON");
         writer.WriteLine("          calendar blocks|events [Range JSON] | task-batch plan|apply JSON | doctor | watch | api");
+        writer.WriteLine("          tailnet status|setup [--apply]|disable --apply | pair create DEVICE SERVE_URL [LOGIN]");
+        writer.WriteLine("          pair cancel PRIVATE_CODE_FILE");
+        writer.WriteLine("          pair redeem SERVE_URL PRIVATE_CODE_FILE DEVICE [native|owner-file]");
+        writer.WriteLine("          devices list|revoke CREDENTIAL_ID");
         writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();
         writer.WriteLine("Example: snook-cli call create-task '{\"projectId\":\"...\",\"title\":\"Write brief\",\"priority\":\"High\"}'");
@@ -691,8 +1167,15 @@ public static class Program
         writer.WriteLine("Run 'snook-cli api' for every method and its exact named arguments.");
     }
 
-    private sealed record CliOptions(string? DataDirectory = null, string? Host = null, string? Endpoint = null, string? Token = null, string? TokenFile = null, bool IgnoreProfile = false);
+    private sealed record CliOptions(string? DataDirectory = null, string? Host = null, string? Endpoint = null,
+        string? Token = null, string? TokenFile = null, bool IgnoreProfile = false, string? TransportKind = null,
+        string? CredentialReference = null, string? ExpectedServerId = null, string? ExpectedWorkspaceId = null);
     private sealed record Invocation(string Command, IReadOnlyList<string> Arguments, CliOptions Options);
+    private sealed record LocalAdministrator(DaemonBackendClient Client, string RecoveryToken, string DataDirectory);
+    private sealed class DoctorStageException(string stage, string message) : Exception(message)
+    {
+        public string Stage { get; } = stage;
+    }
     private sealed record TaskBatchSelection(
         bool All = false,
         IReadOnlyList<Guid>? TaskIds = null,

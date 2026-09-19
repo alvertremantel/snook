@@ -18,7 +18,7 @@ error before it can mutate data.
 
 ### Saved client connections
 
-The GUI and CLI share a device-local version-1 `Snook/client-profile.json`, read
+The GUI and CLI share a device-local versioned `Snook/client-profile.json`, read
 under the launch data root (`--data-dir`, then `SNOOK_DATA_DIR`, then platform
 local-application-data). The saved data directory may point elsewhere; selecting
 `--data-dir` again is an explicit override of that saved value. Precedence for
@@ -35,8 +35,10 @@ the next launch; the active backend and drafts are retained. Selecting embedded
 is explicit and warns that other owners must be stopped. The default launcher
 honors a saved daemon profile; without one or overrides it retains embedded mode.
 
-Profiles contain `version`, `host` (`embedded` or `daemon`), `dataDirectory`,
-optional `endpoint` and `tokenFile`. Tokens are never serialized. Reads are bounded
+Version-1 profiles contain `version`, `host` (`embedded` or `daemon`),
+`dataDirectory`, optional `endpoint` and `tokenFile`. Version-2 profiles additionally
+carry `transportKind`, a protected `credentialReference`, expected server/workspace
+IDs, friendly name and last negotiated contract metadata. Tokens are never serialized. Reads are bounded
 to 16 KiB and reject duplicate/unknown fields, unsupported versions, unsafe URLs,
 links and nonprivate Unix files. Saves use a private staged file, flush, atomic
 rename and a cross-process save lock with a content stamp: a stale dialog cannot
@@ -61,7 +63,8 @@ refreshes the same endpoint/token. Changing ports or rotating credentials curren
 requires reopening the app to reread discovery/token files—saving new settings
 does not live-switch an open workspace. Reconcile uncertain writes before closing
 drafts; broader lifecycle retry and reconnect reconciliation remain acceptance work.
-These profiles do not implement remote/TLS hosting, sync or offline replication.
+Tailnet profiles implement the constrained Tailscale Serve path below. They do not
+implement synchronization, an offline queue, public hosting or arbitrary TLS servers.
 
 ### Starting the host
 
@@ -92,8 +95,9 @@ host-mode value also fails before opening a database.
 
 The client authenticates health and checks contract major equality and a server
 minor version at least as new as its own before issuing RPCs. Upgrade daemon and
-clients together. Only HTTP loopback root URLs are supported; redirects and
-proxies are disabled. Remote access requires a separately designed transport.
+clients together. Local administration and discovery require an HTTP loopback
+root. Tailnet clients require a canonical `.ts.net` HTTPS root on default port
+443. Redirects and proxies are disabled and platform TLS validation is unchanged.
 
 After binding, the daemon atomically publishes `Snook/daemon.endpoint.json`
 with its endpoint, instance ID and contract version, and removes it at graceful
@@ -110,9 +114,12 @@ deadline including dispatch wait. RPCs execute serially through the shared
 backend; no request task outlives backend shutdown. Each SSE connection has a
 single writer, a 256-event queue, a ten-second heartbeat and a five-second write
 deadline. Overflow or disconnection closes that stream; clients reconnect and
-refresh a bootstrap snapshot. This is snapshot recovery, not durable SSE cursor
-replay. Request overload returns HTTP 503. Malformed JSON and argument shapes
-produce structured validation errors. Unexpected exception text is not exposed.
+refresh a bootstrap snapshot. A client also abandons a stream after 30 seconds
+without any line, which allows two missed heartbeats before reconnect recovery.
+This is snapshot recovery, not durable SSE cursor replay. Every JSON response and
+the SSE stream carry `Cache-Control: no-store`. Request overload returns HTTP 503.
+Malformed JSON and argument shapes produce structured validation errors.
+Unexpected exception text is not exposed.
 
 Entity notifications come directly from the persisted mutation-log rows of each
 fresh transaction. Their cursor, operation/aggregate IDs, kind, revision and UTC
@@ -169,6 +176,156 @@ in daemon mode: a missing token, failed authentication, unavailable endpoint, or
 protocol failure does not permit it to open the workspace database. This keeps
 the CLI configuration compatible with a future server/daemon transport without
 silently changing ownership mode.
+
+## Tailscale Serve (experimental)
+
+The only implemented remote topology is Tailscale Serve HTTPS to the unchanged
+loopback daemon. Snook never binds a LAN/Tailscale address, enables Funnel, edits
+tailnet policy, creates auth keys or enrolls a node. Funnel is public and unsupported.
+This path remains experimental until its live-tailnet, platform credential-store
+and independent security-review gates are complete.
+The frozen transport schemas, trust boundaries, threat analysis, and residual
+risks are documented in [tailscale-threat-model.md](tailscale-threat-model.md).
+
+Start `snookd`, then inspect and preview:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root tailnet status
+snook-cli --host daemon --data-dir /absolute/host-root tailnet setup
+```
+
+The JSON reports the Tailscale running/MagicDNS/HTTPS stages, canonical Serve
+origin, current root proxy, Funnel conflict, exact preview and guidance. It also
+provides the grant template plus separate public host/client pairing commands under
+`nextSteps`; neither contains a credential or pairing code. Apply only after
+reviewing it:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root tailnet setup --apply
+```
+
+The adapter runs the Tailscale executable without a shell, bounds output and time,
+parses `status --json` and `serve status --json`, recognizes the exact mapping as
+idempotent, and refuses an occupied root or Funnel state. It adds only the HTTPS
+root mapping and never uses `tailscale serve reset`. The manual equivalent is
+`tailscale serve --bg http://127.0.0.1:<actual-daemon-port>`; obtain the port from
+the private descriptor/status output rather than assuming 43871.
+
+An explicit setup records only the canonical origin and loopback upstream in a
+private `Snook/tailscale-serve.json` receipt. Setup validates or durably creates
+that exact origin/upstream receipt before invoking the mutation, so a later local
+write failure cannot leave an untracked mapping. Disable refuses to act unless live
+status exactly matches that receipt, then removes only the root handler:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root tailnet disable --apply
+```
+
+Adapt and validate this least-privilege grant in the tailnet policy editor; replace
+the example group/tag with the intended principals and Snook host:
+
+```json
+{
+  "grants": [
+    {
+      "src": ["group:snook-users"],
+      "dst": ["tag:snook-host"],
+      "ip": ["tcp:443"]
+    }
+  ]
+}
+```
+
+This uses the current grant fields (`src`, `dst`, `ip`) and limits access to TCP
+443. Policy is additive, so audit broader grants too. Before a release claim,
+prove an allowed node succeeds and a second node outside the source set is denied.
+
+### Pairing and revocation
+
+From a GUI locally attached to the host, use Settings → General & data → Tailnet
+devices. Enter a label, canonical Serve URL and optional intended
+`Tailscale-User-Login`. The invitation contains a 128-bit single-use code and
+expires after five minutes. CLI equivalent:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root \
+  pair create "Travel laptop" https://snook-host.example-tailnet.ts.net/ [login@example.com]
+```
+
+The host UI exposes **Cancel invitation** while that code is armed. For CLI
+automation, save the emitted code in a bounded owner-only file and revoke it
+without placing the code in process arguments:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root \
+  pair cancel /private/pairing-code
+```
+
+The daemon keeps invitation verifiers in memory, bounds concurrent sessions and
+attempts, consumes a successful code atomically, and returns the new credential
+exactly once. Unknown, expired, reused, wrong-login and rate-limited codes share
+the same denial. Shutdown cancels outstanding sessions.
+
+The remote desktop's **Tailnet daemon** mode displays returned server/workspace
+identity before confirmation. Cancellation revokes the issued credential. Until
+confirmation has durably saved the protected credential and profile, the issued
+record remains provisional while the official client performs authenticated
+health review. Its first post-save RPC/SSE request promotes it; otherwise it expires after
+five minutes even across daemon restart. The host device inventory displays that
+deadline. Confirmation prefers Linux Secret Service (`secret-tool`), Windows Credential
+Manager, or macOS Keychain and stores only a version-2 profile reference. If the
+native store is unavailable, the user must explicitly select Snook's private
+owner-only file fallback. It never copies `daemon.token`, opens local SQLite, or
+adds an offline queue. The CLI client uses an owner-only invitation-code file,
+interactive exact-identity confirmation, and a native credential store by default:
+
+```bash
+snook-cli --data-dir /absolute/client-root \
+  pair redeem https://snook-host.example-tailnet.ts.net/ /private/pairing-code "Travel laptop"
+```
+
+Append `owner-file` only to deliberately select the fallback; `native` is the
+default. Linux requires a running, unlocked Secret Service and the `secret-tool`
+client. Native-store failure is explicit and never silently falls back to JSON or
+a general preferences file.
+
+Host metadata lives in private bounded `Snook/daemon-auth.json` with random salts
+and SHA-256 verifiers; raw device credentials are absent from the workspace,
+backup, export and profile. `daemon.token` remains the local recovery/admin
+credential. List or revoke without exposing secrets:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/host-root devices list
+snook-cli --host daemon --data-dir /absolute/host-root devices revoke CREDENTIAL_ID
+```
+
+Revoked, unknown and malformed credentials receive the same unauthorized response
+for health, RPC and SSE. If `daemon-auth.json` is unsafe, corrupt, oversized or
+future-versioned, startup fails closed; moving it aside intentionally invalidates
+all paired devices. Never copy `daemon.token` to a remote client.
+
+### Diagnosis and lifecycle
+
+`doctor` reports endpoint kind, canonical origin, negotiated identities/contract
+and stream readiness without credentials. A socket error can mean DNS, Tailscale
+disconnect, a grant denial, daemon/Tailscale outage or routing transition; Snook
+does not pretend to distinguish all of them. TLS failure, wrong identity and
+revoked authentication fail closed. Reconnect authenticates and negotiates again,
+verifies identity, fetches a fresh snapshot, then resumes SSE. Uncertain writes are
+not replayed automatically.
+
+Keep the per-user `snookd` unit and Tailscale's system service separate. Serve can
+persist while `snookd` is stopped; health fails until the same workspace/port
+restarts. Verify user lingering, Tailscale login, Serve status and `doctor` after
+reboot. A node rename changes certificate/URL: pair the new canonical origin after
+verifying identity. Never troubleshoot with Funnel, firewall/router forwarding,
+a LAN bind, raw `100.x`/IPv6 URL, HTTP MagicDNS or a custom-CA bypass.
+
+RPM installation never inspects or changes Tailscale. On a disposable host with a
+running packaged daemon, opt into read-only integration verification with
+`SNOOK_VERIFY_TAILSCALE=1 SNOOK_DATA_DIR=/disposable/root SNOOK_CLI_BIN=snook-cli
+scripts/verify-tailscale-operability.sh`. It inspects node/Serve JSON and Snook
+status, checks output for the recovery token, and makes no Serve or policy change.
 
 ## Backup and restore
 
@@ -398,6 +555,8 @@ request; explicitly loading latest task revisions creates a new attempt.
 
 The Fedora RPM installs `deploy/systemd/snookd.service` into
 `/usr/lib/systemd/user`, plus `snook` (GUI), `snook-cli` and `snookd` launchers.
+It declares `/usr/bin/secret-tool`, used by the default Linux Secret Service
+paired-device credential adapter, as a package dependency.
 Installation does not start/enable the service or open a workspace. The user
 service runs as the signed-in user, so the GUI and CLI can read its private token.
 It uses the same platform local-application-data default as both clients. It is
@@ -456,6 +615,14 @@ service with `systemctl --user stop snookd.service`. Upgrade the package, run
 reopening clients. An already-running service is not automatically restarted by
 the RPM. Older binaries may reject a migrated workspace; rollback requires the
 matching backup and compatible binaries, not an in-place database downgrade.
+
+For isolated native package-lifecycle acceptance, the opt-in
+`scripts/verify-rpm-lifecycle-container.sh PREVIOUS_RPM CURRENT_RPM` flow uses DNF
+inside a disposable Fedora 44 Podman container. It inspects installed paths,
+upgrades, verifies the Linux Secret Service dependency, removes Snook, and confirms
+that installation created neither a workspace nor Tailscale state. It downloads
+the configured container image and RPM dependencies but does not install on the
+host or exercise a logged-in desktop/user service.
 
 To return to embedded mode, close daemon clients and run
 `systemctl --user disable --now snookd.service` before opening the normal GUI.

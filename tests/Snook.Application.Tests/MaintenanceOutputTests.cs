@@ -46,7 +46,9 @@ public sealed class MaintenanceOutputTests
             existing, database, database + "-wal", database + "-shm", database + "-journal",
             database + ".owner", database + ".restore-forged", database + ".before-restore-forged",
             Path.Combine(privateDirectory, Path.GetFileName(database).ToUpperInvariant()),
-            tokenPath, descriptorPath, Path.Combine(privateDirectory, "daemon.token.new")
+            tokenPath, descriptorPath, Path.Combine(privateDirectory, "daemon.token.new"),
+            Path.Combine(privateDirectory, "daemon-auth.json"), Path.Combine(privateDirectory, "tailscale-serve.json"),
+            Path.Combine(privateDirectory, "client-credentials", "device.token")
         ];
         foreach (var path in invalidPaths)
             foreach (var operation in OutputOperations(backend, path))

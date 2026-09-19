@@ -52,7 +52,8 @@ tar -C "$WORK_DIR" -czf \
 cp "$ROOT/packaging/rpm/snook.spec" "$WORK_DIR/SPECS/"
 cp "$ROOT/packaging/rpm/com.snook.Snook.desktop" "$WORK_DIR/SOURCES/"
 cp "$ROOT/deploy/systemd/snookd.service" "$WORK_DIR/SOURCES/"
-cp "$ROOT/README.md" "$ROOT/docs/operations.md" "$ROOT/docs/cli.md" "$ROOT/docs/json-export.md" "$WORK_DIR/SOURCES/"
+cp "$ROOT/README.md" "$ROOT/docs/operations.md" "$ROOT/docs/cli.md" "$ROOT/docs/json-export.md" \
+  "$ROOT/docs/tailscale-threat-model.md" "$WORK_DIR/SOURCES/"
 
 rpmbuild -bb "$WORK_DIR/SPECS/snook.spec" \
   --define "_topdir $WORK_DIR" \

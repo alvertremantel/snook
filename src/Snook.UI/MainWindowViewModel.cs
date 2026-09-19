@@ -90,6 +90,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private TodaySnapshot? _todayClockSnapshot;
     private DateTimeOffset _nextDayRefresh;
     private TaskDetailsPanelViewModel? _selectedTaskDetails;
+    private string _pairDeviceName = "";
+    private string _pairServeOrigin = "";
+    private string _pairIntendedLogin = "";
+    private string _pairingInvitationText = "";
+    private string? _activePairingCode;
 
     public MainWindowViewModel(IBackendClient backend, TimeProvider? clock = null)
     {
@@ -126,6 +131,13 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         CreateCalendarEventCommand = new AsyncCommand(_ => CreateCalendarEventAsync(), _ => !string.IsNullOrWhiteSpace(NewEventTitle) && SelectedCalendarId != Guid.Empty);
         CreateCalendarCommand = new AsyncCommand(_ => CreateCalendarAsync(), _ => !string.IsNullOrWhiteSpace(NewCalendarName));
         SaveSettingsCommand = new AsyncCommand(_ => SaveSettingsAsync());
+        CreatePairingInvitationCommand = new AsyncCommand(_ => CreatePairingInvitationAsync(),
+            _ => IsDaemonHostAdministrator && !string.IsNullOrWhiteSpace(PairDeviceName) && !string.IsNullOrWhiteSpace(PairServeOrigin));
+        CancelPairingInvitationCommand = new AsyncCommand(_ => CancelPairingInvitationAsync(),
+            _ => IsDaemonHostAdministrator && _activePairingCode is not null);
+        RefreshPairedDevicesCommand = new AsyncCommand(_ => RefreshPairedDevicesAsync(), _ => IsDaemonHostAdministrator);
+        RevokePairedDeviceCommand = new AsyncCommand(device => device is PairedDeviceInfo paired
+            ? RevokePairedDeviceAsync(paired) : Task.CompletedTask, _ => IsDaemonHostAdministrator);
         ResetTimerPreferenceCommand = new AsyncCommand(async _ =>
         {
             _timerPreferenceDirty = false;
@@ -181,6 +193,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ObservableCollection<RecoverySessionRowViewModel> RecoverySessions { get; } = [];
     public ObservableCollection<ReviewRowViewModel> TodayRecentRows { get; } = [];
     public ObservableCollection<ReviewRowViewModel> TodayUpcomingRows { get; } = [];
+    public ObservableCollection<PairedDeviceInfo> PairedDevices { get; } = [];
 
     public ICommand RefreshCommand { get; }
     public ICommand CreateTaskCommand { get; }
@@ -207,6 +220,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ICommand CreateCalendarCommand { get; }
     public ICommand SaveSettingsCommand { get; }
     public ICommand ResetTimerPreferenceCommand { get; }
+    public ICommand CreatePairingInvitationCommand { get; }
+    public ICommand CancelPairingInvitationCommand { get; }
+    public ICommand RefreshPairedDevicesCommand { get; }
+    public ICommand RevokePairedDeviceCommand { get; }
 
     public string WorkspaceName { get => _workspaceName; private set => SetField(ref _workspaceName, value); }
     public string CurrentSection { get => _currentSection; private set => SetField(ref _currentSection, value); }
@@ -295,6 +312,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private bool _connectionProblem;
     public bool ConnectionProblem { get => _connectionProblem; private set => SetField(ref _connectionProblem, value); }
     public string ConnectionLabel => _backend is DaemonBackendClient daemon ? $"Daemon · {daemon.Endpoint}" : "Embedded workspace";
+    public bool IsDaemonHostAdministrator => _backend is DaemonBackendClient { CanAdministerHost: true };
+    public string PairDeviceName { get => _pairDeviceName; set { if (SetField(ref _pairDeviceName, value)) ((AsyncCommand)CreatePairingInvitationCommand).RaiseCanExecuteChanged(); } }
+    public string PairServeOrigin { get => _pairServeOrigin; set { if (SetField(ref _pairServeOrigin, value)) ((AsyncCommand)CreatePairingInvitationCommand).RaiseCanExecuteChanged(); } }
+    public string PairIntendedLogin { get => _pairIntendedLogin; set => SetField(ref _pairIntendedLogin, value); }
+    public string PairingInvitationText { get => _pairingInvitationText; private set => SetField(ref _pairingInvitationText, value); }
+    public bool HasPairingInvitation => _activePairingCode is not null;
     public string TrackedToday { get => _trackedToday; private set => SetField(ref _trackedToday, value); }
     public int OpenTaskCount { get => _openTaskCount; private set => SetField(ref _openTaskCount, value); }
     public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
@@ -775,6 +798,87 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             StatusMessage = exception is SnookException { Code: SnookErrorCode.RevisionConflict }
                 ? "The timer preference changed elsewhere. Use Reset to saved, then make your change again."
                 : exception is SnookException snook ? snook.Message : "Workspace settings could not be saved.";
+        }
+    }
+
+    private async Task CreatePairingInvitationAsync()
+    {
+        try
+        {
+            if (_backend is not DaemonBackendClient { CanAdministerHost: true } daemon
+                || !Uri.TryCreate(PairServeOrigin.Trim(), UriKind.Absolute, out var origin))
+                throw new SnookException(SnookErrorCode.ValidationFailed, "Enter the canonical Tailscale Serve URL before creating an invitation.");
+            if (_activePairingCode is not null)
+            {
+                await daemon.CancelPairingInvitationAsync(_activePairingCode);
+                SetActivePairingCode(null);
+                PairingInvitationText = "";
+            }
+            var invitation = await daemon.CreatePairingInvitationAsync(PairDeviceName, origin,
+                string.IsNullOrWhiteSpace(PairIntendedLogin) ? null : PairIntendedLogin);
+            SetActivePairingCode(invitation.PairingCode);
+            PairingInvitationText = $"{invitation.ServeOrigin}\n{invitation.PairingCode}\nExpires {invitation.ExpiresAtUtc:u}"
+                + (invitation.IntendedTailscaleLogin is null ? "" : $"\nFor {invitation.IntendedTailscaleLogin}");
+            StatusMessage = "Single-use pairing invitation created. Both devices must be on the intended tailnet; Funnel is unsupported and public.";
+            await RefreshPairedDevicesAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The pairing invitation could not be created.";
+        }
+    }
+
+    private async Task CancelPairingInvitationAsync()
+    {
+        try
+        {
+            if (_backend is not DaemonBackendClient { CanAdministerHost: true } daemon
+                || _activePairingCode is not { } code) return;
+            await daemon.CancelPairingInvitationAsync(code);
+            SetActivePairingCode(null);
+            PairingInvitationText = "";
+            StatusMessage = "The single-use pairing invitation was cancelled.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The pairing invitation could not be cancelled.";
+        }
+    }
+
+    private void SetActivePairingCode(string? value)
+    {
+        _activePairingCode = value;
+        RaisePropertyChanged(nameof(HasPairingInvitation));
+        ((AsyncCommand)CancelPairingInvitationCommand).RaiseCanExecuteChanged();
+    }
+
+    private async Task RefreshPairedDevicesAsync()
+    {
+        try
+        {
+            if (_backend is not DaemonBackendClient { CanAdministerHost: true } daemon) return;
+            var devices = await daemon.ListPairedDevicesAsync();
+            PairedDevices.Clear();
+            foreach (var device in devices) PairedDevices.Add(device);
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "Paired devices could not be loaded.";
+        }
+    }
+
+    private async Task RevokePairedDeviceAsync(PairedDeviceInfo device)
+    {
+        try
+        {
+            if (_backend is not DaemonBackendClient { CanAdministerHost: true } daemon) return;
+            await daemon.RevokePairedDeviceAsync(device.CredentialId);
+            StatusMessage = $"Revoked {device.DisplayName}.";
+            await RefreshPairedDevicesAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception is SnookException snook ? snook.Message : "The paired device could not be revoked.";
         }
     }
 

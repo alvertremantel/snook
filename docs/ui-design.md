@@ -3,11 +3,28 @@
 ## Current direction: September 2026 modernization
 
 Connection setup is a separate startup window, also available before opening any
-workspace with `--configure`. It has explicit daemon/embedded choices, persistent
-field labels, loopback endpoint/token-file hints, a scrolling form and fixed
+workspace with `--configure`. It has explicit **Embedded workspace**, **Local
+daemon**, and **Tailnet daemon** choices, persistent field labels, policy-specific
+endpoint/token/pairing hints, a scrolling form and fixed
 status/Connect/Cancel actions at 620×600. Failure keeps the draft visible for Retry;
 Cancel/Escape drains pending connection work and suppresses late window opening.
 The optional Remember checkbox saves device-local settings, never credentials.
+
+Tailnet mode never asks for the server data directory. It explains that Tailscale
+must be installed/signed in separately and that Funnel is public and unsupported.
+The user enters a canonical Serve URL, device name and single-use code. Redemption
+does not immediately save: the same window displays workspace/server IDs and
+contract for review, then exposes a separate confirmation action. Cancel revokes
+the just-issued credential. Confirmation prefers the named native protected store;
+an owner-only file requires an explicit checkbox, and only the resulting reference
+is saved. A saved profile card shows the Serve host, pinned server/workspace IDs,
+last saved contract negotiation, credential label, and the fact that identity is
+reverified on every connection. Settings on a locally connected daemon provide invitation
+creation, optional intended-login restriction, bounded device inventory and a
+textual Revoke action. Invitation fields keep persistent visible labels, and an
+armed invitation exposes a visible Cancel action that revokes it early and clears
+the displayed payload. These controls have automation names and remain scroll
+reachable at minimum size.
 
 The workspace footer identifies embedded mode or the actual daemon endpoint and
 offers **Connection…**. That modal saves settings for the next launch, without

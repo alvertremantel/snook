@@ -13,6 +13,8 @@ public sealed partial class DaemonBackendClient : IBackendClient
     private readonly HttpClient _httpClient;
     private readonly Uri _endpoint;
     private readonly string _token;
+    private readonly Guid? _expectedServerId;
+    private readonly Guid? _expectedWorkspaceId;
     private readonly CancellationTokenSource _changesCancellation = new();
     private readonly Task _changesTask;
     private readonly SemaphoreSlim _negotiation = new(1, 1);
@@ -21,12 +23,16 @@ public sealed partial class DaemonBackendClient : IBackendClient
     private readonly object _disposeSync = new();
     private Task? _disposeTask;
 
-    public DaemonBackendClient(Uri endpoint, string token, HttpMessageHandler? handler = null)
+    public DaemonBackendClient(Uri endpoint, string token, HttpMessageHandler? handler = null,
+        Guid? expectedServerId = null, Guid? expectedWorkspaceId = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        ValidateEndpoint(endpoint.OriginalString);
-        _endpoint = endpoint;
+        var validated = DaemonEndpoint.Parse(endpoint.OriginalString);
+        _endpoint = validated.Origin;
+        EndpointKind = validated.Kind;
         _token = Guard.Required(token, "token", 512);
+        _expectedServerId = expectedServerId;
+        _expectedWorkspaceId = expectedWorkspaceId;
         _httpClient = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
         // The transport lifetime must not depend on an Avalonia synchronization
@@ -35,6 +41,42 @@ public sealed partial class DaemonBackendClient : IBackendClient
     }
 
     public Uri Endpoint => _endpoint;
+    public DaemonEndpointKind EndpointKind { get; }
+    public Guid? NegotiatedServerId { get; private set; }
+    public Guid? NegotiatedWorkspaceId { get; private set; }
+    public Version? NegotiatedContract { get; private set; }
+    public Guid? ExpectedServerId => _expectedServerId;
+    public Guid? ExpectedWorkspaceId => _expectedWorkspaceId;
+    public bool CanAdministerHost => EndpointKind == DaemonEndpointKind.LocalLoopback;
+
+    public async Task<PairingInvitation> CreatePairingInvitationAsync(string deviceName, Uri serveOrigin,
+        string? intendedTailscaleLogin = null, CancellationToken cancellationToken = default)
+    {
+        if (!CanAdministerHost) throw new SnookException(SnookErrorCode.ValidationFailed, "Pairing administration is available only through the host's local loopback connection.");
+        using var administrator = new DaemonAdministrationClient(_endpoint, _token);
+        return await administrator.CreatePairingAsync(deviceName, serveOrigin, intendedTailscaleLogin, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PairedDeviceInfo>> ListPairedDevicesAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanAdministerHost) throw new SnookException(SnookErrorCode.ValidationFailed, "Device administration is available only through the host's local loopback connection.");
+        using var administrator = new DaemonAdministrationClient(_endpoint, _token);
+        return await administrator.ListDevicesAsync(cancellationToken);
+    }
+
+    public async Task CancelPairingInvitationAsync(string pairingCode, CancellationToken cancellationToken = default)
+    {
+        if (!CanAdministerHost) throw new SnookException(SnookErrorCode.ValidationFailed, "Pairing administration is available only through the host's local loopback connection.");
+        using var administrator = new DaemonAdministrationClient(_endpoint, _token);
+        await administrator.CancelPairingAsync(pairingCode, cancellationToken);
+    }
+
+    public async Task RevokePairedDeviceAsync(Guid credentialId, CancellationToken cancellationToken = default)
+    {
+        if (!CanAdministerHost) throw new SnookException(SnookErrorCode.ValidationFailed, "Device administration is available only through the host's local loopback connection.");
+        using var administrator = new DaemonAdministrationClient(_endpoint, _token);
+        await administrator.RevokeDeviceAsync(credentialId, cancellationToken);
+    }
     private bool _connected;
     public bool IsConnected => Volatile.Read(ref _connected);
     public event EventHandler? ConnectionStateChanged;
@@ -49,17 +91,7 @@ public sealed partial class DaemonBackendClient : IBackendClient
     }
 
     public static Uri ValidateEndpoint(string value)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var endpoint))
-            throw new SnookException(SnookErrorCode.ValidationFailed, "Daemon endpoint must be an absolute HTTP loopback URL.");
-        if (!endpoint.IsAbsoluteUri || endpoint.Scheme != Uri.UriSchemeHttp
-            || !endpoint.IsLoopback || endpoint.UserInfo.Length != 0
-            || endpoint.AbsolutePath != "/" || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0)
-        {
-            throw new SnookException(SnookErrorCode.ValidationFailed, "Daemon endpoint must be an HTTP loopback URL with no credentials, path, query or fragment.");
-        }
-        return endpoint;
-    }
+        => DaemonEndpoint.Parse(value).Origin;
 
     private event EventHandler<ChangeNotification>? ChangedHandlers;
     public event EventHandler<ChangeNotification>? Changed
@@ -71,6 +103,12 @@ public sealed partial class DaemonBackendClient : IBackendClient
     public async Task<BootstrapSnapshot> GetBootstrapAsync(CancellationToken cancellationToken = default)
     {
         var snapshot = await CallAsync<BootstrapSnapshot>(nameof(GetBootstrapAsync), cancellationToken);
+        if (_expectedWorkspaceId is not null && snapshot.Workspace.Id != _expectedWorkspaceId)
+        {
+            Volatile.Write(ref _negotiated, false);
+            throw new SnookException(SnookErrorCode.StoreUnavailable,
+                "The bootstrap workspace identity does not match the saved profile. Refuse this connection and verify the Serve URL and restored workspace before pairing again.");
+        }
         return snapshot with
         {
             Capabilities = snapshot.Capabilities with
@@ -298,8 +336,12 @@ public sealed partial class DaemonBackendClient : IBackendClient
     public Task<ExportResult> ExportCsvAsync(string destinationPath, DateTimeOffset rangeStartUtc, DateTimeOffset rangeEndUtc, CancellationToken cancellationToken = default)
         => CallAsync<ExportResult>(nameof(ExportCsvAsync), cancellationToken, destinationPath, rangeStartUtc, rangeEndUtc);
 
-    public Task<RestoreResult> RestoreBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
-        => CallAsync<RestoreResult>(nameof(RestoreBackupAsync), cancellationToken, sourcePath);
+    public async Task<RestoreResult> RestoreBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        var result = await CallAsync<RestoreResult>(nameof(RestoreBackupAsync), cancellationToken, sourcePath);
+        Volatile.Write(ref _negotiated, false);
+        return result;
+    }
 
     private async Task<T> CallAsync<T>(string method, CancellationToken cancellationToken, params object?[] args)
     {
@@ -334,9 +376,11 @@ public sealed partial class DaemonBackendClient : IBackendClient
                 throw new SnookException(SnookErrorCode.StoreUnavailable, "Daemon authentication failed. Check the selected profile and token file, then reconnect.");
             await response.Content.LoadIntoBufferAsync(64 * 1024 * 1024, deadline.Token);
             var body = await response.Content.ReadAsStringAsync(deadline.Token);
-            using var document = JsonDocument.Parse(body);
+            using var document = JsonDocument.Parse(body,
+                new JsonDocumentOptions { MaxDepth = 64, CommentHandling = JsonCommentHandling.Disallow });
             if (document.RootElement.ValueKind != JsonValueKind.Object)
                 throw new JsonException("Invalid daemon response envelope.");
+            RejectDuplicateProperties(document.RootElement);
             var hasError = document.RootElement.TryGetProperty("error", out var error);
             if (!response.IsSuccessStatusCode || hasError)
             {
@@ -344,12 +388,14 @@ public sealed partial class DaemonBackendClient : IBackendClient
                 var message = $"Daemon call {method} failed.";
                 if (error.ValueKind == JsonValueKind.Object)
                 {
-                    if (error.TryGetProperty("code", out var codeElement))
+                    if (error.TryGetProperty("code", out var codeElement)
+                        && codeElement.ValueKind == JsonValueKind.String)
                     {
                         if (Enum.TryParse<SnookErrorCode>(codeElement.GetString(), ignoreCase: true, out var parsed) && Enum.IsDefined(parsed)) code = parsed;
                     }
 
-                    if (error.TryGetProperty("message", out var messageElement))
+                    if (error.TryGetProperty("message", out var messageElement)
+                        && messageElement.ValueKind == JsonValueKind.String)
                     {
                         message = messageElement.GetString() ?? message;
                     }
@@ -360,7 +406,11 @@ public sealed partial class DaemonBackendClient : IBackendClient
 
             return document.RootElement.TryGetProperty("result", out var result) ? result.Clone() : null;
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException
+        catch (HttpRequestException exception)
+        {
+            throw DaemonTransportFailure.From(exception, EndpointKind, uncertainWrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or JsonException
             || exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             throw new SnookException(SnookErrorCode.StoreUnavailable,
@@ -376,23 +426,71 @@ public sealed partial class DaemonBackendClient : IBackendClient
         await _negotiation.WaitAsync(cancellationToken);
         try
         {
-            if (_negotiated) return;
+            if (Volatile.Read(ref _negotiated)) return;
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_endpoint, "v1/health"));
             request.Headers.Add("X-Snook-Token", _token);
             using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!response.IsSuccessStatusCode)
-                throw new SnookException(SnookErrorCode.StoreUnavailable, "Daemon health/authentication failed. Check the daemon endpoint and token file.");
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                        ? "Daemon authentication was rejected. Check or re-pair the selected credential."
+                        : "Daemon health protocol failed. Check that the endpoint runs a compatible Snook daemon.");
             await response.Content.LoadIntoBufferAsync(8192, cancellationToken);
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken),
+                    new JsonDocumentOptions { MaxDepth = 8, CommentHandling = JsonCommentHandling.Disallow });
+                RejectDuplicateProperties(document.RootElement);
+            }
+            catch (JsonException exception)
+            {
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    "Daemon health protocol returned invalid JSON. Upgrade the daemon and client together.", exception);
+            }
+            using var ownedDocument = document;
             if (document.RootElement.ValueKind != JsonValueKind.Object
                 || !document.RootElement.TryGetProperty("ready", out var ready) || ready.ValueKind != JsonValueKind.True
                 || !document.RootElement.TryGetProperty("contract", out var contract) || contract.ValueKind != JsonValueKind.String
                 || !Version.TryParse(contract.GetString(), out var version)
                 || version.Major != ContractInfo.Major || version.Minor < ContractInfo.Minor)
                 throw new SnookException(SnookErrorCode.StoreUnavailable, "Daemon contract is incompatible. Upgrade the daemon and clients together.");
-            _negotiated = true;
+            var serverId = ReadOptionalGuid(document.RootElement, "serverId");
+            var workspaceId = ReadOptionalGuid(document.RootElement, "workspaceId");
+            if (_expectedServerId is not null && serverId != _expectedServerId
+                || _expectedWorkspaceId is not null && workspaceId != _expectedWorkspaceId)
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    "The daemon identity does not match the saved profile. Refuse this connection and verify the Serve URL and workspace before pairing again.");
+            NegotiatedServerId = serverId;
+            NegotiatedWorkspaceId = workspaceId;
+            NegotiatedContract = version;
+            Volatile.Write(ref _negotiated, true);
         }
         finally { _negotiation.Release(); }
+    }
+
+    private static Guid? ReadOptionalGuid(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out var parsed) && parsed != Guid.Empty
+            ? parsed
+            : throw new SnookException(SnookErrorCode.StoreUnavailable, "Daemon health metadata is invalid.");
+    }
+
+    private static void RejectDuplicateProperties(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                    throw new JsonException("Daemon response contains duplicate fields.");
+                RejectDuplicateProperties(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) RejectDuplicateProperties(item);
     }
 
     private async Task ListenForChangesAsync(CancellationToken cancellationToken)
@@ -413,7 +511,8 @@ public sealed partial class DaemonBackendClient : IBackendClient
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    var line = await reader.ReadLineAsync(cancellationToken);
+                    var line = await ReadSseLineWithTimeoutAsync(reader, TimeSpan.FromSeconds(30),
+                        cancellationToken);
                     if (line is null)
                     {
                         break;
@@ -424,9 +523,13 @@ public sealed partial class DaemonBackendClient : IBackendClient
                         continue;
                     }
 
-                    var notification = JsonSerializer.Deserialize<ChangeNotification>(line[5..].Trim(), JsonOptions);
+                    using var notificationDocument = JsonDocument.Parse(line[5..].Trim(),
+                        new JsonDocumentOptions { MaxDepth = 16, CommentHandling = JsonCommentHandling.Disallow });
+                    RejectDuplicateProperties(notificationDocument.RootElement);
+                    var notification = notificationDocument.RootElement.Deserialize<ChangeNotification>(JsonOptions);
                     if (notification is not null)
                     {
+                        if (notification.ChangeKind == "restored") Volatile.Write(ref _negotiated, false);
                         ChangedHandlers?.Invoke(this, notification);
                     }
                 }
@@ -453,7 +556,7 @@ public sealed partial class DaemonBackendClient : IBackendClient
             }
 
             SetConnected(false);
-            _negotiated = false;
+            Volatile.Write(ref _negotiated, false);
 
             try
             {
@@ -463,6 +566,37 @@ public sealed partial class DaemonBackendClient : IBackendClient
             {
                 break;
             }
+        }
+    }
+
+    internal static async Task<string?> ReadSseLineAsync(StreamReader reader,
+        CancellationToken cancellationToken)
+    {
+        const int maximumCharacters = 64 * 1024;
+        var line = new StringBuilder();
+        var character = new char[1];
+        while (true)
+        {
+            var read = await reader.ReadAsync(character.AsMemory(), cancellationToken);
+            if (read == 0) return line.Length == 0 ? null : line.ToString().TrimEnd('\r');
+            if (character[0] == '\n') return line.ToString().TrimEnd('\r');
+            if (line.Length >= maximumCharacters)
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    "Daemon change stream returned an oversized frame and was disconnected.");
+            line.Append(character[0]);
+        }
+    }
+
+    internal static async Task<string?> ReadSseLineWithTimeoutAsync(StreamReader reader,
+        TimeSpan idleTimeout, CancellationToken cancellationToken)
+    {
+        using var idleDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        idleDeadline.CancelAfter(idleTimeout);
+        try { return await ReadSseLineAsync(reader, idleDeadline.Token); }
+        catch (OperationCanceledException) when (idleDeadline.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException("Daemon change stream heartbeat timed out.");
         }
     }
 

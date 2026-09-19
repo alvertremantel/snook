@@ -1,26 +1,31 @@
 # Tailscale operability amendment plan
 
-Status: proposed implementation plan, not implemented  
+Status: functional implementation complete; live, platform, and security release acceptance outstanding
 Scope: existing desktop client, CLI, and daemon  
 Last reviewed: 2026-09-19
 
-## Conclusion
+The implemented schema and security self-review are recorded in
+[tailscale-threat-model.md](tailscale-threat-model.md). The historical baseline
+below explains the motivation; current verified status is tracked in
+[production-readiness.md](production-readiness.md).
 
-Snook is not currently operable across a tailnet. Its daemon is well positioned
-for Tailscale because it already listens only on loopback, authenticates every
-health/RPC/SSE request, and keeps exclusive ownership of the SQLite workspace.
-The client side, however, intentionally accepts only loopback HTTP URLs, assumes
-that the daemon token is readable from the same machine, disables any remote/TLS
-hosting in its documentation, and presents daemon mode as local-only.
+## Current conclusion
 
-Amend Snook to make Tailscale Serve the only supported remote path. Keep the
-daemon on loopback and proxy it with tailnet-only HTTPS. Preserve application
-authentication in addition to Tailscale access control, but make enrollment easy
-with short-lived pairing and per-device revocable credentials. Do not expose the
-daemon on a LAN address, accept arbitrary HTTPS servers, add synchronization, or
-use Tailscale Funnel.
+Snook now implements the local pieces of the target design: a Tailscale Serve
+profile over the daemon's loopback listener, short-lived pairing, per-device
+revocable credentials, protected client storage, server/workspace identity
+binding, conflict-safe Serve administration, diagnostics, and host/client UI.
+The daemon still binds only to loopback, and the design neither exposes a LAN
+listener nor accepts arbitrary HTTPS origins, adds synchronization, or uses
+Tailscale Funnel.
 
-## Evidence from the current repository
+This remains experimental rather than supported. The live two-node tailnet matrix,
+native protected-store platform checks, second-desktop-OS CLI-shape check, native
+RPM lifecycle, and independent security review in the release gates below have not
+been completed. The local recovery bearer remains host-only and is not the normal
+remote onboarding credential.
+
+## Original repository baseline
 
 | Area | Current behavior | Tailscale impact |
 | --- | --- | --- |
@@ -513,7 +518,10 @@ Do not describe desktop/daemon Tailscale operation as supported until all are tr
 - [Tailscale MagicDNS](https://tailscale.com/docs/features/magicdns)
 - [Tailscale identity](https://tailscale.com/docs/concepts/tailscale-identity)
 - [Tailscale grants](https://tailscale.com/docs/features/access-control/grants)
+- [Tailscale grants syntax](https://tailscale.com/docs/reference/syntax/grants)
 
-The Tailscale CLI and Serve behavior must be rechecked against official current
-documentation when implementation begins; the helper must not depend on human
-display text when a bounded machine-readable interface is available.
+The Serve CLI and grants example were rechecked on 2026-09-19 against the official
+current references: `serve status --json` remains documented, and grants require
+`src`, `dst`, plus `ip` and/or `app`; `tcp:443` is a documented network capability.
+The helper does not depend on human display text when a bounded machine-readable
+interface is available.

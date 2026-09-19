@@ -1,6 +1,6 @@
 # Production-readiness status
 
-Updated: 2026-09-18
+Updated: 2026-09-19
 
 This is the current release handoff for Snook. It summarizes the accumulated
 daemon, persistence, client, UI, maintenance and packaging work and separates
@@ -11,8 +11,8 @@ in [daemon-plan.md](daemon-plan.md).
 Snook is a functional local desktop application with a shared embedded/daemon
 backend contract. It is not yet production-ready or a supported multi-platform
 release. Embedded and daemon modes operate on the same single-owner SQLite
-workspace; daemon mode is authenticated loopback transport, not synchronization
-or a second data store.
+workspace; daemon mode can remain local or use experimental Tailscale Serve, but
+it is not synchronization or a second data store.
 
 ## Implemented so far
 
@@ -41,7 +41,10 @@ or a second data store.
   endpoints, bypass proxies, refuse redirects, negotiate contract compatibility
   and fail closed on missing credentials, connectivity or protocol errors.
 - Request handlers and streams are tracked during shutdown. Change streams use a
-  single writer, bounded queue, heartbeat and reconnect invalidation behavior.
+  single writer, bounded queue, ten-second server heartbeat and five-second write
+  deadline. Clients abandon an idle stream after 30 seconds, then renegotiate and
+  refresh a bootstrap snapshot before reconnecting. Daemon JSON responses and SSE
+  streams carry `Cache-Control: no-store`.
 - GUI and CLI share device-local versioned connection profiles. Flags override
   environment, which overrides saved settings, with embedded as the no-profile
   default. Profiles never contain the bearer token. Unsafe, linked, oversized,
@@ -52,6 +55,23 @@ or a second data store.
   to embedded storage or queue writes offline. The CLI can use the same saved
   profile without connection flags, explicitly bypass it with `--no-profile`,
   and reports the actual resolved daemon endpoint from `doctor`.
+- Experimental tailnet transport accepts only canonical `.ts.net` HTTPS roots,
+  preserves normal TLS, disables redirects/proxies and binds profiles to stable
+  server/workspace identity. Per-device credentials are verifier-only on the host,
+  revocable, and bootstrapped through bounded one-time pairing. Host and client UI
+  plus CLI administration and explicit pre-expiry invitation cancellation are
+  implemented. Issued credentials are durable provisional records during the
+  official client's health-only identity review; the confirmed client saves its
+  profile before first RPC/SSE use promotes them, and unused
+  records expire after five minutes across restart. Pairing/admin response payloads fail closed on unknown, duplicate,
+  mistyped, or invalid data, as do server-side pairing/admin requests. Host verifier
+  state rejects duplicate/null/malformed structures deterministically. RPC results
+  and SSE notifications reject nested duplicate fields with bounded parsing. Shared
+  connection and pairing paths classify DNS, TLS and connectivity failures with
+  cautious actionable guidance. Local discovery is strictly loopback-only, and
+  pairing confirmation authenticates the issued credential against the reviewed
+  identities before protected storage. Conflict-safe Serve inspection/setup/
+  disable refuses Funnel and occupied roots and never resets unrelated state.
 
 ### Backup, restore and export
 
@@ -84,14 +104,33 @@ or a second data store.
 
 ## Current verification baseline
 
-The current source baseline builds with zero warnings/errors and has 149 passing
-tests: 131 application tests and 18 domain tests. The application suite includes
+The current source baseline builds with zero warnings/errors and has 204 passing
+tests: 186 application tests and 18 domain tests. The application suite includes
 real disposable daemon processes and loopback sockets. Seeded and empty 980×640
-captures have been inspected, and daemon-backed connection, task and timer
-interactions plus an actual daemon stop/restart with outage warning, reconnect and
-draft retention have passed. Release-3 RPM evidence predates the later verified
-restore, restored-timer and saved-connection-profile work, so it is not a release
-artifact for the current tree.
+captures plus the new 620×600 tailnet pre-pairing and saved-identity states and
+980×640 daemon Settings form/invitation renders have been inspected, and daemon-backed connection,
+task and timer interactions plus an actual daemon stop/restart with outage warning,
+reconnect and draft retention have passed. Read-only Tailscale 1.102.4 status and
+empty-Serve inspection plus the opt-in read-only repository verifier produced
+Snook's exact `ready-to-apply` preview without changing Serve; the final audited
+package CLI repeated that check successfully, including the public grant and
+host/client pairing next-step fields. A current-tree
+`snook-0.1.0-5.fc44.x86_64.rpm` was built in
+`/tmp/snook-rpm-tailnet-audited-9` (SHA-256
+`e19306a2e2a6354fde188fe99e12cc286356da1d3f6c39bb5799a22b4d4e2917`) and passed extracted paths/launcher/docs/unit,
+daemon/CLI/watch, fail-closed, restart/stop, private-token and lease-reopening
+checks, including the pre-mutation Serve-receipt hardening and declared
+`/usr/bin/secret-tool` dependency. It was not installed, and no normal service was
+enabled. A later disposable Fedora 44 DNF lifecycle attempt stopped before
+installation because the repository could not satisfy the payload's automatic
+`liblttng-ust.so.0` requirement; that packaging issue is deferred and does not
+change the source-level tailnet result below.
+
+The application suite also drives the official pairing/profile/backend clients
+through a `.ts.net`-shaped Serve boundary: identity review, protected-reference
+profile publication, RPC, SSE, a forced stream break and reconnect snapshot,
+revocation, and absence of client-side SQLite all pass. Actual Tailscale routing,
+grants, TLS certificates and a second node remain live acceptance work.
 
 ## Remaining production gates
 
@@ -115,6 +154,11 @@ artifact for the current tree.
   shutdown boundaries, header limits, token rotation and protocol-version failures.
 - Finish the requirement-by-requirement parity/bounds audit for every public method,
   particularly maintenance and older feature families.
+- Complete the Tailscale release matrix: independent pairing/auth security review,
+  protected-store verification for every claimed platform, allowed and denied
+  nodes, public/LAN/raw-IP denial, direct↔DERP, roaming, DNS/TLS failures, daemon and
+  Tailscale restart, suspend/resume, grant/node/credential revocation and sustained
+  SSE recovery without duplicate writes or local SQLite fallback.
 
 ### P1: client and UI recovery
 
@@ -130,18 +174,19 @@ artifact for the current tree.
 
 ### P1: release and platform acceptance
 
-- Rebuild and version the Fedora RPM from the current tree, then perform native
-  install, upgrade and uninstall checks in a disposable Fedora environment. Inspect
-  installed paths, launcher actions, user-unit behavior and ownership migration.
+- Perform native install, upgrade and uninstall checks for the current Fedora RPM
+  in a disposable Fedora environment. Inspect installed paths, launcher actions,
+  user-unit behavior and ownership migration; extracted and transient-service
+  verification alone is not native package lifecycle acceptance.
 - Decide and implement the supported Windows background-service model, credential
   ACLs, install/upgrade flow and native acceptance matrix.
 - Run the final threat, privacy, dependency/license and operational review; define
   supported backup recovery objectives, log retention and incident procedures.
 - Re-run the full release matrix from clean sources and publish reproducible hashes.
 
-Android/mobile packaging, peer/cloud synchronization and remote-network daemon
-transport are separate product scopes and are not implied by completing these
-local desktop production gates.
+Android/mobile packaging and peer/cloud synchronization remain separate scopes.
+The experimental Tailscale Serve daemon path is implemented but is not supported
+until its dedicated release gates pass.
 
 ## Recommended completion order
 

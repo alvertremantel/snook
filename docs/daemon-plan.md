@@ -403,8 +403,8 @@ directory-entry durability and real process-kill/disk-failure tests; restored
 active-timer reconciliation; richer backup manifest/status/preview support from
 the specification; bounded long-running maintenance jobs; and broader SSE restore/
 reconnect reconciliation. Windows ACL/native verification and GUI connection/
-outage workflows remain open. Release 3 predates this restore pass and must be
-rebuilt/versioned before these changes are shipped. Current RPC signatures and
+outage workflows remain open. The release-3 RPM existing at this pass predated the
+restore work and needed a rebuild before shipment. Current RPC signatures and
 SQLite schema remain 1.6 and 10; normal restore's manifest requirement is now
 enforced rather than accepting an unverified bare database.
 
@@ -472,8 +472,9 @@ daemon-mode launcher, visible configuration/startup/outage recovery and actual
 daemon-backed GUI interactions; CLI doctor should report the resolved discovered
 endpoint. Crash-consistent activation/recovery journals, directory durability,
 kill/disk-failure tests, richer maintenance APIs/jobs, stream reconciliation and
-native packaging/Windows acceptance remain required. Release 3 predates both
-restore passes; no RPM or normal user service was installed or changed here.
+native packaging/Windows acceptance remain required. The release-3 RPM existing at
+this pass predated both restore passes; no RPM or normal user service was installed
+or changed here.
 
 ## Saved client profile and GUI/CLI daemon operation pass
 

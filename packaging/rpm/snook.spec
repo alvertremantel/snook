@@ -1,7 +1,7 @@
 Name:           snook
 %{!?snook_version:%global snook_version 0.1.0}
 Version:        %{snook_version}
-Release:        3%{?dist}
+Release:        5%{?dist}
 Summary:        Local-first task and time system
 License:        Proprietary
 URL:            https://github.com/snook
@@ -13,6 +13,7 @@ Source3:        README.md
 Source4:        operations.md
 Source5:        cli.md
 Source6:        json-export.md
+Source7:        tailscale-threat-model.md
 %global debug_package %{nil}
 # Bundled runtime libraries are private, not providers for other RPMs.
 %global __provides_exclude_from ^%{_libdir}/snook/.*$
@@ -39,6 +40,8 @@ Requires:       libicu%{?_isa}
 Requires:       krb5-libs%{?_isa}
 Requires:       ca-certificates
 Requires:       tzdata
+# The default Linux paired-device credential store invokes this client over stdin.
+Requires:       /usr/bin/secret-tool
 
 %description
 Snook is a local-first, data-private task and time system with an embedded
@@ -75,7 +78,7 @@ install -d %{buildroot}%{_prefix}/lib/systemd/user
 install -m 0644 %{SOURCE2} %{buildroot}%{_prefix}/lib/systemd/user/snookd.service
 install -d %{buildroot}%{_docdir}/snook/docs
 install -m 0644 %{SOURCE3} %{buildroot}%{_docdir}/snook/README.md
-install -m 0644 %{SOURCE4} %{SOURCE5} %{SOURCE6} %{buildroot}%{_docdir}/snook/docs/
+install -m 0644 %{SOURCE4} %{SOURCE5} %{SOURCE6} %{SOURCE7} %{buildroot}%{_docdir}/snook/docs/
 
 %files
 %{_bindir}/snook
@@ -87,6 +90,15 @@ install -m 0644 %{SOURCE4} %{SOURCE5} %{SOURCE6} %{buildroot}%{_docdir}/snook/do
 %doc %{_docdir}/snook/
 
 %changelog
+* Sat Sep 19 2026 Snook contributors - 0.1.0-5
+- Require the Linux Secret Service client used by native paired-device storage
+- Add machine-readable host/client pairing next steps to tailnet setup output
+
+* Sat Sep 19 2026 Snook contributors - 0.1.0-4
+- Add experimental loopback-only Tailscale Serve transport and per-device pairing
+- Add protected credential stores, tailnet diagnostics, threat-model documentation,
+  and conflict-safe Serve administration
+
 * Fri Sep 18 2026 Snook contributors - 0.1.0-3
 - Add contract 1.6 caller-owned create retries and safe maintenance destinations
 - Export schema 5 with settings, task relationships and retained deletion history
