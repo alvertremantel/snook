@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Snook.Contracts;
+using Snook.Application;
 
 namespace Snook.UI;
 
@@ -9,6 +10,9 @@ public partial class App : Avalonia.Application
 {
     public static IBackendClient? ConfiguredBackend { get; set; }
     public static Func<MainWindow, string, Task>? ScreenshotWriter { get; set; }
+    public static Func<ConnectionWindow>? ConnectionStartup { get; set; }
+    public static ClientProfileStore? ClientProfiles { get; set; }
+    public static ClientConnectionProfile? CurrentClientProfile { get; set; }
 
     public override void Initialize()
     {
@@ -19,7 +23,20 @@ public partial class App : Avalonia.Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow(ConfiguredBackend ?? throw new InvalidOperationException("The desktop backend was not configured."));
+            if (ConnectionStartup is { } startup)
+            {
+                var connection = startup();
+                connection.ViewModel.Connected += (_, _) =>
+                {
+                    ConfiguredBackend = connection.ViewModel.Backend!;
+                    CurrentClientProfile = connection.ViewModel.ConnectedProfile;
+                    desktop.MainWindow = new MainWindow(ConfiguredBackend);
+                    desktop.MainWindow.Show();
+                    connection.Close();
+                };
+                desktop.MainWindow = connection;
+            }
+            else desktop.MainWindow = new MainWindow(ConfiguredBackend ?? throw new InvalidOperationException("The desktop backend was not configured."));
         }
 
         base.OnFrameworkInitializationCompleted();

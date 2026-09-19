@@ -1,0 +1,52 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Snook.UI"
+        x:Class="Snook.UI.ConnectionWindow" x:DataType="local:ConnectionViewModel" x:CompileBindings="True"
+        Title="Snook connection" Width="760" Height="680" MinWidth="620" MinHeight="600"
+        WindowStartupLocation="CenterScreen">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="28">
+    <StackPanel Spacing="6" Margin="0,0,0,18">
+      <TextBlock Text="SNOOK · CONNECTION" Classes="eyebrow" />
+      <TextBlock Text="Your workspace, your host." Classes="title" TextWrapping="Wrap" />
+      <TextBlock Text="A local daemon lets the desktop and CLI share one workspace." Classes="muted" TextWrapping="Wrap" />
+    </StackPanel>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="14" IsEnabled="{Binding CanEdit}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="HOST MODE" Classes="eyebrow" />
+          <RadioButton GroupName="HostMode" Content="Local daemon — connect without opening SQLite" IsChecked="{Binding UseDaemon, Mode=TwoWay}" AutomationProperties.Name="Use local daemon" />
+          <RadioButton GroupName="HostMode" Content="Embedded — this app owns the local database" IsChecked="{Binding UseEmbedded, Mode=TwoWay}" AutomationProperties.Name="Use embedded workspace" />
+          <TextBlock Text="Embedded mode requires the daemon and other workspace owners to be stopped. Selecting it is an explicit change, never a fallback." IsVisible="{Binding UseEmbedded}" Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Spacing="5">
+          <TextBlock Text="Data directory" FontWeight="SemiBold" />
+          <TextBox Text="{Binding DataDirectory, Mode=TwoWay}" AutomationProperties.Name="Connection data directory" />
+          <TextBlock Text="Use the daemon's data root, not the workspace.db file." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Spacing="12" IsVisible="{Binding UseDaemon}">
+          <StackPanel Spacing="5">
+            <TextBlock Text="Endpoint · optional" FontWeight="SemiBold" />
+            <TextBox Text="{Binding Endpoint, Mode=TwoWay}" PlaceholderText="Discover from the data directory" AutomationProperties.Name="Daemon endpoint" />
+            <TextBlock Text="HTTP loopback only. Leave blank to discover the current daemon port." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Spacing="5">
+            <TextBlock Text="Token file · optional" FontWeight="SemiBold" />
+            <TextBox Text="{Binding TokenFile, Mode=TwoWay}" PlaceholderText="Use Snook/daemon.token in the data directory" AutomationProperties.Name="Daemon token file" />
+            <TextBlock Text="The profile saves a file path, never the token itself." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+        </StackPanel>
+        <CheckBox Content="Remember these settings for future GUI and CLI launches" IsChecked="{Binding SaveForNextLaunch, Mode=TwoWay}" IsVisible="{Binding IsStartup}" AutomationProperties.Name="Remember connection settings" />
+        <TextBlock Text="{Binding ProfilePath}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+        <TextBlock Text="Command-line flags and SNOOK_* environment settings still override saved values." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+      </StackPanel>
+    </ScrollViewer>
+    <StackPanel Grid.Row="2" Spacing="12" Margin="0,18,0,0">
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.Name="Connection status" />
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button Content="Connect / Retry" Classes="primary" Command="{Binding ConnectCommand}" IsVisible="{Binding IsStartup}" AutomationProperties.Name="Connect to workspace" />
+        <Button Content="Save for next launch" Classes="primary" Command="{Binding SaveCommand}" IsVisible="{Binding SettingsOnly}" AutomationProperties.Name="Save connection settings" />
+        <Button Content="Cancel" Classes="ghost" Click="OnCancel" AutomationProperties.Name="Cancel connection" />
+      </StackPanel>
+    </StackPanel>
+  </Grid>
+</Window>

@@ -148,17 +148,19 @@
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Background="{DynamicResource PausedSurfaceBrush}" CornerRadius="10" Padding="12" Margin="0,2,0,0">
-                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <StackPanel Spacing="10">
                         <StackPanel Spacing="3">
-                          <TextBlock Text="{Binding ReasonLabel}" Foreground="{DynamicResource PausedBrush}" FontWeight="SemiBold" />
-                          <TextBlock Text="Session identity and previous intervals are preserved." Foreground="{DynamicResource PausedBrush}" FontSize="11" />
+                          <TextBlock Text="{Binding IdentityLabel}" Foreground="{DynamicResource InkBrush}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding ReasonLabel}" Foreground="{DynamicResource PausedBrush}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding RecordedTimeLabel}" IsVisible="{Binding IsRestored}" Foreground="{DynamicResource PausedBrush}" FontSize="12" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding DecisionHelp}" Foreground="{DynamicResource PausedBrush}" FontSize="12" TextWrapping="Wrap" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                          <Button Classes="ghost" Content="Last known" Command="{Binding StopAtLastKnownCommand}" />
-                          <Button Classes="ghost" Content="Stop now" Command="{Binding StopNowCommand}" />
-                          <Button Classes="primary" Content="Continue" Command="{Binding ContinueCommand}" />
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                          <Button Classes="ghost" Content="Last known" Command="{Binding StopAtLastKnownCommand}" AutomationProperties.Name="{Binding LastKnownAutomationName}" />
+                          <Button Classes="ghost" Content="Stop now" Command="{Binding StopNowCommand}" AutomationProperties.Name="{Binding StopNowAutomationName}" />
+                          <Button Classes="primary" Content="Continue" Command="{Binding ContinueCommand}" AutomationProperties.Name="{Binding ContinueAutomationName}" />
                         </StackPanel>
-                      </Grid>
+                      </StackPanel>
                     </Border>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -830,7 +832,21 @@
         <local:SettingsView IsVisible="{Binding IsSettingsVisible}" />
         </StackPanel>
       </ScrollViewer>
-      <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Classes="muted" FontSize="11" Margin="0,12,0,0" TextWrapping="Wrap" />
+      <StackPanel Grid.Row="2" Spacing="6" Margin="0,12,0,0">
+        <Border Background="{DynamicResource PausedSurfaceBrush}" Padding="10" CornerRadius="8" IsVisible="{Binding ConnectionProblem}">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <TextBlock Text="Daemon connection interrupted. This view may be out of date. Your draft is kept; writes are not queued offline." TextWrapping="Wrap" Foreground="{DynamicResource PausedBrush}" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Content="Retry refresh" Classes="secondary" Command="{Binding RefreshCommand}" AutomationProperties.Name="Retry daemon refresh" />
+          </Grid>
+        </Border>
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <StackPanel Spacing="3" VerticalAlignment="Center">
+            <TextBlock Text="{Binding ConnectionLabel}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding StatusMessage}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+          </StackPanel>
+          <Button x:Name="ConnectionSettingsButton" Grid.Column="1" Content="Connection…" Classes="ghost" Click="OnConnectionSettings" AutomationProperties.Name="Connection settings" />
+        </Grid>
+      </StackPanel>
     </Grid>
     <Grid Grid.ColumnSpan="2" Background="#4020263D" IsVisible="{Binding IsTaskEditorOpen}">
       <Border x:Name="TaskDrawer" Width="450" HorizontalAlignment="Right" Background="{DynamicResource SurfaceBrush}" Padding="24" BoxShadow="-8 0 32 0 #2020263D" KeyboardNavigation.TabNavigation="Cycle">

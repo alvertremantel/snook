@@ -1,7 +1,5 @@
 using Avalonia;
 using Snook.Application;
-using Snook.Contracts;
-using Snook.Persistence.Sqlite;
 using Snook.UI;
 
 namespace Snook.Desktop;
@@ -11,53 +9,73 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        var dataRoot = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var daemonMode = string.Equals(Environment.GetEnvironmentVariable("SNOOK_HOST_MODE"), "daemon", StringComparison.OrdinalIgnoreCase);
-        IBackendClient backend;
-        if (daemonMode)
+        if (args.Any(argument => argument is "--help" or "-h"))
         {
-            var endpoint = Environment.GetEnvironmentVariable("SNOOK_DAEMON_ENDPOINT")
-                ?? $"http://127.0.0.1:{ReadDaemonPort()}/";
-            var token = Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN");
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                var tokenPath = Path.Combine(dataRoot, "Snook", "daemon.token");
-                if (!File.Exists(tokenPath))
-                {
-                    throw new InvalidOperationException("Daemon mode is enabled, but no daemon token was found. Start snookd or set SNOOK_DAEMON_TOKEN; the desktop client will not open SQLite directly in daemon mode.");
-                }
-
-                token = File.ReadAllText(tokenPath).Trim('\uFEFF');
-            }
-
-            backend = new DaemonBackendClient(new Uri(endpoint), token);
+            Console.WriteLine("Snook desktop: --host embedded|daemon --data-dir PATH --endpoint URL --token-file PATH --configure --no-profile");
+            Console.WriteLine("--configure opens connection settings without opening a workspace. --no-profile explicitly ignores saved settings.");
+            Console.WriteLine("Clients read <launch-data-dir>/Snook/client-profile.json. Flags override SNOOK_* environment settings, then saved settings.");
+            Console.WriteLine("Daemon mode connects to snookd and never opens SQLite. Environment: SNOOK_HOST_MODE, SNOOK_DATA_DIR, SNOOK_DAEMON_ENDPOINT, SNOOK_DAEMON_TOKEN_FILE.");
+            return;
         }
-        else
-        {
-            var databasePath = Path.Combine(dataRoot, "Snook", "workspace.db");
-            var store = new SqliteStore(databasePath);
-            var embeddedBackend = new SnookBackend(store, allowConcurrentForeground: ReadAllowConcurrentForeground());
-            embeddedBackend.InitializeAsync().GetAwaiter().GetResult();
-            backend = embeddedBackend;
-        }
-
-        App.ConfiguredBackend = backend;
-
+        string? dataRoot = null, host = null, endpoint = null, tokenFile = null, error = null;
+        var configure = false;
+        var ignoreProfile = false;
+        var avaloniaArguments = new List<string>();
         try
         {
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            for (var index = 0; index < args.Length; index++)
+            {
+                if (args[index] == "--configure") { configure = true; continue; }
+                if (args[index] == "--no-profile") { ignoreProfile = true; continue; }
+                if (args[index] is not ("--host" or "--data-dir" or "--endpoint" or "--token-file"))
+                {
+                    avaloniaArguments.Add(args[index]);
+                    continue;
+                }
+                var option = args[index];
+                if (++index >= args.Length) throw new ArgumentException($"{option} requires a value.");
+                switch (option)
+                {
+                    case "--host": host = args[index]; break;
+                    case "--data-dir": dataRoot = args[index]; break;
+                    case "--endpoint": endpoint = args[index]; break;
+                    case "--token-file": tokenFile = args[index]; break;
+                }
+            }
         }
-        finally
-        {
-            backend.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
-    }
+        catch (ArgumentException exception) { error = exception.Message; }
 
-    private static int ReadDaemonPort()
-    {
-        var value = Environment.GetEnvironmentVariable("SNOOK_DAEMON_PORT");
-        return int.TryParse(value, out var port) && port is >= 1024 and <= 65535 ? port : 43871;
+        // Invalid configuration gets a visible daemon-only draft, never an
+        // implicit embedded fallback or an exception before Avalonia can start.
+        var launchRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        ClientProfileSnapshot saved = new(null, null);
+        ClientConnectionProfile initial = new(1, "daemon", launchRoot);
+        try
+        {
+            launchRoot = ClientProfileStore.LaunchDataDirectory(dataRoot);
+            App.ClientProfiles = new ClientProfileStore(launchRoot);
+            if (!ignoreProfile) saved = App.ClientProfiles.ReadAsync().GetAwaiter().GetResult();
+            initial = ClientProfileStore.Resolve(saved.Profile, launchRoot, host, dataRoot, endpoint, tokenFile);
+            if (ignoreProfile && host is null && Environment.GetEnvironmentVariable("SNOOK_HOST_MODE") is null)
+            {
+                initial = initial with { Host = "daemon" };
+                configure = true;
+            }
+        }
+        catch (Exception exception)
+        {
+            error = exception is Snook.Domain.SnookException snook ? snook.Message : "Connection settings could not be loaded. Check the selected data directory and saved profile.";
+            initial = new(1, "daemon", launchRoot);
+        }
+        App.ClientProfiles ??= new ClientProfileStore(launchRoot);
+        var profiles = App.ClientProfiles;
+        var legacyToken = initial.TokenFile is null ? Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN") : null;
+        App.ConnectionStartup = () => new ConnectionWindow(new ConnectionViewModel(profiles, saved, initial, error: error,
+            open: (profile, cancellationToken) => ClientProfileStore.OpenAsync(profile,
+                profile.TokenFile is null ? legacyToken : null, ReadAllowConcurrentForeground(), cancellationToken)),
+            autoConnect: !configure && error is null);
+        try { BuildAvaloniaApp().StartWithClassicDesktopLifetime(avaloniaArguments.ToArray()); }
+        finally { App.ConfiguredBackend?.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 
     private static bool? ReadAllowConcurrentForeground()

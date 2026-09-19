@@ -153,6 +153,10 @@ public sealed partial class MainWindowViewModel
 
     private void ResetUtilityCreationDraft()
     {
+        _createActivityOperation.Reset();
+        _createEventOperation.Reset();
+        _planOperation.Reset();
+        _manualOperation.Reset();
         ManualTaskId = null;
         ManualActivityId = null;
         ManualStartText = FormatLocalDateTime(DateTimeOffset.Now.AddMinutes(-30));

@@ -5,7 +5,6 @@ using System.Text.Json.Serialization;
 using Snook.Application;
 using Snook.Contracts;
 using Snook.Domain;
-using Snook.Persistence.Sqlite;
 
 namespace Snook.Cli;
 
@@ -21,6 +20,7 @@ public static class Program
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter() }
     };
+    private static readonly JsonSerializerOptions StreamJsonOptions = new(JsonOptions) { WriteIndented = false };
 
     public static async Task<int> Main(string[] args)
     {
@@ -86,12 +86,12 @@ public static class Program
         }
         catch (CliUsageException exception)
         {
-            WriteJson(new { error = new { code = "Usage", message = exception.Message }, hint = "Run 'snook help' for command syntax or 'snook api' for backend methods." }, stderr);
+            WriteJson(new { error = new { code = "Usage", message = exception.Message }, hint = "Run 'snook-cli help' for command syntax or 'snook-cli api' for backend methods." }, stderr);
             return 64;
         }
         catch (JsonException exception)
         {
-            WriteJson(new { error = new { code = "InvalidJson", message = exception.Message }, hint = "Pass a JSON object with the named arguments shown by 'snook api'." }, stderr);
+            WriteJson(new { error = new { code = "InvalidJson", message = exception.Message }, hint = "Pass a JSON object with the named arguments shown by 'snook-cli api'." }, stderr);
             return 64;
         }
         catch (SnookException exception)
@@ -113,45 +113,13 @@ public static class Program
 
     private static async Task<IBackendClient> CreateBackendAsync(CliOptions options, CancellationToken cancellationToken)
     {
-        var dataRoot = options.DataDirectory
-            ?? Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var host = options.Host ?? Environment.GetEnvironmentVariable("SNOOK_HOST_MODE") ?? "embedded";
-        if (host.Equals("daemon", StringComparison.OrdinalIgnoreCase))
-        {
-            var endpoint = options.Endpoint
-                ?? Environment.GetEnvironmentVariable("SNOOK_DAEMON_ENDPOINT")
-                ?? $"http://127.0.0.1:{ReadDaemonPort()}/";
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri)
-                || endpointUri.Scheme is not ("http" or "https"))
-            {
-                throw new CliUsageException("--endpoint must be an absolute HTTP(S) URL.");
-            }
-
-            var token = options.Token ?? Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN");
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                var tokenPath = options.TokenFile ?? Path.Combine(dataRoot, "Snook", "daemon.token");
-                if (!File.Exists(tokenPath))
-                {
-                    throw new InvalidOperationException("Daemon mode is enabled, but no daemon token was found. Start snookd, use --token/--token-file, or set SNOOK_DAEMON_TOKEN. The CLI will not open SQLite in daemon mode.");
-                }
-
-                token = (await File.ReadAllTextAsync(tokenPath, cancellationToken)).Trim('\uFEFF', '\r', '\n', ' ');
-            }
-
-            return new DaemonBackendClient(endpointUri, Guard.Required(token, "daemon token", 512));
-        }
-
-        if (!host.Equals("embedded", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new CliUsageException("--host must be 'embedded' or 'daemon'.");
-        }
-
-        var store = new SqliteStore(Path.Combine(dataRoot, "Snook", "workspace.db"));
-        var backend = new SnookBackend(store);
-        await backend.InitializeAsync(cancellationToken);
-        return backend;
+        if (options.IgnoreProfile && options.Host is null && Environment.GetEnvironmentVariable("SNOOK_HOST_MODE") is null)
+            throw new CliUsageException("--no-profile requires an explicit --host embedded|daemon (or SNOOK_HOST_MODE).");
+        var launchRoot = ClientProfileStore.LaunchDataDirectory(options.DataDirectory);
+        var saved = options.IgnoreProfile ? null : (await new ClientProfileStore(launchRoot).ReadAsync(cancellationToken)).Profile;
+        var profile = ClientProfileStore.Resolve(saved, launchRoot, options.Host, options.DataDirectory, options.Endpoint, options.TokenFile);
+        var token = options.Token ?? (profile.TokenFile is null ? Environment.GetEnvironmentVariable("SNOOK_DAEMON_TOKEN") : null);
+        return await ClientProfileStore.OpenAsync(profile, token, cancellationToken: cancellationToken);
     }
 
     private static async Task<object> RunTasksAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -462,7 +430,7 @@ public static class Program
             workspaceId = bootstrap.Workspace.Id,
             workspaceName = bootstrap.Workspace.Name,
             host = bootstrap.Capabilities.HostMode,
-            endpoint = options.Endpoint ?? Environment.GetEnvironmentVariable("SNOOK_DAEMON_ENDPOINT"),
+            endpoint = (backend as DaemonBackendClient)?.Endpoint.AbsoluteUri,
             contract = $"{ContractInfo.Major}.{ContractInfo.Minor}",
             capabilities = bootstrap.Capabilities
         };
@@ -480,7 +448,7 @@ public static class Program
         {
             lock (outputGate)
             {
-                WriteJson(new { type = "change", change = notification }, stdout);
+                stdout.WriteLine(JsonSerializer.Serialize(new { type = "change", change = notification }, StreamJsonOptions));
                 stdout.Flush();
             }
         };
@@ -490,7 +458,7 @@ public static class Program
             var bootstrap = await backend.GetBootstrapAsync(cancellationToken);
             lock (outputGate)
             {
-                WriteJson(new { type = "ready", cursor = bootstrap.CommittedCursor, capabilities = bootstrap.Capabilities }, stdout);
+                stdout.WriteLine(JsonSerializer.Serialize(new { type = "ready", cursor = bootstrap.CommittedCursor, capabilities = bootstrap.Capabilities }, StreamJsonOptions));
                 stdout.Flush();
             }
 
@@ -506,7 +474,7 @@ public static class Program
     {
         if (args.Count is < 1 or > 2)
         {
-            throw new CliUsageException("call requires a method name and optionally a JSON object of named arguments. Run 'snook api' for methods and shapes.");
+            throw new CliUsageException("call requires a method name and optionally a JSON object of named arguments. Run 'snook-cli api' for methods and shapes.");
         }
 
         var method = ResolveContractMethod(args[0]);
@@ -569,13 +537,13 @@ public static class Program
             .Where(method => method.ReturnType != typeof(ValueTask) && NormalizeMethodName(method.Name) == normalized).ToArray();
         return methods.Length == 1
             ? methods[0]
-            : throw new CliUsageException($"Unknown backend method '{name}'. Run 'snook api' to list the public contract.");
+            : throw new CliUsageException($"Unknown backend method '{name}'. Run 'snook-cli api' to list the public contract.");
     }
 
     private static object GetApiSchema() => new
     {
         contract = new { major = ContractInfo.Major, minor = ContractInfo.Minor },
-        invocation = "snook call <method-name> '<json object with named arguments>'",
+        invocation = "snook-cli call <method-name> '<json object with named arguments>'",
         conventions = new
         {
             methodNames = "case-insensitive; hyphens and the Async suffix are optional",
@@ -589,8 +557,8 @@ public static class Program
         {
             journals = new
             {
-                read = "snook journals [--include-deleted] | snook journal-entries [JournalEntryQuery JSON]",
-                write = "snook call create-journal|update-journal|set-journal-deleted|create-journal-entry|update-journal-entry|set-journal-entry-deleted JSON",
+                read = "snook-cli journals [--include-deleted] | snook-cli journal-entries [JournalEntryQuery JSON]",
+                write = "snook-cli call create-journal|update-journal|set-journal-deleted|create-journal-entry|update-journal-entry|set-journal-entry-deleted JSON",
                 queryFields = new[] { "journalId", "search", "tag", "includeDeleted", "pageSize", "continuationToken" },
                 journalDefinition = new[] { "name", "description" },
                 entryDefinition = new[] { "journalId", "title", "content", "occurredAtUtc", "mood", "tags" },
@@ -600,7 +568,7 @@ public static class Program
             },
             habits = new
             {
-                read = "snook habits [HabitQuery JSON]",
+                read = "snook-cli habits [HabitQuery JSON]",
                 query = TypeName(typeof(HabitQuery)),
                 maximumDays = HabitRules.MaximumDays,
                 defaultDays = 30,
@@ -608,8 +576,8 @@ public static class Program
             },
             taskBatch = new
             {
-                plan = "snook task-batch plan '<selection/update JSON object>'",
-                apply = "snook task-batch apply '<task-batch-plan JSON>'",
+                plan = "snook-cli task-batch plan '<selection/update JSON object>'",
+                apply = "snook-cli task-batch apply '<task-batch-plan JSON>'",
                 selection = TypeName(typeof(TaskBatchSelection)),
                 selectionFields = new[]
                 {
@@ -647,6 +615,11 @@ public static class Program
             if (option == "--help")
             {
                 return new Invocation("help", [], options);
+            }
+            if (option == "--no-profile")
+            {
+                options = options with { IgnoreProfile = true };
+                continue;
             }
 
             if (position == args.Length)
@@ -701,8 +674,9 @@ public static class Program
     {
         writer.WriteLine("Snook — structured JSON workspace client");
         writer.WriteLine();
-        writer.WriteLine("Usage: snook [global options] <command> [arguments]");
-        writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH");
+        writer.WriteLine("Usage: snook-cli [global options] <command> [arguments]");
+        writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH --no-profile");
+        writer.WriteLine("Clients read <launch-data-dir>/Snook/client-profile.json. Flags override environment, then saved settings. --no-profile ignores that file explicitly.");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
         writer.WriteLine("          habits [HabitQuery JSON] (read-only daily progress and check-ins)");
         writer.WriteLine("          journals [--include-deleted] | journal-entries [JournalEntryQuery JSON]");
@@ -712,18 +686,12 @@ public static class Program
         writer.WriteLine("          calendar blocks|events [Range JSON] | task-batch plan|apply JSON | doctor | watch | api");
         writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();
-        writer.WriteLine("Example: snook call create-task '{\"projectId\":\"...\",\"title\":\"Write brief\",\"priority\":\"High\"}'");
-        writer.WriteLine("Mutation: snook call complete-task '{\"taskId\":\"...\",\"request\":{\"operationId\":\"...\",\"clientDeviceId\":\"...\",\"expectedRevision\":4}}'");
-        writer.WriteLine("Run 'snook api' for every method and its exact named arguments.");
+        writer.WriteLine("Example: snook-cli call create-task '{\"projectId\":\"...\",\"title\":\"Write brief\",\"priority\":\"High\"}'");
+        writer.WriteLine("Mutation: snook-cli call complete-task '{\"taskId\":\"...\",\"request\":{\"operationId\":\"...\",\"clientDeviceId\":\"...\",\"expectedRevision\":4}}'");
+        writer.WriteLine("Run 'snook-cli api' for every method and its exact named arguments.");
     }
 
-    private static int ReadDaemonPort()
-    {
-        var value = Environment.GetEnvironmentVariable("SNOOK_DAEMON_PORT");
-        return int.TryParse(value, out var port) && port is >= 1024 and <= 65535 ? port : 43871;
-    }
-
-    private sealed record CliOptions(string? DataDirectory = null, string? Host = null, string? Endpoint = null, string? Token = null, string? TokenFile = null);
+    private sealed record CliOptions(string? DataDirectory = null, string? Host = null, string? Endpoint = null, string? Token = null, string? TokenFile = null, bool IgnoreProfile = false);
     private sealed record Invocation(string Command, IReadOnlyList<string> Arguments, CliOptions Options);
     private sealed record TaskBatchSelection(
         bool All = false,

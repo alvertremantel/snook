@@ -22,7 +22,9 @@ public sealed class AsyncCommand : ICommand
 
     public bool CanExecute(object? parameter) => (!_isRunning || !_disableWhileRunning) && (_canExecute?.Invoke(parameter) ?? true);
 
-    public async void Execute(object? parameter)
+    public async void Execute(object? parameter) => await ExecuteAsync(parameter);
+
+    public async Task ExecuteAsync(object? parameter)
     {
         if (_isRunning || !CanExecute(parameter))
         {

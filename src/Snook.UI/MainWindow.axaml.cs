@@ -5,6 +5,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Snook.Contracts;
+using Snook.Application;
 
 namespace Snook.UI;
 
@@ -22,6 +23,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     public MainWindow(IBackendClient backend)
     {
         InitializeComponent();
+        ConnectionSettingsButton.IsVisible = App.ClientProfiles is not null && App.CurrentClientProfile is not null;
         _viewModel = new MainWindowViewModel(backend);
         DataContext = _viewModel;
         var calendarResize = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
@@ -99,6 +101,18 @@ public partial class MainWindow : Window, IAsyncDisposable
             await CaptureScreenshotsAsync(outputDirectory);
             Close();
         }
+    }
+
+    private async void OnConnectionSettings(object? sender, RoutedEventArgs e)
+    {
+        if (App.ClientProfiles is not { } profiles || App.CurrentClientProfile is not { } current) return;
+        ClientProfileSnapshot saved = new(null, null);
+        string? error = null;
+        try { saved = await profiles.ReadAsync(); }
+        catch (Exception exception) { error = exception is Snook.Domain.SnookException snook ? snook.Message : "Saved connection settings could not be read."; }
+        var dialog = new ConnectionWindow(new ConnectionViewModel(profiles, saved, saved.Profile ?? current, settingsOnly: true, error: error));
+        await dialog.ShowDialog(this);
+        (sender as Control)?.Focus();
     }
 
     private async Task CaptureScreenshotsAsync(string outputDirectory)

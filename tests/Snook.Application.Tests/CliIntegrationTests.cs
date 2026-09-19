@@ -34,6 +34,15 @@ public sealed class CliIntegrationTests
         Assert.Contains("CorrectSessionAsync", methodNames);
         Assert.Contains("BulkUpdateTasksAsync", methodNames);
         Assert.Equal(500, document.RootElement.GetProperty("cliCommands").GetProperty("taskBatch").GetProperty("limit").GetInt32());
+        foreach (var name in new[] { "CreateBoardAsync", "CreateProjectAsync", "CreateActivityAsync", "CreateActivityGroupAsync",
+            "CreateCalendarAsync", "CreateCalendarEventAsync", "CreateScheduleBlockAsync", "CreateTaskAsync", "AddTaskLinkAsync",
+            "AddTaskTagAsync", "AddProjectTagAsync", "AddActivityTagAsync", "AddTaskDependencyAsync" })
+        {
+            var method = document.RootElement.GetProperty("methods").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name);
+            var request = method.GetProperty("arguments").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "request");
+            Assert.Equal("OperationRequest", request.GetProperty("type").GetString());
+            Assert.False(request.GetProperty("required").GetBoolean());
+        }
     }
 
     [Fact]
@@ -82,6 +91,8 @@ public sealed class CliIntegrationTests
             var taskDetails = await RunCliAsync("--data-dir", dataDirectory, "call", "get-task-details", JsonSerializer.Serialize(new { taskId }));
             Assert.Equal(0, taskDetails.ExitCode);
             Assert.Contains("Document the CLI", taskDetails.StandardOutput, StringComparison.Ordinal);
+            await AssertCallerCreateRetryAsync(["--data-dir", dataDirectory]);
+            await AssertMaintenanceOutputsAsync(["--data-dir", dataDirectory], dataDirectory);
         }
         finally
         {
@@ -322,6 +333,11 @@ public sealed class CliIntegrationTests
             Assert.Equal("[]", habits.StandardOutput.Trim());
             await JournalCliTests.AssertJournalCliAsync(["--data-dir", directory.FullName, "--host", "daemon",
                 "--endpoint", $"http://127.0.0.1:{port}/", "--token", token]);
+            await AssertDaemonWatchAsync(directory.FullName, port, token);
+            await AssertCallerCreateRetryAsync(["--data-dir", directory.FullName, "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/", "--token", token]);
+            await AssertMaintenanceOutputsAsync(["--data-dir", directory.FullName, "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/", "--token", token], directory.FullName);
         }
         finally
         {
@@ -333,6 +349,121 @@ public sealed class CliIntegrationTests
 
             directory.Delete(recursive: true);
         }
+    }
+
+    private static async Task AssertMaintenanceOutputsAsync(string[] options, string directory)
+    {
+        foreach (var method in new[] { "create-backup", "export-json", "export-csv" })
+        {
+            var destinationPath = Path.Combine(directory, "cli-" + method);
+            var arguments = method == "export-csv"
+                ? JsonSerializer.Serialize(new { destinationPath, rangeStartUtc = "2026-09-01T00:00:00Z", rangeEndUtc = "2026-10-01T00:00:00Z" })
+                : JsonSerializer.Serialize(new { destinationPath });
+            var first = await RunCliAsync([.. options, "call", method, arguments]);
+            Assert.True(first.ExitCode == 0, first.StandardError);
+            var bytes = await File.ReadAllBytesAsync(destinationPath);
+            if (method == "export-json")
+            {
+                using var result = JsonDocument.Parse(first.StandardOutput);
+                Assert.Equal(5, result.RootElement.GetProperty("schemaVersion").GetInt32());
+                using var export = JsonDocument.Parse(bytes);
+                Assert.Equal(5, export.RootElement.GetProperty("schemaVersion").GetInt32());
+                Assert.True(export.RootElement.TryGetProperty("settings", out _));
+                Assert.True(export.RootElement.TryGetProperty("committedCursor", out _));
+                Assert.True(export.RootElement.TryGetProperty("taskLinks", out _));
+                Assert.True(export.RootElement.TryGetProperty("taskDependencies", out _));
+            }
+            var repeat = await RunCliAsync([.. options, "call", method, arguments]);
+            Assert.Equal(2, repeat.ExitCode);
+            Assert.Contains("ValidationFailed", repeat.StandardError, StringComparison.Ordinal);
+            Assert.DoesNotContain(directory, repeat.StandardError, StringComparison.Ordinal);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(destinationPath));
+        }
+        var sourcePath = Path.Combine(directory, "cli-create-backup");
+        var manifestPath = sourcePath + ".manifest.json";
+        var manifest = await File.ReadAllTextAsync(manifestPath);
+        await File.WriteAllTextAsync(manifestPath, "{}");
+        var invalidRestore = await RunCliAsync([.. options, "call", "restore-backup", JsonSerializer.Serialize(new { sourcePath })]);
+        Assert.Equal(2, invalidRestore.ExitCode);
+        Assert.Contains("SchemaIncompatible", invalidRestore.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain(directory, invalidRestore.StandardError, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(manifestPath, manifest);
+        var restored = await RunCliAsync([.. options, "call", "restore-backup", JsonSerializer.Serialize(new { sourcePath })]);
+        Assert.True(restored.ExitCode == 0, restored.StandardError);
+    }
+
+    private static async Task AssertCallerCreateRetryAsync(string[] options)
+    {
+        var request = new OperationRequest(Guid.NewGuid(), Guid.NewGuid());
+        var arguments = JsonSerializer.Serialize(new { name = "CLI create receipt", request }, CliJsonOptions);
+        var created = await RunCliAsync([.. options, "call", "create-board", arguments]);
+        Assert.Equal(0, created.ExitCode);
+        using var document = JsonDocument.Parse(created.StandardOutput);
+        var id = document.RootElement.GetProperty("id").GetGuid();
+        var updated = await RunCliAsync([.. options, "call", "update-board", JsonSerializer.Serialize(new
+        {
+            boardId = id, update = new BoardUpdate("CLI later board name"),
+            request = new OperationRequest(Guid.NewGuid(), request.ClientDeviceId, 1)
+        }, CliJsonOptions)]);
+        Assert.Equal(0, updated.ExitCode);
+        var replay = await RunCliAsync([.. options, "call", "create-board", arguments]);
+        Assert.Equal(0, replay.ExitCode);
+        Assert.Equal(created.StandardOutput, replay.StandardOutput);
+        var changed = await RunCliAsync([.. options, "call", "create-board",
+            JsonSerializer.Serialize(new { name = "Changed create payload", request }, CliJsonOptions)]);
+        Assert.Equal(2, changed.ExitCode);
+        Assert.Contains("ValidationFailed", changed.StandardError, StringComparison.Ordinal);
+    }
+
+    private static async Task AssertDaemonWatchAsync(string directory, int port, string token)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        using var output = new LineWriter();
+        using var error = new StringWriter(CultureInfo.InvariantCulture);
+        string[] options = ["--data-dir", directory, "--host", "daemon", "--endpoint",
+            $"http://127.0.0.1:{port}/", "--token", token];
+        var watch = Program.RunAsync([.. options, "watch"], output, error, cancellation.Token);
+        try
+        {
+            var ready = false;
+            var connected = false;
+            while (!ready || !connected)
+            {
+                using var record = await ReadRecordAsync();
+                var kind = record.RootElement.GetProperty("type").GetString();
+                ready |= kind == "ready";
+                connected |= kind == "change" && record.RootElement.GetProperty("change")
+                    .GetProperty("changeKind").GetString() == "reconnected";
+            }
+            var result = await RunCliAsync([.. options, "call", "create-board", "{\"name\":\"Watch newline\\nboard\"}"]);
+            Assert.Equal(0, result.ExitCode);
+            using var created = JsonDocument.Parse(result.StandardOutput);
+            var id = created.RootElement.GetProperty("id").GetGuid();
+            using var change = await ReadRecordAsync();
+            Assert.Equal("change", change.RootElement.GetProperty("type").GetString());
+            Assert.Equal(id, change.RootElement.GetProperty("change").GetProperty("aggregateId").GetGuid());
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            Assert.Equal(130, await watch.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+
+        async Task<JsonDocument> ReadRecordAsync()
+        {
+            var line = await output.Lines.Reader.ReadAsync(timeout.Token);
+            Assert.DoesNotContain('\n', line);
+            Assert.DoesNotContain('\r', line);
+            return JsonDocument.Parse(line);
+        }
+    }
+
+    private sealed class LineWriter : TextWriter
+    {
+        public System.Threading.Channels.Channel<string> Lines { get; } = System.Threading.Channels.Channel.CreateUnbounded<string>();
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+        public override void WriteLine(string? value) => Lines.Writer.TryWrite(value ?? string.Empty);
     }
 
     private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunCliAsync(params string[] args)

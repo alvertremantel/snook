@@ -147,7 +147,10 @@ internal static partial class InteractionChecks
             await UntilAsync(() => Task.FromResult(Visible<Button>(window).Any(b => b.DataContext is ActiveSessionRowViewModel s && s.Session.Id == session.Session.Id && Equals(b.Content, "Pause"))));
             Click(window, SessionButton("Stop"));
             await UntilAsync(async () => (await backend.GetBootstrapAsync()).Today.ActiveSessions.All(s => s.Session.Id != session.Session.Id));
+            await UntilAsync(() => Task.FromResult(Visible<Button>(window).Any(b => b.Classes.Contains("activity") && b.DataContext is TrackerActivity { ActionLabel: "Start" })));
             var activity = Visible<Button>(window).First(b => b.Classes.Contains("activity") && b.DataContext is TrackerActivity a && a.ActionLabel == "Start");
+            activity.BringIntoView();
+            await Task.Delay(60);
             var name = ((TrackerActivity)activity.DataContext!).Name;
             Click(window, activity);
             await UntilAsync(async () => (await backend.GetBootstrapAsync()).Today.ActiveSessions.Any(s => s.ActivityName == name && s.Session.State == SessionState.Running));

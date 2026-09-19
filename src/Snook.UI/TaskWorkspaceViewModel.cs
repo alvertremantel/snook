@@ -55,8 +55,16 @@ public sealed partial class MainWindowViewModel
 
     private async Task RefreshTaskEditorDetailsAsync(TaskRowViewModel row)
     {
-        if (ReferenceEquals(TaskEditor, row))
-            SelectedTaskDetails = new TaskDetailsPanelViewModel(await _backend.GetTaskDetailsAsync(row.Task.Id));
+        try
+        {
+            if (!ReferenceEquals(TaskEditor, row)) return;
+            var details = await _backend.GetTaskDetailsAsync(row.Task.Id);
+            if (ReferenceEquals(TaskEditor, row)) SelectedTaskDetails = new TaskDetailsPanelViewModel(details);
+        }
+        catch (Exception)
+        {
+            StatusMessage = "The change was saved, but task details could not refresh. Refresh to load the saved details; do not repeat the saved action.";
+        }
     }
 }
 

@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using Avalonia.Threading;
 using Snook.Contracts;
+using Snook.Application;
 using Snook.Domain;
 using DomainCalendar = Snook.Domain.Calendar;
 
@@ -14,6 +15,17 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 {
     private const string LocalDateTimeFormat = "yyyy-MM-dd HH:mm";
     private readonly IBackendClient _backend;
+    private readonly TimeProvider _clock;
+    private readonly PendingCreateOperation _createTaskOperation = new();
+    private readonly PendingCreateOperation _createProjectOperation = new();
+    private readonly PendingCreateOperation _createBoardOperation = new();
+    private readonly PendingCreateOperation _createActivityOperation = new();
+    private readonly PendingCreateOperation _createActivityGroupOperation = new();
+    private readonly PendingCreateOperation _createCalendarOperation = new();
+    private readonly PendingCreateOperation _createEventOperation = new();
+    private readonly PendingCreateOperation _planOperation = new();
+    private readonly PendingCreateOperation _manualOperation = new();
+    private readonly PendingCreateOperation _quickManualOperation = new();
     private readonly Timer _displayTimer;
     private bool _initialized;
     private string _taskTitle = string.Empty;
@@ -79,15 +91,17 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private DateTimeOffset _nextDayRefresh;
     private TaskDetailsPanelViewModel? _selectedTaskDetails;
 
-    public MainWindowViewModel(IBackendClient backend)
+    public MainWindowViewModel(IBackendClient backend, TimeProvider? clock = null)
     {
         _backend = backend;
+        _clock = clock ?? TimeProvider.System;
         InitializeCalendarCommands();
         InitializeTaskWorkspaceCommands();
         InitializeWorkspaceEditors();
         InitializeHabitCommands();
         InitializeJournalCommands();
         _backend.Changed += OnBackendChanged;
+        if (_backend is DaemonBackendClient daemon) daemon.ConnectionStateChanged += OnConnectionStateChanged;
         RefreshCommand = new AsyncCommand(_ => RefreshAsync());
         CreateTaskCommand = new AsyncCommand(_ => CreateTaskAsync(), _ => !string.IsNullOrWhiteSpace(TaskTitle) && SelectedProjectId != Guid.Empty);
         StartFocusCommand = new AsyncCommand(_ => StartFocusAsync());
@@ -278,6 +292,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string TaskTitle { get => _taskTitle; set { if (SetField(ref _taskTitle, value)) ((AsyncCommand)CreateTaskCommand).RaiseCanExecuteChanged(); } }
     public string SearchText { get => _searchText; set { if (SetField(ref _searchText, value)) _ = RefreshAsync(); } }
     public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
+    private bool _connectionProblem;
+    public bool ConnectionProblem { get => _connectionProblem; private set => SetField(ref _connectionProblem, value); }
+    public string ConnectionLabel => _backend is DaemonBackendClient daemon ? $"Daemon · {daemon.Endpoint}" : "Embedded workspace";
     public string TrackedToday { get => _trackedToday; private set => SetField(ref _trackedToday, value); }
     public int OpenTaskCount { get => _openTaskCount; private set => SetField(ref _openTaskCount, value); }
     public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
@@ -362,6 +379,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             var bootstrap = await _backend.GetBootstrapAsync();
+            ConnectionProblem = false;
             WorkspaceName = bootstrap.Workspace.Name;
             if (bootstrap.Settings is not null && !_timerPreferenceDirty)
             {
@@ -489,11 +507,16 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             HasNoActiveSessions = ActiveSessions.Count == 0;
             RefreshTracker(bootstrap);
 
-            RecoverySessions.Clear();
+            var recoveryRows = new List<RecoverySessionRowViewModel>();
             foreach (var session in bootstrap.Today.RecoverySessions ?? [])
             {
-                RecoverySessions.Add(new RecoverySessionRowViewModel(session, ResolveRecoveryAsync));
+                var label = ManualTaskOptions.FirstOrDefault(task => task.Id == session.TaskId)?.Name
+                    ?? bootstrap.Activities.FirstOrDefault(activity => activity.Id == session.ActivityId)?.Name ?? "General focus";
+                var existing = RecoverySessions.FirstOrDefault(row => row.Label == label
+                    && (row.Session with { Intervals = session.Intervals }) == session && row.Session.Intervals.SequenceEqual(session.Intervals));
+                recoveryRows.Add(existing ?? new RecoverySessionRowViewModel(session, ResolveRecoveryAsync, label));
             }
+            ReconcileOptions(RecoverySessions, recoveryRows, row => row.Session.Id);
             RaisePropertyChanged(nameof(HasRecoverySessions));
 
             await LoadTasksAsync();
@@ -520,6 +543,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
+            ConnectionProblem = _backend is DaemonBackendClient;
             StatusMessage = exception is SnookException snook ? snook.Message : "Snook could not refresh the workspace.";
         }
     }
@@ -528,13 +552,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.CreateTaskAsync(SelectedProjectId, TaskTitle.Trim());
+            await _createTaskOperation.RunAsync(() => new { ProjectId = SelectedProjectId, Title = TaskTitle.Trim() },
+                (draft, request) => _backend.CreateTaskAsync(draft.ProjectId, draft.Title, request: request));
             TaskTitle = string.Empty;
             await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The task could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The task could not be created.");
         }
     }
 
@@ -542,14 +567,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            var project = await _backend.CreateProjectAsync(SelectedBoardId, NewProjectName.Trim());
+            var project = await _createProjectOperation.RunAsync(() => new { BoardId = SelectedBoardId, Name = NewProjectName.Trim() },
+                (draft, request) => _backend.CreateProjectAsync(draft.BoardId, draft.Name, request: request));
             NewProjectName = string.Empty;
             await RefreshAsync();
             SelectedProjectId = project.Id;
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The project could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The project could not be created.");
         }
     }
 
@@ -557,7 +583,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            var board = await _backend.CreateBoardAsync(NewBoardName.Trim());
+            var board = await _createBoardOperation.RunAsync(() => NewBoardName.Trim(),
+                (name, request) => _backend.CreateBoardAsync(name, request));
             NewBoardName = string.Empty;
             await RefreshAsync();
             SelectedBoardId = board.Id;
@@ -569,7 +596,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The board could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The board could not be created.");
         }
     }
 
@@ -577,11 +604,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            var activity = await _backend.CreateActivityAsync(
-                NewActivityName.Trim(),
-                NewActivityDescription.Trim(),
-                NewActivityLane,
-                NewActivityGroupId == Guid.Empty ? null : NewActivityGroupId);
+            var activity = await _createActivityOperation.RunAsync(() => new
+            {
+                Name = NewActivityName.Trim(), Description = NewActivityDescription.Trim(), Lane = NewActivityLane,
+                GroupId = NewActivityGroupId == Guid.Empty ? (Guid?)null : NewActivityGroupId
+            }, (draft, request) => _backend.CreateActivityAsync(draft.Name, draft.Description, draft.Lane, draft.GroupId, request));
             NewActivityName = string.Empty;
             NewActivityDescription = string.Empty;
             FinishUtilityEdit("activity");
@@ -590,7 +617,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The activity could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The activity could not be created.");
         }
     }
 
@@ -598,13 +625,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.CreateActivityGroupAsync(NewActivityGroupName.Trim());
+            await _createActivityGroupOperation.RunAsync(() => NewActivityGroupName.Trim(),
+                (name, request) => _backend.CreateActivityGroupAsync(name, request));
             NewActivityGroupName = string.Empty;
             await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The activity group could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The activity group could not be created.");
         }
     }
 
@@ -663,14 +691,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
-            await _backend.CreateCalendarAsync(NewCalendarName.Trim(), NewCalendarColor.Trim());
+            await _createCalendarOperation.RunAsync(() => new { Name = NewCalendarName.Trim(), Color = NewCalendarColor.Trim() },
+                (draft, request) => _backend.CreateCalendarAsync(draft.Name, draft.Color, request: request));
             NewCalendarName = string.Empty;
             StatusMessage = "Calendar created.";
             await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The calendar could not be created.");
         }
     }
 
@@ -785,14 +814,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.AddProjectTagAsync(row.Project.Id, row.TagText.Trim());
+            await row.TagOperation.RunAsync(() => new { row.Project.Id, Name = row.TagText.Trim() },
+                (draft, request) => _backend.AddProjectTagAsync(draft.Id, draft.Name, request: request));
             row.TagText = string.Empty;
             StatusMessage = "Project tag added.";
             await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The project tag could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The project tag could not be added.");
         }
     }
 
@@ -938,14 +968,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.AddActivityTagAsync(row.Activity.Id, row.TagText.Trim());
+            await row.TagOperation.RunAsync(() => new { row.Activity.Id, Name = row.TagText.Trim() },
+                (draft, request) => _backend.AddActivityTagAsync(draft.Id, draft.Name, request: request));
             row.TagText = string.Empty;
             StatusMessage = "Activity tag added.";
             await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The activity tag could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The activity tag could not be added.");
         }
     }
 
@@ -1405,18 +1436,19 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     internal static string FormatLocalDateTime(DateTimeOffset instant)
         => TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.Local).ToString(LocalDateTimeFormat, CultureInfo.InvariantCulture);
 
-    internal static bool TryParseLocalDateTime(string value, out DateTimeOffset instant)
+    internal static bool TryParseLocalDateTime(string value, out DateTimeOffset instant, TimeZoneInfo? timeZone = null)
     {
+        timeZone ??= TimeZoneInfo.Local;
         if (DateTime.TryParseExact(value.Trim(), LocalDateTimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var local))
         {
             local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
-            if (TimeZoneInfo.Local.IsInvalidTime(local))
+            if (timeZone.IsInvalidTime(local))
             {
                 instant = default;
                 return false;
             }
 
-            instant = new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+            instant = new DateTimeOffset(local, timeZone.GetUtcOffset(local));
             return true;
         }
 
@@ -1432,31 +1464,35 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             return;
         }
 
-        var tasks = await _backend.SearchTasksAsync(includeCompleted: false);
-        var task = tasks.FirstOrDefault(item => item.Task.Id == CalendarPlanTaskId);
-        if (task is null)
-        {
-            StatusMessage = "Choose an open task to plan.";
-            return;
-        }
-        if (!TryParseLocalDateTime(CalendarPlanStartText, out var start) || !TryParseLocalDateTime(CalendarPlanEndText, out var end) || end <= start)
-        {
-            StatusMessage = "Enter a valid local start and end, with the end after the start.";
-            return;
-        }
-
         try
         {
-            await _backend.CreateScheduleBlockAsync(SelectedCalendarId, task.Task.Id, task.Task.DefaultActivityId, null, start, end, TimeZoneInfo.Local.Id);
-            _calendarAnchor = start.ToLocalTime().Date;
+            var readIntent = () => new { CalendarId = SelectedCalendarId, TaskId = CalendarPlanTaskId,
+                StartText = CalendarPlanStartText, EndText = CalendarPlanEndText };
+            var intent = readIntent();
+            var planned = await _planOperation.RunCapturedAsync(intent, async () =>
+            {
+                var zone = _clock.LocalTimeZone;
+                if (!TryParseLocalDateTime(intent.StartText, out var start, zone) || !TryParseLocalDateTime(intent.EndText, out var end, zone) || end <= start)
+                    throw new SnookException(SnookErrorCode.ValidationFailed, "Enter a valid local start and end, with the end after the start.");
+                var tasks = await _backend.SearchTasksAsync(includeCompleted: false);
+                var task = tasks.FirstOrDefault(item => item.Task.Id == intent.TaskId)
+                    ?? throw new SnookException(SnookErrorCode.ValidationFailed, "Choose an open task to plan.");
+                return new { Intent = intent, Start = start.ToUniversalTime(), End = end.ToUniversalTime(), TimeZone = zone.Id, ActivityId = task.Task.DefaultActivityId, task.Task.Title };
+            }, async (draft, request) =>
+            {
+                var block = await _backend.CreateScheduleBlockAsync(draft.Intent.CalendarId, draft.Intent.TaskId, draft.ActivityId,
+                    null, draft.Start, draft.End, draft.TimeZone, request: request);
+                return new { Block = block, draft.Title };
+            }, () => readIntent());
+            _calendarAnchor = planned.Block.StartAtUtc.ToLocalTime().Date;
             RaisePropertyChanged(nameof(CalendarAnchor));
-            StatusMessage = $"Planned {task.Task.Title} for {start.ToLocalTime():MMM d, h:mm tt}.";
+            StatusMessage = $"Planned {planned.Title} for {planned.Block.StartAtUtc.ToLocalTime():MMM d, h:mm tt}.";
             FinishUtilityEdit("plan");
-            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+            await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The schedule block could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The schedule block could not be created.");
         }
     }
 
@@ -1496,40 +1532,32 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             return;
         }
 
-        if (!TryParseLocalDateTime(NewEventStart, out var start)
-            || !TryParseLocalDateTime(NewEventEnd, out var end)
-            || end <= start)
-        {
-            StatusMessage = "Use valid event start and end instants.";
-            return;
-        }
-
         try
         {
-            DateTimeOffset? recurrenceEnd = null;
-            if (!string.IsNullOrWhiteSpace(NewEventRecurrenceEnd))
+            var readIntent = () => new
             {
-                if (!TryParseLocalDateTime(NewEventRecurrenceEnd, out var parsedRecurrenceEnd))
+                CalendarId = SelectedCalendarId, Title = NewEventTitle.Trim(), StartText = NewEventStart, EndText = NewEventEnd,
+                Description = NewEventDescription.Trim(), Location = string.IsNullOrWhiteSpace(NewEventLocation) ? null : NewEventLocation.Trim(),
+                Color = string.IsNullOrWhiteSpace(NewEventColor) ? "#246B63" : NewEventColor.Trim(), AllDay = NewEventAllDay,
+                Recurrence = string.IsNullOrWhiteSpace(NewEventRecurrence) ? null : NewEventRecurrence.Trim(), RecurrenceEndText = NewEventRecurrenceEnd
+            };
+            var intent = readIntent();
+            await _createEventOperation.RunCapturedAsync(intent, () =>
+            {
+                var zone = _clock.LocalTimeZone;
+                if (!TryParseLocalDateTime(intent.StartText, out var start, zone) || !TryParseLocalDateTime(intent.EndText, out var end, zone) || end <= start)
+                    throw new SnookException(SnookErrorCode.ValidationFailed, "Use valid event start and end instants.");
+                DateTimeOffset? recurrenceEnd = null;
+                if (!string.IsNullOrWhiteSpace(intent.RecurrenceEndText))
                 {
-                    StatusMessage = "Use a valid recurrence end instant, or leave it empty.";
-                    return;
+                    if (!TryParseLocalDateTime(intent.RecurrenceEndText, out var parsed, zone))
+                        throw new SnookException(SnookErrorCode.ValidationFailed, "Use a valid recurrence end instant, or leave it empty.");
+                    recurrenceEnd = parsed.ToUniversalTime();
                 }
-
-                recurrenceEnd = parsedRecurrenceEnd.ToUniversalTime();
-            }
-
-            await _backend.CreateCalendarEventAsync(
-                SelectedCalendarId,
-                NewEventTitle.Trim(),
-                start.ToUniversalTime(),
-                end.ToUniversalTime(),
-                NewEventDescription.Trim(),
-                string.IsNullOrWhiteSpace(NewEventLocation) ? null : NewEventLocation.Trim(),
-                string.IsNullOrWhiteSpace(NewEventColor) ? "#246B63" : NewEventColor.Trim(),
-                NewEventAllDay,
-                TimeZoneInfo.Local.Id,
-                string.IsNullOrWhiteSpace(NewEventRecurrence) ? null : NewEventRecurrence.Trim(),
-                recurrenceEnd);
+                return Task.FromResult(new { Intent = intent, Start = start.ToUniversalTime(), End = end.ToUniversalTime(), TimeZone = zone.Id, RecurrenceEnd = recurrenceEnd });
+            }, (draft, request) => _backend.CreateCalendarEventAsync(draft.Intent.CalendarId, draft.Intent.Title, draft.Start, draft.End,
+                draft.Intent.Description, draft.Intent.Location, draft.Intent.Color, draft.Intent.AllDay, draft.TimeZone,
+                draft.Intent.Recurrence, draft.RecurrenceEnd, request), () => readIntent());
             NewEventTitle = string.Empty;
             NewEventDescription = string.Empty;
             NewEventLocation = string.Empty;
@@ -1541,11 +1569,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             NewEventEnd = string.Empty;
             StatusMessage = "Calendar event created.";
             FinishUtilityEdit("event");
-            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+            await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The calendar event could not be created.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The calendar event could not be created.");
         }
     }
 
@@ -1784,22 +1812,21 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             return;
         }
 
-        if (!TryParseLocalDateTime(ManualStartText, out var start)
-            || !TryParseLocalDateTime(ManualEndText, out var end)
-            || end <= start)
-        {
-            StatusMessage = "Use valid manual start and end instants.";
-            return;
-        }
-
         try
         {
-            await _backend.CreateManualSessionAsync(
-                ManualTaskId,
-                ManualActivityId,
-                start.ToUniversalTime(),
-                end.ToUniversalTime(),
-                string.IsNullOrWhiteSpace(ManualNotes) ? null : ManualNotes.Trim());
+            var readIntent = () => new
+            {
+                TaskId = ManualTaskId, ActivityId = ManualActivityId,
+                Notes = string.IsNullOrWhiteSpace(ManualNotes) ? null : ManualNotes.Trim(), StartText = ManualStartText, EndText = ManualEndText
+            };
+            var intent = readIntent();
+            await _manualOperation.RunCapturedAsync(intent, () =>
+            {
+                var zone = _clock.LocalTimeZone;
+                if (!TryParseLocalDateTime(intent.StartText, out var start, zone) || !TryParseLocalDateTime(intent.EndText, out var end, zone) || end <= start)
+                    throw new SnookException(SnookErrorCode.ValidationFailed, "Use valid manual start and end instants.");
+                return Task.FromResult(new { Intent = intent, Start = start.ToUniversalTime(), End = end.ToUniversalTime() });
+            }, (draft, request) => _backend.CreateManualSessionAsync(draft.Intent.TaskId, draft.Intent.ActivityId, draft.Start, draft.End, draft.Intent.Notes, request), () => readIntent());
             StatusMessage = "Manual time added.";
             ManualStartText = FormatLocalDateTime(DateTimeOffset.UtcNow.AddMinutes(-30));
             ManualEndText = FormatLocalDateTime(DateTimeOffset.UtcNow);
@@ -1809,30 +1836,28 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "Manual time could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "Manual time could not be added.");
         }
     }
 
     private async Task AddQuickManualTimeAsync()
     {
-        var activity = Activities.FirstOrDefault(item => item.DefaultLane == SessionLane.Foreground)
-            ?? Activities.FirstOrDefault(item => item.Id != Guid.Empty);
-        if (activity is null)
-        {
-            StatusMessage = "Create an activity before adding quick manual time.";
-            return;
-        }
-
         try
         {
-            var end = DateTimeOffset.UtcNow;
-            await _backend.CreateManualSessionAsync(null, activity.Id, end.AddMinutes(-30), end, "Manual entry");
+            await _quickManualOperation.RunCapturedAsync("add-thirty-minutes", () =>
+            {
+                var activity = Activities.FirstOrDefault(item => item.DefaultLane == SessionLane.Foreground)
+                    ?? Activities.FirstOrDefault(item => item.Id != Guid.Empty)
+                    ?? throw new SnookException(SnookErrorCode.ValidationFailed, "Create an activity before adding quick manual time.");
+                var end = _clock.GetUtcNow();
+                return Task.FromResult(new { ActivityId = activity.Id, Start = end.AddMinutes(-30), End = end });
+            }, (draft, request) => _backend.CreateManualSessionAsync(null, draft.ActivityId, draft.Start, draft.End, "Manual entry", request));
             StatusMessage = "Added 30 minutes of manual time.";
             await RefreshAsync();
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "Manual time could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "Manual time could not be added.");
         }
     }
 
@@ -1976,14 +2001,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.AddTaskTagAsync(row.Task.Id, row.TagText.Trim());
+            await row.TagOperation.RunAsync(() => new { row.Task.Id, Name = row.TagText.Trim() },
+                (draft, request) => _backend.AddTaskTagAsync(draft.Id, draft.Name, request: request));
             row.TagText = string.Empty;
             await RefreshAsync();
             await RefreshTaskEditorDetailsAsync(row);
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The task tag could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The task tag could not be added.");
         }
     }
 
@@ -1997,7 +2023,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.AddTaskDependencyAsync(row.Task.Id, row.PrerequisiteTaskId.Value);
+            await row.DependencyOperation.RunAsync(() => new { row.Task.Id, PrerequisiteId = row.PrerequisiteTaskId.GetValueOrDefault() },
+                (draft, request) => _backend.AddTaskDependencyAsync(draft.Id, draft.PrerequisiteId, request));
             row.PrerequisiteTaskId = null;
             StatusMessage = "Task dependency added.";
             await RefreshAsync();
@@ -2005,7 +2032,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The task dependency could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The task dependency could not be added.");
         }
     }
 
@@ -2019,7 +2046,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
         try
         {
-            await _backend.AddTaskLinkAsync(row.Task.Id, string.IsNullOrWhiteSpace(row.LinkLabelText) ? null : row.LinkLabelText.Trim(), row.LinkUriText.Trim());
+            await row.LinkOperation.RunAsync(() => new
+            {
+                row.Task.Id, Label = string.IsNullOrWhiteSpace(row.LinkLabelText) ? null : row.LinkLabelText.Trim(), Uri = row.LinkUriText.Trim()
+            }, (draft, request) => _backend.AddTaskLinkAsync(draft.Id, draft.Label, draft.Uri, request: request));
             row.LinkLabelText = string.Empty;
             row.LinkUriText = string.Empty;
             StatusMessage = "Task reference added.";
@@ -2028,7 +2058,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
-            StatusMessage = exception is SnookException snook ? snook.Message : "The task reference could not be added.";
+            StatusMessage = PendingCreateOperation.Failure(exception, "The task reference could not be added.");
         }
     }
 
@@ -2146,6 +2176,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
     }
 
+    private void OnConnectionStateChanged(object? sender, EventArgs args)
+    {
+        if (sender is DaemonBackendClient daemon && !daemon.IsConnected)
+            Dispatcher.UIThread.Post(() => ConnectionProblem = true);
+    }
+
     private void OnBackendChanged(object? sender, ChangeNotification notification)
     {
         _ = Dispatcher.UIThread.InvokeAsync(RefreshAsync);
@@ -2198,6 +2234,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         _displayTimer.Dispose();
         _backend.Changed -= OnBackendChanged;
+        if (_backend is DaemonBackendClient daemon) daemon.ConnectionStateChanged -= OnConnectionStateChanged;
         await _backend.DisposeAsync();
     }
 }
@@ -2307,6 +2344,7 @@ public sealed class BoardAdminRowViewModel
 
 public sealed class ProjectAdminRowViewModel : INotifyPropertyChanged
 {
+    internal PendingCreateOperation TagOperation { get; } = new();
     private string _tagText = string.Empty;
     public event PropertyChangedEventHandler? PropertyChanged;
     private readonly Func<ProjectAdminRowViewModel, Task> _save;
@@ -2356,6 +2394,7 @@ public sealed class ProjectAdminRowViewModel : INotifyPropertyChanged
 
 public sealed class ActivityAdminRowViewModel : INotifyPropertyChanged
 {
+    internal PendingCreateOperation TagOperation { get; } = new();
     private string _tagText = string.Empty;
     public event PropertyChangedEventHandler? PropertyChanged;
     private readonly Func<ActivityAdminRowViewModel, Task> _save;
@@ -2436,6 +2475,9 @@ public sealed class ProjectTaskGroupViewModel
 
 public sealed class TaskRowViewModel : INotifyPropertyChanged
 {
+    internal PendingCreateOperation TagOperation { get; } = new();
+    internal PendingCreateOperation LinkOperation { get; } = new();
+    internal PendingCreateOperation DependencyOperation { get; } = new();
     private bool _isSelected;
     public bool IsSelected
     {
@@ -2604,9 +2646,10 @@ public sealed class RecoverySessionRowViewModel
 {
     private readonly Func<RecoverySessionRowViewModel, RecoveryDecision, Task> _resolve;
 
-    public RecoverySessionRowViewModel(TrackingSession session, Func<RecoverySessionRowViewModel, RecoveryDecision, Task> resolve)
+    public RecoverySessionRowViewModel(TrackingSession session, Func<RecoverySessionRowViewModel, RecoveryDecision, Task> resolve, string? label = null)
     {
         Session = session;
+        Label = label ?? "General focus";
         _resolve = resolve;
         StopAtLastKnownCommand = new AsyncCommand(_ => _resolve(this, RecoveryDecision.StopAtLastKnown));
         StopNowCommand = new AsyncCommand(_ => _resolve(this, RecoveryDecision.StopNow));
@@ -2614,7 +2657,17 @@ public sealed class RecoverySessionRowViewModel
     }
 
     public TrackingSession Session { get; }
+    public string Label { get; }
+    public string IdentityLabel => $"{Label} · {(Session.Lane == SessionLane.Background ? "Background" : "Focus")} · {Session.StartedAtUtc.ToLocalTime():g}";
+    public string LastKnownAutomationName => $"Keep last known time for {IdentityLabel}";
+    public string StopNowAutomationName => $"Stop {IdentityLabel} now and credit the gap";
+    public string ContinueAutomationName => $"Continue {IdentityLabel}";
     public string ReasonLabel => Session.RecoveryReason ?? "The timer needs a recovery decision.";
+    public bool IsRestored => Session.RecoveryStatus == "workspace-restored";
+    public string RecordedTimeLabel => $"Recorded: {MainWindowViewModel.FormatForRow(TimeMath.DurationMilliseconds(Session.Intervals, Session.UpdatedAtUtc))} · Last known: {Session.Intervals.Aggregate(Session.StartedAtUtc, (latest, interval) => interval.EndedAtUtc is { } end && end > latest ? end : latest).ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}";
+    public string DecisionHelp => Session.RecoveryStatus == "workspace-restored"
+        ? "Last known keeps recorded time. Stop now credits the gap. Continue starts now without the gap."
+        : "Session identity and previous intervals are preserved.";
     public ICommand StopAtLastKnownCommand { get; }
     public ICommand StopNowCommand { get; }
     public ICommand ContinueCommand { get; }

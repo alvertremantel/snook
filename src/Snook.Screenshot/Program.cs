@@ -23,12 +23,28 @@ internal static class Program
         Directory.CreateDirectory(Path.Combine(dataRoot, "Snook"));
         Directory.CreateDirectory(screenshotDirectory);
 
-        var store = new SqliteStore(Path.Combine(dataRoot, "Snook", "workspace.db"));
-        var backend = new SnookBackend(store);
-        backend.InitializeAsync().GetAwaiter().GetResult();
+        var profile = ClientProfileStore.Resolve(null, dataRoot, dataDirectory: dataRoot);
+        var backend = ClientProfileStore.OpenAsync(profile).GetAwaiter().GetResult();
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_SEED") == "1")
             SeedAsync(backend).GetAwaiter().GetResult();
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_RESTORE_RECOVERY") == "1")
+            SeedRestoredTimersAsync(backend, dataRoot).GetAwaiter().GetResult();
         App.ConfiguredBackend = backend;
+        App.ClientProfiles = new ClientProfileStore(dataRoot);
+        App.CurrentClientProfile = profile;
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_CONNECTION") == "1" && backend is DaemonBackendClient remote)
+        {
+            var clientRoot = Path.Combine(dataRoot, "screenshot-client-only");
+            var tokenPath = profile.TokenFile ?? Path.Combine(dataRoot, "Snook", "daemon.token");
+            var clientProfile = new ClientConnectionProfile(1, "daemon", clientRoot, remote.Endpoint.AbsoluteUri, Path.Combine(clientRoot, "missing.token"));
+            App.ClientProfiles = new ClientProfileStore(clientRoot);
+            App.ConnectionStartup = () =>
+            {
+                var window = new ConnectionWindow(new ConnectionViewModel(App.ClientProfiles, new(null, null), clientProfile));
+                window.Opened += async (_, _) => await InteractionChecks.CheckConnectionStartupAsync(window, tokenPath, screenshotDirectory);
+                return window;
+            };
+        }
         App.ScreenshotWriter = CaptureHeadlessFrameAsync;
 
         try
@@ -38,6 +54,7 @@ internal static class Program
         finally
         {
             backend.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            if (!ReferenceEquals(backend, App.ConfiguredBackend)) App.ConfiguredBackend?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
 
@@ -51,7 +68,17 @@ internal static class Program
             })
             .WithInterFont();
 
-    private static async Task SeedAsync(SnookBackend backend)
+    private static async Task SeedRestoredTimersAsync(IBackendClient backend, string dataRoot)
+    {
+        var snapshot = await backend.GetBootstrapAsync();
+        var activity = snapshot.Activities.First(item => item.DefaultLane == SessionLane.Background);
+        for (var count = snapshot.Today.ActiveSessions.Count(item => item.Session.State == SessionState.Running); count < 3; count++)
+            await backend.StartSessionAsync(null, activity.Id, SessionLane.Background, new OperationRequest(Guid.NewGuid(), Guid.NewGuid()));
+        var backup = await backend.CreateBackupAsync(Path.Combine(dataRoot, $"recovery-fixture-{Guid.NewGuid():N}.db"));
+        await backend.RestoreBackupAsync(backup.Path);
+    }
+
+    private static async Task SeedAsync(IBackendClient backend)
     {
         // Only populate an empty capture workspace. Never duplicate fixtures on reruns.
         if ((await backend.SearchTasksAsync(includeCompleted: true, includeArchived: true)).Count > 0)
@@ -157,5 +184,9 @@ internal static class Program
             await InteractionChecks.CheckHabitsAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_JOURNALS") == "1")
             await InteractionChecks.CheckJournalsAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_RECOVERY") == "1")
+            await InteractionChecks.CheckRecoveryAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_CONNECTION") == "1")
+            await InteractionChecks.CheckConnectionSettingsAsync(window, path);
     }
 }
