@@ -14,7 +14,8 @@ public sealed partial class MainWindowViewModel
     private Guid _selectedJournalId;
     private bool _showDeletedJournalItems;
     private bool _reconcilingJournals;
-    private int _journalLoadVersion;
+    private int _journalCatalogLoadVersion;
+    private int _journalEntryLoadVersion;
     private string? _journalNextPage;
     private string _journalSearch = string.Empty;
     private string _journalTag = string.Empty;
@@ -67,11 +68,16 @@ public sealed partial class MainWindowViewModel
 
     private async Task LoadJournalsAsync()
     {
-        var version = ++_journalLoadVersion;
+        // A catalog refresh can change the selected journal and deleted-item scope.
+        // Invalidate entry requests and their scope-bound continuation token before
+        // yielding so Load earlier cannot race the refresh with a stale token.
+        ++_journalEntryLoadVersion;
+        ResetJournalPagination();
+        var version = ++_journalCatalogLoadVersion;
         try
         {
             var journals = await _backend.GetJournalsAsync(ShowDeletedJournalItems);
-            if (version != _journalLoadVersion) return;
+            if (version != _journalCatalogLoadVersion) return;
             _journals = journals;
             var selected = journals.Any(journal => journal.Id == SelectedJournalId) ? SelectedJournalId : Guid.Empty;
             _reconcilingJournals = true;
@@ -86,18 +92,22 @@ public sealed partial class MainWindowViewModel
             NotifyJournalState();
             await LoadJournalEntriesAsync();
         }
-        catch (Exception exception) { StatusMessage = exception.Message; }
+        catch (Exception exception)
+        {
+            if (version == _journalCatalogLoadVersion) StatusMessage = exception.Message;
+        }
     }
 
     private async Task LoadJournalEntriesAsync(bool append = false)
     {
         if (append && _journalNextPage is null) return;
-        var version = ++_journalLoadVersion;
+        if (!append) ResetJournalPagination();
+        var version = ++_journalEntryLoadVersion;
         try
         {
             var page = await _backend.GetJournalEntriesAsync(new JournalEntryQuery(SelectedJournalId == Guid.Empty ? null : SelectedJournalId,
                 _appliedJournalSearch, _appliedJournalTag, ShowDeletedJournalItems, 30, append ? _journalNextPage : null));
-            if (version != _journalLoadVersion) return;
+            if (version != _journalEntryLoadVersion) return;
             if (!append)
             {
                 var ids = page.Items.Select(entry => entry.Id).ToHashSet();
@@ -122,7 +132,17 @@ public sealed partial class MainWindowViewModel
             _journalNextPage = page.ContinuationToken;
             NotifyJournalState();
         }
-        catch (Exception exception) { StatusMessage = exception.Message; }
+        catch (Exception exception)
+        {
+            if (version == _journalEntryLoadVersion) StatusMessage = exception.Message;
+        }
+    }
+
+    private void ResetJournalPagination()
+    {
+        if (_journalNextPage is null) return;
+        _journalNextPage = null;
+        RaisePropertyChanged(nameof(HasMoreJournalEntries));
     }
 
     private void NotifyJournalState()
