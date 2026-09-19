@@ -2,6 +2,40 @@
 
 ## Current direction: September 2026 modernization
 
+Connection setup is a separate startup window, also available before opening any
+workspace with `--configure`. It has explicit daemon/embedded choices, persistent
+field labels, loopback endpoint/token-file hints, a scrolling form and fixed
+status/Connect/Cancel actions at 620×600. Failure keeps the draft visible for Retry;
+Cancel/Escape drains pending connection work and suppresses late window opening.
+The optional Remember checkbox saves device-local settings, never credentials.
+
+The workspace footer identifies embedded mode or the actual daemon endpoint and
+offers **Connection…**. That modal saves settings for the next launch, without
+switching the current backend or discarding editor drafts. Validation preserves
+entered values; Escape discards them and returns focus. An interrupted daemon
+connection has a textual stale-data warning and Retry refresh, separate from
+ordinary mutation status. Reconnecting to the same host preserves existing drafts;
+there is no automatic embedded fallback or offline mutation queue.
+
+Create actions own an operation request alongside their draft. A lost daemon
+response leaves the draft and exact request available for an explicit unchanged
+retry. Derived activity defaults, relative times and local-to-UTC interpretation
+are captured only once. Success clears the attempt before refreshing projections;
+a failed refresh must not invite a duplicate create. Edits typed during an
+in-flight save survive its response. Cancel/Escape discards the local attempt,
+and a late response cannot close or replace a newly opened creation drawer.
+Cancellation is not undo for a write already sent; reconcile it through refresh.
+Creation retry state is in-memory and is not an offline queue or persisted draft.
+
+Restored timers appear as Dashboard recovery cards with a task/activity label,
+lane, start time, frozen duration, exact last-known boundary (including UTC offset)
+and contextual automation names. Wrapped explanations distinguish
+the choices: Last known retains frozen time, Stop now credits the gap, and Continue
+starts now without the gap. Actions sit below the explanation and remain reachable
+through the page scroll at 980×640. Unchanged recovery rows retain their controls
+across refresh so keyboard focus is not discarded. The backend records both the
+restore preparation and explicit decision as before/after correction provenance.
+
 Habits is a workspace-wide daily yes/no tracker beside Tasks. Its cards expose
 seven direct day buttons with Done/Open text, a bounded disclosure for the rest
 of a 30-day history, and date navigation for older corrections. Current streaks

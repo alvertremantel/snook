@@ -66,6 +66,11 @@ Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-s
 - **Time Tracker:** launch grouped activities alongside running, paused, and
   background timers. **Manual time** and **New activity** open focused editors;
   **Activity library** opens their organization settings.
+- **Restored timers:** Dashboard recovery cards freeze running timers at the
+  backup boundary. **Last known** adds no time; **Stop now** explicitly credits
+  the gap; **Continue** starts now without the gap. Both the restore preparation
+  and decision retain before/after provenance. See [restore operations](docs/operations.md)
+  for clock rollback and retry behavior.
 - **Habits:** create a daily yes/no routine with a name, optional description,
   and start date. Click a day to check it off or undo it. The page shows the last
   seven days, an expandable 30-day history, a current streak, and completed days
@@ -125,6 +130,8 @@ instructions. Times are entered in local time as `YYYY-MM-DD HH:MM`.
 - `src/Snook.Daemon/` — loopback-only daemon host with authenticated RPC and push changes.
 - `tests/` — domain time math and application lifecycle coverage.
 - `docs/operations.md` — ownership, daemon, backup, restore, migration, and recovery procedures.
+- `docs/production-readiness.md` — implemented hardening, current evidence, and
+  the remaining production release gates.
 - `deploy/systemd/snookd.service` — hardened Linux service template.
 - `.opencode/artifacts/specs/` — product and engineering specifications.
 - `refs/grouper-main.zip` — immutable legacy reference used for behavior and migration analysis.
@@ -154,15 +161,83 @@ dotnet run --project src/Snook.Daemon/Snook.Daemon.csproj
 SNOOK_HOST_MODE=daemon dotnet run --project src/Snook.Desktop/Snook.Desktop.csproj
 ```
 
+To run the GUI and CLI together against one daemon, use the same data directory
+and endpoint for all three processes. Stop any embedded GUI before starting the
+daemon on its workspace. For a disposable development profile:
+
+```bash
+# Terminal 1; leave running
+SNOOK_DATA_DIR=/tmp/snook-daemon-demo dotnet run --project src/Snook.Daemon --no-build
+# Terminal 2
+dotnet run --project src/Snook.Desktop --no-build -- --host daemon --data-dir /tmp/snook-daemon-demo
+# Terminal 3
+dotnet run --project src/Snook.Cli --no-build -- --host daemon --data-dir /tmp/snook-daemon-demo doctor
+dotnet run --project src/Snook.Cli --no-build -- --host daemon --data-dir /tmp/snook-daemon-demo watch
+```
+
+Both clients accept `--host daemon`, `--data-dir`, `--endpoint`, and
+`--token-file`. Their environment equivalents are `SNOOK_HOST_MODE`,
+`SNOOK_DATA_DIR`, `SNOOK_DAEMON_ENDPOINT`, and `SNOOK_DAEMON_TOKEN_FILE`.
+The default endpoint is `http://127.0.0.1:43871/`; `SNOOK_DAEMON_PORT` changes
+the default for both hosts and clients. Once listening, the daemon publishes a
+private `Snook/daemon.endpoint.json`; both clients discover its custom port from
+the selected data directory unless an endpoint or port was explicitly configured.
+The daemon also accepts `--data-dir PATH`, `--port PORT`, and `--help`.
+Connections accept HTTP loopback URLs
+only. Tokens default to `<data-dir>/Snook/daemon.token`. GUI `--help` lists its
+connection options without opening a window or database. See
+[daemon operations](docs/operations.md#daemon-profile) for failures, retries,
+permissions and token rotation, and [the daemon plan](docs/daemon-plan.md) for
+remaining production verification work.
+
+For everyday launching, open **Connection…** in the desktop footer and save a
+daemon profile for the next launch, or run `snook --configure` to configure before
+opening a workspace. At startup, check **Remember these settings** before Connect.
+Both GUI and CLI read `<launch-data-dir>/Snook/client-profile.json`; that launch
+directory comes from `--data-dir`, `SNOOK_DATA_DIR`, or the platform default before
+reading saved settings. Flags override environment values, which override the saved
+profile. It saves mode, data directory, optional endpoint and token-file path—not
+credentials. Invalid profiles fail closed. `--no-profile --host daemon` explicitly
+bypasses a bad profile; CLI requires a host selection with `--no-profile`.
+GUI startup failures keep the settings and a visible Retry action. Changes made
+from the running workspace apply on the next launch and do not discard drafts or
+switch an active workspace. An outage shows a stale-data warning and Retry refresh;
+there is no offline write queue or automatic embedded fallback.
+
+Contract 1.6 supports caller-owned operation IDs for entity create/add actions.
+The GUI preserves an unchanged creation attempt after an uncertain response;
+CLI automation should supply and retain `request.operationId` and
+`request.clientDeviceId` before sending. See [safe create retries](docs/cli.md#calling-every-capability).
+Upgrade clients and daemon together. Closing a GUI draft discards its local retry
+state, not a write already committed by the daemon.
+
+Schema 10 adds durable exact-result receipts for the older task, organization,
+timer, calendar, settings and batch operations. Unchanged operation-ID retries
+return their original results after later edits or restart; changed request
+payloads are rejected. Older unverifiable receipts require reviewing current
+data before issuing a new operation. Back up before upgrading and see
+[migration and recovery](docs/operations.md#migration-and-recovery-failures).
+
 ## Headless CLI
 
-`snook` is a JSON-in/JSON-out client intended for scripts and autonomous agents.
+`snook-cli` is a JSON-in/JSON-out client intended for scripts and autonomous agents.
 It exposes the entire versioned `IBackendClient` contract—not a smaller CLI-only
 data model—so boards, projects, tasks, activities, timer sessions, calendar
 events and exceptions, history, summaries, backups, exports, and recovery all
 have the same behavior as the desktop application. Read results are written to
 standard output; failures are structured JSON on standard error and have a
 non-zero exit code.
+
+Backup and export destinations must be absolute, unused file paths on the host.
+Existing files and backup companions are never overwritten; workspace/credential
+names and symbolic-link paths are rejected. Choose a fresh name for each run.
+See [safe artifact destinations](docs/operations.md#backup-and-restore).
+The [JSON export format](docs/json-export.md) is schema 5, including persisted
+settings, task links/dependencies and stored deletion history alongside the
+existing task, timer, calendar, habit and journal data.
+Restore requires the matching format-1 `.manifest.json` and verifies the staged
+backup's size, SHA-256, SQLite integrity and schema before activation. Keep each
+backup with its manifest; bare database copies are not accepted by normal restore.
 
 ```bash
 # Discover every available operation, named argument, type, and default.
@@ -202,7 +277,7 @@ exact retry returns the first committed result. Empty selections require an expl
 `all: true`. See the CLI reference for every selector and nullable-field syntax.
 
 Use `watch` when an agent needs committed change notifications. It emits NDJSON:
-one ready record followed by `change` records, and runs until cancelled. It is
+one `ready` record plus `change` records, and runs until cancelled. It is
 particularly useful in daemon mode, where it uses the authenticated change
 stream rather than opening the database.
 
@@ -214,7 +289,7 @@ database. Daemon settings can also use `SNOOK_HOST_MODE`,
 
 ```bash
 dotnet run --project src/Snook.Cli/Snook.Cli.csproj -- \
-  --data-dir /var/lib/snook --host daemon \
+  --data-dir /var/lib/snook-cli --host daemon \
   --endpoint http://127.0.0.1:43871/ --token-file /var/lib/snook/Snook/daemon.token \
   doctor
 ```
@@ -226,7 +301,7 @@ SQLite.
 
 ### Fedora RPM
 
-The desktop RPM is a self-contained `linux-x64` build. Install the packaging
+The RPM contains self-contained `linux-x64` GUI, CLI and daemon builds. Install the packaging
 tool once, then build and install it with:
 
 ```bash
@@ -234,9 +309,59 @@ sudo dnf install rpm-build
 ./scripts/package-rpm.sh --install
 ```
 
-The package installs `/usr/bin/snook` and a desktop launcher. Workspace data
-remains in the user's local application-data directory; the RPM does not
-enable or install the optional daemon. If `rpmbuild` cannot be installed,
+The package preserves `/usr/bin/snook` and the desktop launcher as the GUI.
+It also installs `/usr/bin/snook-cli`, `/usr/bin/snookd`, a per-user
+`snookd.service`, and CLI/operations documentation under `/usr/share/doc/snook`.
+The three self-contained payloads live separately under `/usr/lib64/snook`.
+Native OS dependencies, including ICU, time-zone data and OpenSSL, are declared
+by the package; no separate .NET installation is needed. See Microsoft's
+[Fedora dependency reference](https://learn.microsoft.com/en-us/dotnet/core/install/linux-fedora#dependencies).
+Workspace data remains in the user's local application-data directory. No service
+is enabled or started, and no workspace is opened by installation. To opt in,
+first close the embedded GUI and stop other owners of that workspace, then run:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now snookd.service
+snook-cli --host daemon doctor
+snook --host daemon
+```
+
+Use `snook-cli --host daemon` while the daemon owns the workspace, or save a daemon
+connection profile so both normal launchers use it. Without saved settings or
+overrides, embedded remains the default. The desktop menu also offers **Connect to
+local daemon** and **Connection settings** actions. See
+[service operation](docs/operations.md#linux-service) for custom profiles, port
+conflicts, startup checks, upgrades and stopping.
+
+The packaging script uses a fresh subdirectory of `SNOOK_RPM_WORK_DIR` (default
+`.rpm-work`), never deletes an existing build directory, and installs only the RPM
+just built when `--install` is selected. `SNOOK_RPM_VERSION` accepts a numeric
+major.minor.patch version. Build directories remain available for inspection.
+Verify a trusted, locally built RPM without installing it:
+
+```bash
+./scripts/verify-rpm.sh artifacts/rpm/snook-0.1.0-2.fc44.x86_64.rpm
+```
+
+Use the actual filename emitted by your build. The verifier requires `rpm`,
+`rpm2cpio`, `cpio`, Python 3 and local socket/process access. It checks installed
+paths/launchers and runs the extracted payloads against fresh disposable data,
+including daemon discovery, CLI writes/watch, failed ownership, shutdown and
+embedded reopening. It leaves its temporary directory for inspection and does
+not install the package, render the GUI, or validate a live systemd service.
+To additionally test managed operation when a user systemd manager is available:
+
+```bash
+./scripts/verify-user-service.sh /tmp/snook-rpm-check.REPLACE_WITH_PRINTED_DIRECTORY
+```
+
+This imports the extracted unit's properties into a uniquely named transient user
+unit with a fresh workspace and port. It checks readiness, restart, stop and lease
+reopening, then stops/removes the temporary unit. It never enables the normal
+`snookd.service`; it is not an install/upgrade/uninstall test.
+
+If `rpmbuild` cannot be installed,
 `scripts/package-rpm.sh` is also the reproducible installation script to run
 after installing `rpm-build` on a Fedora build host.
 
@@ -288,6 +413,31 @@ timers. The fixture also includes two journals and three tagged entries with moo
 ratings. Existing tasks prevent repeat seeding; set `SNOOK_SCREENSHOT_SEED=0`
 to capture an empty profile without sample data.
 This data is confined to the screenshot profile, not the desktop workspace.
+
+Set `SNOOK_HOST_MODE=daemon` to capture against a separately started disposable
+daemon instead of embedded SQLite. The same data-directory/endpoint/token-file
+settings apply. With `SNOOK_SCREENSHOT_VERIFY_CONNECTION=1`, the daemon capture
+first checks a visible missing-token failure, edits the token-file path, saves a
+profile and retries through the actual connection window. A separate client-only
+directory must remain free of SQLite. On the `today` section, both host modes also
+check settings validation, retained drafts, Escape, focus return and next-launch
+save without switching the active backend. Dialogs are captured at 620×600; use
+`SNOOK_SCREENSHOT_SIZE=980x640` for the workspace. Existing workspace/timer checks
+can run against this same daemon with their usual verification switches.
+For an externally controlled shutdown/restart check, also set
+`SNOOK_SCREENSHOT_VERIFY_OUTAGE=1`. The harness prints `WAIT` before each phase:
+stop that disposable daemon, then restart it with the same data root and port.
+Each phase has a 60-second limit. It captures the stale-data warning and recovery,
+clicks Retry refresh while unavailable and checks that a typed draft survives.
+Never use this switch against a normal user service/workspace.
+
+`SNOOK_SCREENSHOT_RESTORE_RECOVERY=1` creates a verified backup and restores it in
+the disposable screenshot profile, producing at least three recovery cards.
+Use a fresh profile, `SNOOK_SCREENSHOT_SECTIONS=today,tracker,history` and
+`SNOOK_SCREENSHOT_SIZE=980x640`. Add `SNOOK_SCREENSHOT_VERIFY_RECOVERY=1` to click
+all three recovery choices, check their persisted transitions/provenance, preserve
+focus across refresh, and capture the reachable actions and resolved state.
+Capture normal seeded and empty states separately without this fixture switch.
 
 `SNOOK_SCREENSHOT_VERIFY_JOURNALS=1` on the `journals` section exercises persisted
 journal creation/rename, entry creation/edit/movement, filters, mood and tag

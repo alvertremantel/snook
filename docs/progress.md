@@ -8,6 +8,204 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Implemented surface
 
+- Saved version-1 client profiles now let both the GUI and CLI select embedded or
+  authenticated daemon mode without repeating connection flags. Profiles retain
+  only host/data-directory/endpoint/token-file settings, use private atomic writes,
+  and never serialize the token. Resolution is flags, environment, saved profile,
+  then the embedded default; malformed/unsafe profiles fail closed, with explicit
+  `--no-profile` recovery for the CLI. The desktop has visible startup correction,
+  saved next-launch connection settings, actual endpoint/status display, an outage
+  warning and manual retry without overwriting an open draft. The CLI `doctor`
+  reports the resolved discovered endpoint. Desktop launcher actions expose daemon
+  startup and connection settings. Real disposable daemon checks passed saved-profile
+  CLI use plus GUI connection, task capture and timer controls without creating a
+  client SQLite database. Full build has zero warnings/errors and all 149 tests pass
+  (131 application, 18 domain), including connection-profile security/precedence,
+  pending-window disposal and non-pumping UI synchronization-context regression
+  coverage. Seeded and empty 980×640 captures were inspected. A controlled actual
+  daemon stop/restart showed the stale-data warning, rejected refresh while offline,
+  reconnected at the same endpoint and retained the typed draft; both 980×640 frames
+  were inspected. Live credential/endpoint switching and broader update/lifecycle
+  retry coverage remain open. No RPM was rebuilt;
+  release 3 predates this connection-profile and later restore work. See the current
+  [production-readiness summary](production-readiness.md) and the detailed
+  [daemon plan](daemon-plan.md).
+
+- Restored running timers now become explicit recovery items with open intervals
+  frozen at the verified backup boundary. Last known adds no time; Stop now
+  credits the gap explicitly; Continue starts a new interval now without the gap.
+  Repeated backup/restore of unresolved items preserves the boundary, and old
+  exact receipts cannot reopen current recovery state. Both preparation and
+  resolution keep before/after provenance. Closed paused/stopped sessions remain
+  unchanged, clock rollback cannot add negative time, and Continue honors the
+  foreground concurrency preference and rejects hidden task/activity references.
+  Dashboard cards show identity, recorded duration, the exact last-known boundary
+  and the credit policy; unchanged cards preserve focus across refresh.
+  Full build has zero warnings/errors; all 137 tests pass (119 application,
+  18 domain). Shared foreground/background scenarios pass in embedded and actual
+  daemon modes; additional deterministic tests cover restart, clock rollback,
+  closed-session preservation, concurrency policy and archived/deleted activity
+  rejection. Fresh 980×640 seeded, empty and restored screenshots were inspected;
+  pointer-driven recovery checks persisted all three decisions with provenance.
+  See [daemon-plan.md](daemon-plan.md#restored-timer-reconciliation-pass) for
+  evidence paths and remaining acceptance. No package was rebuilt or installed;
+  release 3 still predates these restore changes.
+
+- Restore now requires and verifies the matching format-1 manifest, staged byte
+  count and SHA-256 before SQLite validation/upgrade. Inputs reject links and
+  live/recovery sidecars, with 16 GiB backup and 16 KiB manifest bounds. Moved
+  valid pairs and older checked schema upgrades remain supported. Native connection
+  leases exclude reads during replacement; disposal drains connections before
+  releasing ownership. Restore invalidations use the ordered commit queue with
+  captured metadata, and cancellation after commit does not fail a saved result.
+  Missing active databases with restore recovery files fail startup rather than
+  creating an empty workspace. Full build has zero warnings/errors; all 125 tests
+  pass (107 application, 18 domain), and `git diff --check` passes. Embedded,
+  daemon and CLI rejection/success scenarios, controlled connection/ownership
+  tests and cancellation/observer cases passed with disposable profiles.
+  Crash-consistent activation/recovery, active-timer reconciliation and broader
+  daemon/GUI acceptance remain tracked in [daemon-plan.md](daemon-plan.md).
+  The release-3 RPM predates these new restore changes. No UI layout changed.
+
+- JSON export schema 5 adds persisted settings, a snapshot cursor, task links and
+  dependency edges. Dedicated export reads preserve links under deleted tasks,
+  stored link/tag/session tombstones, and deleted-session correction history.
+  The versioned [format reference](json-export.md) documents data representation,
+  numeric enums, compatibility, privacy and exclusions. The SQLite schema and
+  backend contract remain 10 and 1.6. Embedded/daemon/CLI scenarios verify all
+  supported feature families, relationship metadata, backup/restore and restart.
+  Concurrent atomic task/tag updates retain matching titles, tags and cursors
+  in each export. Full build has zero warnings/errors; all 119 tests pass
+  (101 application, 18 domain), with clean whitespace and shell syntax checks.
+  Release 3 was rebuilt from these sources with the format reference; extracted
+  payload checks passed for create replay, schema-5 export/no-overwrite, CLI watch,
+  ownership/fail-closed behavior and shutdown. Its transient per-user service
+  passed readiness, protection settings, restart, stop and lease reopening.
+  No package or normal service was installed/enabled. The post-publish full build
+  and all 119 tests passed again. Exact artifact/evidence paths are recorded in
+  [daemon-plan.md](daemon-plan.md).
+  Restore verification, GUI connection/recovery, transport and native lifecycle
+  acceptance remain open. No UI layout changed in this pass.
+
+- Backup and JSON/CSV export no longer overwrite selected files. Shared embedded/
+  daemon validation requires an absolute unused destination and protects live
+  workspace/sidecar/lease/recovery and credential/discovery paths, including
+  aliases. Backup refuses existing manifests and SQLite companions. Files are
+  staged privately, verified/hashed, flushed and published without replacement;
+  Unix artifacts are mode 0600. Backup now runs SQLite integrity/FK checks before
+  publication. Exports hold the shared writer gate across their data queries.
+  Embedded/daemon and CLI tests verify preservation of existing bytes, reserved
+  paths, links, output hashes/privacy and repeated-call failures. Additional tests
+  cover alias-opened workspaces, contention, pre-cancellation and integrity failure.
+  Verification: full solution build with zero warnings/errors, all 115 tests pass
+  (97 application, 18 domain), and `git diff --check` passes. Tests used disposable
+  profiles with process/socket permissions; no real workspace or installed package
+  was touched. No UI layout changed in this pass.
+  Restore manifest verification, broader adversarial snapshot
+  checks, power-loss/Windows acceptance and the broader daemon plan remain open.
+  See [daemon-plan.md](daemon-plan.md) for the precise scope and limitations.
+
+- Contract 1.6 exposes caller-owned operation requests for the 13 remaining
+  convenience create/add methods, using shared embedded/daemon exact receipts.
+  The CLI catalog exposes the optional requests; unchanged retries with a stable
+  request return the original result, while changed arguments are rejected.
+  GUI organization/task/calendar creation, manual time and tag/link/dependency
+  additions retain their request and captured arguments while unchanged. Derived
+  instants, time zones and activity defaults are frozen for retry. Successful
+  writes clear attempts before refresh; late responses preserve newer drafts.
+  Cancel is not an undo, and pending attempts are in memory, not a durable outbox.
+  Verification: full build with zero warnings/errors, all 110 tests pass
+  (92 application, 18 domain), and `git diff --check` passes. Embedded/daemon/CLI
+  receipt tests and lost-response GUI model tests passed. Seeded 980×640 persisted
+  editor/workspace checks and empty screenshots passed and were inspected.
+  Broader update/lifecycle retries, saved GUI profiles/startup recovery and actual
+  daemon-backed GUI checks remain open. The earlier RPM is contract 1.5, not a
+  packaged verification of these new changes. See [daemon-plan.md](daemon-plan.md)
+  for evidence paths and remaining production acceptance work.
+
+- Fedora packaging now includes the GUI (`snook`), CLI (`snook-cli`) and daemon
+  (`snookd`) as separate self-contained payloads, an opt-in per-user systemd unit,
+  and operations/CLI documentation. The existing GUI launcher is preserved;
+  installation does not start a service or open a workspace. Native runtime
+  dependencies are explicit and bundled private libraries do not advertise
+  global RPM capabilities. The build uses fresh directories, honors numeric
+  version overrides and installs only its just-built artifact when requested.
+  CLI help/examples use the installed command name. `watch` now emits one complete
+  compact JSON object per physical line, with a live daemon regression check.
+  Verification: built and inspected `snook-0.1.0-2.fc44.x86_64.rpm`; extracted
+  payload checks passed for help, discovery, CLI read/write/watch, ownership and
+  missing-token failures, shutdown, token permissions and embedded reopening.
+  A transient user service using that package's unit settings passed readiness,
+  effective protection settings, persisted mutation across restart, redacted
+  journal, stop and lease reopening. No package or normal service was installed
+  or enabled. Full solution build has zero warnings/errors; all 90 tests pass
+  (72 application, 18 domain), and shell syntax / `git diff --check` pass. Actual
+  native install/upgrade/uninstall, saved GUI profiles/outage UX, broader UI retries,
+  reconnect ordering, daemon-backed GUI flows and Windows services remain open;
+  see [daemon-plan.md](daemon-plan.md) for exact artifact/evidence paths.
+
+- Schema migration 10 adds durable exact-result receipts for older organization,
+  task, timer, calendar, settings and batch mutations. The transaction wrapper
+  binds command arguments to the operation ID, returns the original serialized
+  result on retry, and saves no-op receipts as well. Changed arguments are rejected;
+  legacy receipts without verifiable original results fail explicitly. Existing
+  habit/journal formats remain supported. Task-default activity resolution occurs
+  inside the timer transaction after receipt lookup, preserving replay even after
+  defaults change. Operation requests now validate IDs and revision applicability.
+  Staged restore upgrades v9 sources without mutating them, and applied migration
+  checksums from sequence 7 onward are checked independently. Database backups
+  retain retry history; domain JSON/CSV exports keep their existing formats.
+  Verification: clean full rebuild with zero warnings/errors and all 90 tests
+  passing (72 application, 18 domain), including embedded/daemon exact replay after
+  later edits/deletion, restart, backup/restore, changed argument rejection, no-op
+  and create receipts, v9 migration, earlier checksum corruption, and rollback if
+  receipt persistence fails. `git diff --check` passes. Tests used disposable
+  profiles with local process/socket access. Caller operation IDs for remaining
+  convenience creates, GUI request retention, maintenance path safety, service
+  packaging and broader daemon acceptance remain tracked in the daemon plan.
+
+- Shared commit notifications now come from the transaction's persisted mutation
+  log across all entity mutation families. Receipt replay and rollback are silent;
+  cursor, operation/aggregate IDs, revision, kind and millisecond UTC timestamp
+  match the committed row. Delivery preserves commit order outside the write gate,
+  tolerates reentrant handlers, and isolates observer exceptions from both mutation
+  results and other observers. Older ad hoc publishers and duplicate habit/journal
+  publishers were removed. Restore remains an explicit workspace snapshot reset.
+  Verification: clean full rebuild with zero warnings/errors, all 86 tests pass
+  (68 application, 18 domain), and `git diff --check` passes. Shared embedded/daemon
+  tests compare notifications against SQLite through organization/tasks/tags,
+  timers, settings, calendar and bulk operations, concurrent writes and retries.
+  Additional tests cover restart replay, receipt-insertion rollback, sub-millisecond
+  clock inputs, committed-row visibility and throwing/reentrant observers.
+  Tests used disposable profiles with local process/socket access. Exact historical
+  receipt results and request binding, restore/stream reconciliation, service
+  packaging and remaining GUI connection work are still in the daemon plan.
+
+- Daemon transport and client hardening is underway against the full specification;
+  [daemon-plan.md](daemon-plan.md) tracks acceptance work and remaining gaps.
+  The daemon now tracks and drains request handlers, serializes RPC dispatch,
+  validates malformed/null arguments, sanitizes internal errors, bounds request
+  concurrency and SSE queues, and uses one writer per change stream with
+  heartbeats and write deadlines. Tokens are created privately, validated at
+  startup, and kept out of readiness/error output. A private atomic endpoint
+  descriptor enables custom-port discovery from the selected data directory.
+  GUI launch flags and shared GUI/CLI connection resolution support simultaneous
+  daemon clients; invalid host/port settings fail explicitly. Clients validate
+  loopback endpoints and contract compatibility, bypass proxies/redirects, report
+  useful connection errors, and dispose asynchronously. README/CLI/operations
+  docs include connection, retry, discovery and token-rotation procedures.
+  Verification: full solution build with zero warnings/errors, all 83 tests pass
+  (65 application, 18 domain), and `git diff --check` passes. New transport tests
+  cover malformed calls, private credentials/discovery, unsafe endpoints,
+  incompatible contracts, missing-token fail-closed behavior, concurrent ordered
+  changes, CLI doctor using discovery, SIGTERM and workspace lease reacquisition.
+  Desktop and daemon `--help` were executed without opening a GUI/workspace.
+  Tests required local process/socket access outside the sandbox and used
+  disposable profiles. This is not completion of daemon production acceptance:
+  legacy exact-receipt/notification semantics, broader adversarial/parity checks,
+  per-user packaging, persistent GUI profiles and visible connection recovery,
+  and Windows platform/service verification remain tracked work.
+
 - Journaling is implemented as a sidebar screen with multiple journals, plain-text
   entries, separate journal-only tags, optional 1–7 mood ratings, title/body search,
   exact tag filtering, pagination, entry movement, and soft-delete/restore.
