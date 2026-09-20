@@ -108,6 +108,18 @@ public sealed class RestoreVerificationTests
         backend.Changed += handler;
         try
         {
+            var inspected = await backend.InspectBackupAsync(candidate);
+            Assert.Equal(beforeBackup.Workspace, inspected.Workspace);
+            Assert.Equal(backup.Bytes, inspected.Bytes);
+            Assert.Equal(backup.Sha256, inspected.Sha256);
+            Assert.Equal(JsonNode.Parse(sourceManifest)!["createdAtUtc"]!.GetValue<DateTimeOffset>().ToUnixTimeMilliseconds(),
+                inspected.CreatedAtUtc.ToUnixTimeMilliseconds());
+            Assert.False(notification.Task.IsCompleted);
+            Assert.Equal(databaseBytes, await File.ReadAllBytesAsync(database));
+            Assert.Equal(beforeFailure.CommittedCursor, (await backend.GetBootstrapAsync()).CommittedCursor);
+            Assert.Contains((await backend.GetBootstrapAsync()).Boards, item => item.Id == afterBackup.Id);
+            Assert.Empty(Directory.GetDirectories(Path.GetDirectoryName(database)!, ".snook-restore-*"));
+            Assert.Equal(originalArchives, Directory.GetFiles(Path.GetDirectoryName(database)!, Path.GetFileName(database) + ".before-restore-*").Order().ToArray());
             var restored = await backend.RestoreBackupAsync(candidate);
             Assert.Equal(candidate, restored.SourcePath);
             Assert.Equal(backup.Sha256, restored.Sha256);
@@ -128,6 +140,9 @@ public sealed class RestoreVerificationTests
 
         async Task<SnookException> RejectAsync(string path, SnookErrorCode code)
         {
+            var inspectionError = await Assert.ThrowsAsync<SnookException>(() => backend.InspectBackupAsync(path));
+            Assert.Equal(code, inspectionError.Code);
+            Assert.DoesNotContain(root, inspectionError.Message, StringComparison.Ordinal);
             var error = await Assert.ThrowsAsync<SnookException>(() => backend.RestoreBackupAsync(path));
             Assert.Equal(code, error.Code);
             Assert.DoesNotContain(root, error.Message, StringComparison.Ordinal);
@@ -191,6 +206,7 @@ public sealed class RestoreVerificationTests
             var bytes = await File.ReadAllBytesAsync(database);
             using var cancellation = new CancellationTokenSource();
             await cancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => backend.InspectBackupAsync(backup.Path, cancellation.Token));
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => backend.RestoreBackupAsync(backup.Path, cancellation.Token));
             Assert.Equal(bytes, await File.ReadAllBytesAsync(database));
             Assert.Contains((await backend.GetBootstrapAsync()).Boards, board => board.Id == marker.Id);

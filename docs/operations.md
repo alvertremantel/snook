@@ -1,5 +1,320 @@
 # Snook desktop and daemon operations
 
+## Android host selection
+
+A clean `org.snook.spike` install remains unconfigured and does not initialize a
+SQLite workspace merely because its activity starts. **Independent workspace**
+shows an unlocked, resumed-activity confirmation describing offline ownership and
+backup responsibility. Only the positive action opens and validates the private
+backend; the device-local non-secret host choice is committed after that first
+snapshot succeeds. Back, outside dismissal, backgrounding and rotation cancel the
+dialog. Existing development installs that already contain
+`no_backup/independent/workspace.db` are adopted so an upgrade does not strand their
+data.
+
+The daemon choice accepts only HTTPS `*.ts.net` origins on port 443 with no user-info,
+path, query or fragment; redirects, system proxies, HTTP, LAN/raw IP, public and
+Funnel fallbacks are disabled. Android manually begins a short-lived pairing,
+reviews the Serve origin, observed tailnet login, daemon instance and workspace,
+then protects the issued per-install credential through Android Keystore. The
+non-secret profile stores those identities but never the credential. Only after an
+authenticated snapshot succeeds is attached mode selected. Failure becomes
+retryable `StaleAttached` and never invokes the independent backend factory.
+
+**Switch workspace…** checkpoints recoverable drafts, clears native timer surfaces,
+drains the current borrower and returns to the host chooser without copying or
+merging data. The independent database and paired profile remain separate. Paired
+backup/JSON/CSV exports stream through authenticated bounded endpoints to Android's
+document picker; Android paths are never interpreted on the daemon. Attached restore
+uploads a locally verified bundle to a credential-bound expiring server stage and
+commits only after the reviewed workspace identity and cursor are rechecked. A
+cross-workspace restore retains the previous server database, rebinds the authorizing
+credential, and revokes all other devices and pending ceremonies.
+Forgetting a pairing removes the Android credential/profile but does not revoke the
+daemon record; the administrator must revoke it before a new code for that
+installation can be accepted. Real Serve-route acceptance and adversarial security
+review remain pending. The verifier's explicit
+`--onboarding` scenario clears only the disposable development package, proves that
+launch/cancellation/daemon selection leave the database absent, confirms creation,
+and force-stops/restarts the process to check the saved choice. Never use that
+destructive scenario with real data.
+
+## Android activity entry routing
+
+Normal launch, incoming task share and timer-notification content open use one
+bounded router for both activity creation and `singleTop` warm delivery. Normal
+launch carries no MIME type, URI or extras. A task share is exact `SEND` plus
+`text/plain`, exactly one text extra of at most 300 characters and no stream,
+ClipData, URI, timer token or unknown key. A timer content intent uses the exact
+internal action, one uppercase-hex 256-bit token, and a matching
+`snook-internal://timer/<token>` URI without port, query or fragment. The timer
+action store then checks the encrypted record, expiry, workspace and current session
+before any navigation or mutation.
+
+Any unknown action, malformed parcel, payload-bearing launcher entry or substitution
+fails closed and leaves the current draft untouched. The UI distinguishes an invalid
+share from an unsupported general entry. The disposable API 36 verifier's
+`--workspace --share` scenario covers valid cold/warm shares, unexpected extra keys,
+a `VIEW file:` URI and a forged timer-open extra; evidence is in
+`/tmp/snook-android-entry-router-final-20260920/evidence`.
+
+## Android active-timer notifications
+
+Timer notifications are an opt-in projection of committed independent-workspace
+state, not a second timer engine. Settings presents the explanation before Android's
+runtime permission prompt. Permission denial or a disabled application/channel
+leaves timers fully usable in Snook; the coordinator removes its known native
+surfaces and private action records until posting is allowed again. The
+`active-timers-v1` channel is low importance and contains at most 16 deterministically
+ordered running or paused sessions, plus a bounded group summary when needed.
+Running rows use Android's system chronometer reconstructed from persisted duration;
+there is no foreground service, worker or application tick loop.
+
+On Android 16 and newer the manifest declares `POST_PROMOTED_NOTIFICATIONS`, and
+the first deterministically ordered running row requests promoted-ongoing treatment
+through the platform notification extra. It remains an otherwise ordinary standard
+chronometer notification: ongoing, not colorized, not a group summary and without a
+custom view. Other running rows, paused rows and the group summary do not request
+promotion. Promotion is optional system treatment, not a prerequisite for posting;
+the same low-importance notification remains visible when Android declines or does
+not support it.
+
+Android 16 Settings exposes **Review Live Update access**. The action first checks
+`CanPostPromotedNotifications`; when access is not already enabled, it opens the
+platform's app-specific promotion settings only if Android resolves that activity.
+Older releases do not show this action. A device without the destination reports
+that ordinary timer notifications remain available and does not repeatedly prompt
+or alter timer state.
+
+Private notification content may show a task or activity. Its public lock-screen
+version contains only **Snook timer** and **Running** or **Paused**. Tapping content
+uses a validated internal Open token and routes to Time tracker. Pause, Resume and
+Stop use immutable explicit pending intents targeting a non-exported receiver. The
+intent contains only a random 256-bit token. Its fixed-size action record binds the
+workspace/session, expected revision, action, stable operation ID and stable client
+ID; Android Keystore AES-GCM protects it with token-specific associated data under
+private no-backup storage. Records expire after seven days, are capped at 128 and
+are retained only while their corresponding notifications are current. Tokens,
+paths and notification content are not logged.
+
+An action cold-starts the application if necessary, reopens the selected workspace,
+loads a fresh committed snapshot and checks both workspace and exact session
+revision before calling the shared backend. The stable operation request preserves
+receipt semantics if delivery becomes uncertain. A stale, invalid or wrong-workspace
+action does not mutate and instead asks the user to review Snook; all outcomes
+reconcile the system surface from committed state. Foreground return and backend
+change notifications also reconcile. Before a confirmed restore dispatch the
+coordinator detaches, removes the old workspace's native surfaces/action records,
+and then attaches only to the reopened workspace. A pre-dispatch failure reattaches
+to the unchanged workspace.
+
+`TimerSystemEventReceiver` is credential-protected, non-exported and limited to
+completed boot, this-package replacement, wall-clock change and time-zone change.
+It first requires the device-local independent host choice and an already-existing
+private database; it never creates a clean-install workspace. If the application
+session already exists it reconciles through that owner. Otherwise it briefly opens
+the same shared backend, rebuilds notifications from a committed snapshot, releases
+the workspace lease and leaves the new native surfaces in place. It does not handle
+locked boot because the workspace and Keystore records are credential-protected.
+Reconciliation failure logs only the exception type and retains prior state for a
+later foreground retry.
+
+The destructive `--timer-notification` verifier clears only disposable
+`org.snook.spike` app data, creates a synthetic independent workspace, grants the
+runtime permission after the Settings explanation, and exercises content open,
+Pause, process death, cold-process Resume and Stop against a real backend timer. It
+then reboots the emulator, requires a different completed kernel boot, proves that
+`BOOT_COMPLETED` reconstructs the committed timer and fresh actions, and stops it
+through the rebuilt surface. It also inspects the private/public notification
+surfaces and encrypted record sizes. Never run it against a package containing real
+data. The API 36 x64 run at
+`/tmp/snook-android-live-update-Final02/evidence` additionally proves that running
+and boot-reconstructed notifications carry a true promotion request, paused state
+does not, and the standard surface remains usable when Android does not promote it.
+That emulator image could not resolve the platform access-settings activity and did
+not set the promoted flag. Actual promoted/demoted presentation, native wall-clock/
+time-zone/package-replacement acceptance, attached device mode, custom
+notification artwork and the broader OEM/physical-device matrix remain pending.
+
+## Android timed task reminders and app lock
+
+A task reminder is an explicit timed deadline: local date, `HH:mm`, time-zone ID and
+earlier/later choice for a repeated DST clock time. Spring-forward gaps are rejected.
+Date-only deadlines do not schedule notifications. Android uses inexact
+`SetAndAllowWhileIdle` alarms and does not request exact-alarm access; Doze, OEM
+battery policy, force-stop and notification settings can delay or suppress delivery.
+The non-exported alarm receiver reloads current task state before showing private
+task content. WorkManager performs bounded six-hour reconciliation, while completed
+boot, package replacement and time-zone or wall-clock changes trigger immediate
+repair.
+
+Attached mode persists at most 64 reminder descriptors in a Keystore-authenticated
+private index with a 24-hour freshness limit. It is never writable workspace state.
+If an alarm fires while the daemon is unreachable, the notification is explicitly
+labeled **last synced** and asks the user to reconnect; it never edits a task offline.
+Settings explains permission effects and posts a test notification.
+
+Optional app lock uses Android's enrolled device credential. The activity decor is
+hidden before authentication and workspace presentation is inactive while locked.
+The shared session publishes `Locked`; timer/reminder coordinators detach, widget
+surfaces render unavailable text, and the activity uses secure-window protection.
+Pairing identity review is always capture-protected. Ordinary workspace capture can
+also be disabled with the separate screen-privacy setting. Notification detail has
+its own setting and always retains a redacted public lock-screen version. This
+foreground gate is not database-at-rest encryption and does not replace full-device
+encryption.
+
+## Android independent backup and report export
+
+The shared restore-input reader now supports copying an untrusted non-seekable
+document to a caller-owned empty private staging directory. It accepts only the
+fixed `workspace.db` and `workspace.db.manifest.json` entries, with a 16 GiB database
+limit, 16 KiB manifest limit, and 32 KiB central-directory allocation budget.
+ZIP64 metadata is supported; archive comments and multi-disk layouts are rejected.
+The input container is bounded to 16 GiB plus 64 KiB. Entry names never choose output
+paths, existing staging files are not overwritten, and callers must remove partial
+staging files after failure or cancellation. This does **not** establish backup
+trust: the existing backend must still verify the exact manifest/hash, SQLite
+integrity and schema before replacement. Native selection, confirmation and guarded
+independent-workspace replacement are connected; the broader provider/fault matrix
+and physical-device acceptance remain pending. Optional app lock is implemented as
+a foreground device-credential gate, not database encryption.
+
+Create backup uses the Android system save picker, not a desktop output directory.
+The `.snook-backup` ZIP has exactly `workspace.db` and
+`workspace.db.manifest.json`; the manifest is copied unchanged from the existing
+verified online-backup operation. No live WAL/SHM, credentials or capture-recovery
+file is included. The archive is **not encrypted** and contains private workspace
+data. Its original manifest may include the internal staging path.
+
+Only the OS-supplied private staging directory is canonicalized; external content
+URIs are never converted into filesystem paths. Existing backend path checks remain
+in force. Transfer is bounded by the backend's 16 GiB database limit plus 64 KiB
+bundle allowance, with a five-minute operation cancellation budget. Native provider
+open operations may not honor cancellation. Success requires closing the output,
+reopening it, and verifying its full byte count and SHA-256 against private staging.
+No persistent URI grant is requested. A failed write/read-back can leave an incomplete
+selected document; remove it before retrying. Normal completion/failure removes
+private staging; process-kill cleanup and low-storage/provider-failure matrices are
+not yet accepted.
+
+JSON and CSV use the same private staging, system picker, bounded transfer and
+read-back verification. JSON remains schema 5; CSV retains the desktop reporting
+window (30 days before invocation through the following day). That range is captured
+before the picker opens, not recomputed after the user chooses a destination.
+Plain JSON/CSV documents are limited to 16 GiB. They are unencrypted reports, not
+restore packages. Native export checks cover cancellation, successful saving,
+read-back hashing and cleanup; populated report semantics are covered by the shared
+backend suite, not a complete Android feature-parity matrix.
+
+Settings also offers JSON and CSV sharing. Snook writes a bounded artifact beneath
+private `cache/snook-share`, exposes only that subtree through a non-exported
+`FileProvider`, and starts the chooser with a temporary read-only `content:` grant
+and matching `ClipData`. It never sends a raw path or grants write access. A failed
+or cancelled launch removes the artifact immediately; successful dispatches are
+retained for at most 24 hours with a bounded 16-directory cleanup pass.
+
+Android's **Review backup to restore** action stages one selected `content:` document
+under private no-backup storage, then uses contract inspection before showing current
+and incoming workspace names/IDs, backup time and size. **Replace workspace**
+explicitly warns that all current data is replaced, not merged, and unsaved drafts
+and capture recovery are discarded. Before inspection and again after confirmation,
+private free space must exceed four times the incoming database size plus 64 MiB
+of additional headroom. This is a conservative preflight, not a space reservation;
+concurrent storage pressure still relies on staged failure/rollback guarantees.
+Review is available only in the resumed activity on an unlocked device and dismisses
+on Back, backgrounding or rotation. If the picker or verification outlives its
+activity, select the document again. This is not biometric/app-lock authentication.
+The source document is read-only; no persistent URI grant is requested. Normal
+cleanup removes its private review directory; cleanup failures log only a generic
+message. Process-kill cleanup and low-space/provider-failure coverage remain pending.
+For desktop
+recovery, inspect the bundle's two fixed entry names, extract that database/manifest
+pair into a controlled directory, and use the existing verified restore operation.
+Do not recreate the manifest or bypass its verification. API 36 emulator export and
+desktop restore of that actual artifact are verified; physical-device acceptance
+remains pending.
+
+## Android session restore handoff
+
+The independent Android `WorkspaceSession` now lends a guarded backend instead of
+the raw owner. Its restore handoff closes admission and drains existing calls before
+rechecking the confirmed current workspace ID/cursor and incoming backup identity/
+hash. A stale confirmation or cancellation before dispatch resumes the same borrower;
+the caller must refresh after resuming because notifications are suppressed while
+paused. Successful replacement reopens a snapshot and returns a new borrower. The
+old projection can no longer read or mutate the replacement workspace. Direct
+restore through a borrower is rejected; only the serialized session handoff may
+perform replacement. Borrower disposal never disposes the underlying owner.
+
+Cancellation after a successful restore commit does not revive the old projection.
+An exception after restore dispatch is treated conservatively as uncertain: the old
+borrower is retired, the session enters `Fatal`, and reopening through that session
+is refused. Ownership remains held until explicit session disposal; inspect/recover
+before opening another session. Android confirmation now invokes this mechanism.
+It disables the workspace UI, pauses presentation, drains/removes the serialized
+capture, task-editor, utility-editor and navigation recovery files with explicit
+discard consent,
+and checks that the original activity is still resumed/unlocked before dispatch. A
+pre-dispatch
+failure keeps the current projection and attempts to resave its capture and open
+task editor. After success it disposes
+the old projection, clears the pending share, removes the synthetic notification,
+clears real timer notifications and their action records, and builds a new
+projection/capture stores bound to the restored workspace identity. Timer, reminder
+and widget coordinators then attach only to that new workspace. Delayed checkpoints
+from old projections are rejected. Device-unlocked restore checks and optional app
+lock are separate gates; neither implies database-at-rest encryption.
+
+## Android development draft and navigation recovery
+
+The independent Android host stores a bounded task-capture recovery envelope in
+private no-backup storage, separate from the SQLite workspace. Android Keystore
+AES-GCM protects it with workspace-specific associated data. The plaintext snapshot
+is limited to 4096 bytes and expires after seven days; it contains the capture title,
+project and pending creation request identity, not credentials or backend handles.
+Writes use serialized, flushed staging and replacement. Key loss, corruption or an
+unavailable project does not trigger plaintext fallback or overwrite another draft;
+the host reports the problem and offers discard of the recovery copy.
+
+Edits debounce for 400 ms and backgrounding requests a flush, so termination before
+a checkpoint may lose the newest edits. Task creation waits for its exact request
+checkpoint before dispatch; recovery never automatically sends it. Clearing capture
+removes its copy.
+
+An open task editor uses a separate AES-GCM key alias, purpose and file. Its bounded
+32 KiB plaintext contains the task ID, expected revision and all unsaved task fields;
+it contains no backend handle or authority to mutate. Recovery reloads the current
+task and only then reconstructs the editor. It keeps the saved expected revision, so
+an intervening update makes Save report the ordinary revision conflict. Recovery
+never automatically saves. Cancel or a successful Save removes the file. A missing
+task, wrong workspace, expired snapshot, missing key or corrupt envelope is not
+silently redirected or overwritten; use the explicit recovery discard only after
+deciding the copy is no longer needed.
+
+The active utility editor uses a third AES-GCM alias and a bounded 64 KiB envelope.
+Its explicit field maps cover manual time, activity/planning/event creation,
+organization/calendar/history records, journal definitions and entries, habits and
+batch task updates. Recovery never sends a mutation. Exact pending requests survive
+uncertain creation/journal/habit/batch dispatch, while original entity and batch
+target revisions preserve normal conflict handling. A one-second sampler avoids
+rewriting unchanged drafts and backgrounding requests a flush.
+
+This is not SQLite encryption or a replacement for app lock. The full power-loss,
+low-storage, key-loss and physical-device matrix is still pending. Never test
+recovery against a real workspace.
+
+The independent host separately stores at most 2048 bytes of non-secret navigation
+JSON under private no-backup storage. It is versioned and bound to the current
+workspace ID. The snapshot includes the current destination and bounded task,
+calendar, summary, Settings, board and journal selections. It excludes all search
+text, filter input, capture/editor content, credentials, backend handles and mutation
+requests. Writes debounce for 250 ms, flush through a staging file and are requested
+when the app backgrounds. A malformed or wrong-workspace snapshot is ignored and
+replaced by current valid state; unavailable selected records fall back through the
+normal workspace loaders. Restore replacement deletes the old workspace's snapshot
+before handoff and resaves it only if replacement aborts before commit.
+
 ## Embedded desktop
 
 The default desktop profile owns one SQLite workspace at:
@@ -12,7 +327,19 @@ move the complete `Snook` directory and start with the new data-root setting.
 
 The `.owner` lease beside the database is the ownership guard. A second
 embedded host or daemon using the same workspace must stop with a store-lock
-error before it can mutate data.
+error before it can mutate data. Version 2 ownership uses an exclusive OS file
+lock, not PID existence: the kernel releases ownership after a crash, and the next
+host can recover an abandoned marker even if its PID has been reused. Normal
+disposal removes the marker. A small, uniquely named `.owner.lock-test-*` file
+checks lock enforcement on the workspace filesystem before the marker is opened;
+disabled or unsupported locking fails closed before database access.
+
+Stop all hosts before upgrading. A live legacy owner's shared lock still excludes
+the new host; a version 2 marker intentionally lacks the legacy `pid=` field so an
+older host will not remove it based on a PID guess. Do not run old and new builds
+concurrently during upgrade. Use a supported local filesystem; these locks are not
+a distributed ownership protocol or protection against a process that ignores
+advisory locks. Do not manually delete a marker while any host could own it.
 
 ## Daemon profile
 
@@ -61,7 +388,9 @@ refreshes the same endpoint/token. Changing ports or rotating credentials curren
 requires reopening the app to reread discovery/token files—saving new settings
 does not live-switch an open workspace. Reconcile uncertain writes before closing
 drafts; broader lifecycle retry and reconnect reconciliation remain acceptance work.
-These profiles do not implement remote/TLS hosting, sync or offline replication.
+Desktop client profiles remain loopback-only and do not implement remote/TLS
+hosting, sync or offline replication. Android uses its separate Keystore-backed
+tailnet profile and per-install credential.
 
 ### Starting the host
 
@@ -92,8 +421,46 @@ host-mode value also fails before opening a database.
 
 The client authenticates health and checks contract major equality and a server
 minor version at least as new as its own before issuing RPCs. Upgrade daemon and
-clients together. Only HTTP loopback root URLs are supported; redirects and
-proxies are disabled. Remote access requires a separately designed transport.
+clients together. Desktop clients support only HTTP loopback root URLs. Android's
+distinct transport accepts only its paired HTTPS `*.ts.net` Serve origin; redirects
+and proxies are disabled in both transports.
+
+### Android pairing administration
+
+Keep `snookd` on loopback and configure Tailscale Serve separately to proxy its
+loopback endpoint. Never enable Funnel, bind Snook to `0.0.0.0`, expose the port
+through a router, or substitute an ordinary LAN/public reverse proxy. Pairing stays
+disabled unless the operator explicitly starts the daemon with the reviewed trust
+boundary:
+
+```bash
+SNOOK_TRUST_TAILSCALE_SERVE_HEADERS=1 snookd --data-dir /absolute/private/data-root
+```
+
+This setting means the daemon trusts `Tailscale-User-Login` supplied by the local
+Serve proxy. A process running under the same local OS account can also reach the
+loopback listener and is inside this operational trust boundary; protect that
+account and the loopback administrator token. Missing identity fails closed.
+
+Using the normal authenticated loopback CLI profile, create a five-minute code for
+the exact Serve origin, list non-secret device records, and revoke a device:
+
+```bash
+snook-cli --host daemon --data-dir /absolute/private/data-root \
+  pairing create https://host.tailnet-name.ts.net/
+snook-cli --host daemon --data-dir /absolute/private/data-root pairing list
+snook-cli --host daemon --data-dir /absolute/private/data-root \
+  pairing rename CREDENTIAL_ID "My phone"
+snook-cli --host daemon --data-dir /absolute/private/data-root \
+  pairing revoke CREDENTIAL_ID
+```
+
+Treat the returned code as a short-lived secret. It is attempt-bounded and consumed
+when Android begins enrollment. Android then displays the Serve origin, observed
+tailnet login, daemon instance and workspace for explicit confirmation. Revocation
+immediately closes that credential's active change streams and rejects later health,
+RPC and document-download requests. The list and on-disk registry never contain the
+plaintext device credential.
 
 After binding, the daemon atomically publishes `Snook/daemon.endpoint.json`
 with its endpoint, instance ID and contract version, and removes it at graceful
@@ -162,7 +529,18 @@ prevents dispatch. These attempts are in memory, not a durable offline outbox;
 after closing/restarting the GUI, inspect current data before recreating an
 uncertain item. Older update/lifecycle actions still need the separate UI retry
 audit tracked in the daemon plan. No migration beyond schema 10 is required for
-the new create-request support, but deploy matching 1.6 clients and daemon.
+the new create-request support, but deploy matching 1.7 clients and daemon.
+
+Contract 1.7 adds `InspectBackupAsync` (CLI `call inspect-backup`). Like restore,
+it accepts a fully qualified host-local standalone database with its matching
+format-1 manifest. It verifies size/hash, SQLite integrity and supported migrations
+on a private copy, then returns the incoming workspace identity, original byte
+count/SHA-256 and backup UTC time (millisecond precision). It leaves the source pair,
+active workspace, cursor, rollback archives and change notifications unchanged.
+Private validation copies are removed on normal success/failure. Inspection is not
+an authorization or activation token: restore must revalidate the selected input,
+and the caller still owns foreground identity confirmation and app-lock/free-space
+checks. No mobile-only database reader or schema fork is introduced.
 
 The headless CLI uses this same boundary. Configure it with `snook-cli --host daemon --endpoint http://127.0.0.1:43871/ --token-file <data-root>/Snook/daemon.token doctor`, or the corresponding `SNOOK_*` environment variables. It fails closed
 in daemon mode: a missing token, failed authentication, unavailable endpoint, or
@@ -295,6 +673,15 @@ manifest-backed backup pairs and are not accepted directly by normal restore.
 
 ## Migration and recovery failures
 
+Schema migration 11 (`task-reminders`) upgrades sequence-10 workspaces that predate
+timed deadlines. It conditionally adds the UTC instant, zone, stable reminder ID,
+local civil date/time, DST-fold choice and delivery-policy columns plus the bounded
+open-reminder index. Legacy timed rows are backfilled transactionally from their UTC
+instant and zone; an invalid legacy zone fails the upgrade rather than guessing.
+Fresh and staged-restore databases record the same checksummed migration. Contract
+1.9 transports these fields through embedded and daemon clients; exact receipt
+replay returns the originally assigned reminder ID.
+
 Schema migration 10 (`exact-operation-receipts`) adds a separate receipt table
 for older organization, task, timer, calendar, settings and batch commands. New
 receipts store the original serialized result and a hash of the command identity
@@ -391,8 +778,13 @@ request; explicitly loading latest task revisions creates a new attempt.
 - A crash/clock anomaly marks an active session `recovery-required`. Resolve it
   in Today using **Last known**, **Stop now**, or **Continue**; the decision and
   provenance remain durable.
-- If the owner lease remains after an unclean process exit, confirm no Snook
-  host is running before removing only the stale `.owner` file.
+- An abandoned owner marker is normally recovered automatically. If ownership
+  remains unavailable, stop all hosts and check filesystem locking and permissions;
+  do not infer ownership from a PID alone or delete a potentially live marker.
+  A legacy downgrade after an unclean exit may require removing the marker only
+  after independently proving every host is stopped. Interrupted lock-enforcement
+  probes may leave empty `.owner.lock-test-*` files; they are not ownership guards
+  and can be removed with all hosts stopped.
 
 ## Linux service
 

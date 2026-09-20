@@ -167,6 +167,8 @@ internal static class Program
             ?? throw new InvalidOperationException("Avalonia headless renderer did not produce a frame.");
         bitmap.Save(path, PngBitmapEncoderOptions.Default);
         bitmap.Dispose();
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_HOST") == "1")
+            await InteractionChecks.CheckWorkspaceHostAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_WORKSPACE") == "1")
             await InteractionChecks.CheckWorkspaceAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_PALETTE") == "1")

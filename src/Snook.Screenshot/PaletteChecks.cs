@@ -17,7 +17,7 @@ internal static partial class InteractionChecks
         if (Path.GetFileName(path) != "tasks-details.png") return;
         if (window.ActualThemeVariant != ThemeVariant.Light)
             throw new InvalidOperationException("The workspace unexpectedly inherited a dark system theme.");
-        var title = window.FindControl<TextBox>("TaskEditorTitle")!;
+        var title = window.Workspace.FindControl<TextBox>("TaskEditorTitle")!;
         title.Focus();
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render);
         if (title.Background is not ISolidColorBrush background || background.Color != Color.Parse("#FFFFFF"))

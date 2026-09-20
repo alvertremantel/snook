@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android36.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>org.snook.spike</ApplicationId>
+    <ApplicationTitle>Snook platform spike</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.0.1</ApplicationDisplayVersion>
+    <!-- API 26 is a candidate floor, pending physical-device acceptance. -->
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">android-arm64</RuntimeIdentifier>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- The spike is installed by adb, without IDE fast-deployment side files. -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">true</PublishTrimmed>
+    <AndroidPackageFormats Condition="'$(Configuration)' == 'Release'">aab;apk</AndroidPackageFormats>
+    <!-- Android packages have deterministic timestamps. Equal size/time must not
+         leave an older, different package in publish/. -->
+    <SkipCopyUnchangedFiles>false</SkipCopyUnchangedFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" />
+    <PackageReference Include="Xamarin.AndroidX.Work.Runtime" />
+    <ProjectReference Include="../Snook.UI/Snook.UI.csproj" />
+    <ProjectReference Include="../Snook.Application/Snook.Application.csproj" />
+  </ItemGroup>
+</Project>

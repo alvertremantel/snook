@@ -117,20 +117,28 @@ public sealed class CalendarHistoryTests
         var directory = Directory.CreateTempSubdirectory("snook-calendar-pages-");
         try
         {
-            var backend = new SnookBackend(new SqliteStore(Path.Combine(directory.FullName, "workspace.db")));
+            // This tests paging, not midnight splitting (covered separately). A live
+            // clock near local midnight can split one interval into two day items.
+            var clock = new PaginationClock(new DateTimeOffset(DateTime.Today.AddHours(12)));
+            var backend = new SnookBackend(new SqliteStore(Path.Combine(directory.FullName, "workspace.db"), clock), clock);
             await backend.InitializeAsync();
             var bootstrap = await backend.GetBootstrapAsync();
             var task = await backend.CreateTaskAsync(bootstrap.Projects[0].Id, "Pagination fixture");
-            var start = DateTimeOffset.UtcNow.AddMinutes(-10);
+            var start = clock.GetUtcNow().AddMinutes(-10);
             for (var index = 0; index < 205; index++)
                 await backend.CreateManualSessionAsync(task.Id, bootstrap.Activities[0].Id, start.AddSeconds(index * 2), start.AddSeconds(index * 2 + 1), "");
-            await using var vm = new MainWindowViewModel(backend);
+            await using var vm = new MainWindowViewModel(backend, clock);
             await vm.InitializeAsync();
             await vm.SelectSectionForScreenshotAsync("Calendar", "history-flex");
             Assert.Equal(205, vm.CalendarDayColumns.SelectMany(day => day.Items).Count(item => item.IsActual));
             Assert.False(vm.HasCalendarHistoryNotice);
         }
         finally { directory.Delete(true); }
+    }
+
+    private sealed class PaginationClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now.ToUniversalTime();
     }
 
     private static IReadOnlyList<CalendarDayColumnViewModel> Build(IEnumerable<HistoryItem> history, DateTimeOffset now,

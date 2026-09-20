@@ -21,8 +21,195 @@ authenticated loopback daemon use the same backend contract.
 Journals add a separate space for writing, with multiple journals, entry tags,
 optional mood ratings from 1 to 7, and complete CLI read/write access.
 
-Android packaging, authenticated peer sync, Windows service packaging, and the
-remaining release-gate/accessibility matrix are still later milestones.
+Android now has a development package implementing the Phase 0–4 composition root,
+adaptive shared UI, native integrations, and tailnet-only daemon attachment. Phase 5
+production signing/store distribution, authenticated peer sync, Windows service
+packaging, and the remaining external acceptance/accessibility matrix are outside
+the current implementation milestone.
+
+Android Phase 0 now has an isolated [platform spike](docs/android-spike.md) in
+`src/Snook.Android`, built separately from the desktop solution. It is a development
+probe, not an installable product release. API 36 emulator smoke tests now cover
+SQLite, receipt replay, live-owner process restart, emulator reboot and rotation; the spike guide
+documents `scripts/verify-android-spike.py` and its screenshot/report outputs.
+On a clean install, the development host first offers **Independent workspace**
+and **Connect to a Snook daemon** without opening either host. Independent setup
+shows a native foreground confirmation and creates the private database only after
+**Create private workspace**. Cancellation leaves no database. A confirmed choice
+survives process restart; existing development installs with a private workspace
+are adopted during upgrade.
+
+The daemon entry now implements manual Tailscale Serve pairing for canonical HTTPS
+`*.ts.net` origins. It reviews the observed tailnet login, daemon instance and
+workspace before confirmation; protects the per-install device credential with a
+dedicated Android Keystore key; persists only non-secret identity metadata in the
+profile; loads a fresh authenticated snapshot; and never creates or falls back to
+client SQLite. Attached failures remain retryable, drafts stay in separate encrypted
+workspace-bound recovery files, host switching checkpoints drafts and clears native
+timer surfaces, and forgetting a pairing requires daemon-side revocation before a
+new code. Paired backup/JSON/CSV downloads use bounded authenticated streaming rather
+than sending Android paths to the daemon. Attached restore now stages a bounded,
+verified document on the daemon, rechecks the reviewed workspace/cursor at commit,
+rebinds the authorizing device and revokes every other pairing after a cross-workspace
+replacement. Profiles support list/select/test/rename/repair/revoke/forget. Real
+Tailscale Serve/device acceptance, independent security review and the remaining
+external network matrix are still pending; this remains a development build.
+After selection, Today uses a process-owned shared UI model. **Tools** contains the
+platform checks, workspace retry and an explicit **Switch workspace…** handoff.
+The compact host bar identifies local mode without a permanent probe panel.
+Add `--workspace` to the
+verifier to check unsaved capture retention across activity rotation and compact
+More navigation. Below 600 dp, navigation moves to the bottom and the feature
+surfaces use their compact arrangements; 600–839 dp uses a rail, and 840 dp and
+above restores expanded navigation. This remains development evidence rather than
+physical-device or assistive-technology acceptance. Drafts remain owned by their
+editor during resizing. Compact Today places timers and next
+tasks before the agenda and moves task actions below their text. Drafts remain in
+memory, and Android additionally keeps separate private Keystore-encrypted recovery
+copies for task quick capture, an open task editor, and the active utility editor.
+They expire after seven days and checkpoint on a short debounce/poll plus
+backgrounding, so killing the process before a checkpoint can lose the newest
+keystrokes. Recovery never automatically submits or saves. Unconfirmed creations,
+journal/habit saves and batch edits retain their exact operation request; recovered
+updates retain their original revision, including every batch target, so intervening
+changes produce the normal conflict instead of an overwrite. Clearing capture or
+Cancel/Save in an editor removes its corresponding copy. Creation waits for its
+request checkpoint before sending.
+Use `--workspace --capture-recovery` with a Debug emulator build to exercise private
+file inspection, process restart, editor restoration and clearing (separate from
+`--share`).
+The same host checkpoints bounded, non-secret navigation metadata after 250 ms and
+on backgrounding. It restores the workspace destination plus task, calendar,
+summary, Settings, board and journal selections after process death. The private
+no-backup JSON is bound to one workspace and contains no search text, capture text,
+editor content, credentials or mutation requests. Missing board/journal records
+fall back through the normal current-workspace loaders. A task-editor recovery takes
+precedence and opens Tasks.
+Compact Tasks also stacks its capture controls and moves row actions below task
+text. `--workspace` verifies shared capture text when navigating from Today to Tasks.
+At 600–839 dp, a scrollable labeled navigation rail replaces the full sidebar;
+at 840 dp and above, the expanded sidebar returns.
+The timer screen also stacks running sessions above activities below 840 dp, with
+one page scroll and a two-row toolbar. Wider windows retain side-by-side columns.
+History and Summary use stacked report rows below 840 dp: dates, durations and Edit
+remain reachable, and both summary time measures keep explicit labels.
+Journal controls stack when their pane is narrow: selector and creation actions,
+then full-width search above the tag filter and Apply. Entry actions can wrap.
+Habits also stacks date controls and card actions in narrow panes while keeping
+its seven-day controls at touch size across wrapped rows.
+Calendar range navigation and inspector actions stack at narrow widths; view choices
+and creation actions wrap. Overflowing time grids offer a day picker and previous/
+next-day buttons; narrow panes use wider day columns and keep hour labels visible
+while panning. The month view keeps its seven-column overview in wide panes and
+switches below 600 dp to one full-width week at a time, with a labeled week picker,
+48 dp previous/next controls, and vertically reachable day cards. The selected week
+survives data refresh and width changes. Native assistive-technology and physical-
+device acceptance still need work.
+Compact board lanes fit the available pane. Project names sit above count/actions,
+the project picker stretches, and previous/next controls follow its selected lane
+with disabled end states. Selecting a project preserves vertical scroll position.
+The Android host pauses workspace display ticks and defers backend-triggered
+refreshes while hidden, then refreshes on return without discarding in-memory
+drafts. `--workspace` also checks Home/background/return in the same process.
+In independent Android mode, **Create backup** now opens the system save picker.
+The unencrypted `.snook-backup` ZIP contains the verified database and its exact
+manifest, and success requires reopening and hashing the selected document.
+Keep it private. Cancelling the picker changes no workspace data. JSON and CSV
+export also use the native save picker and read-back verification, preserving the
+existing report formats and CSV reporting window. These reports are not backups.
+**Review backup to restore** opens the system file picker, validates the selected
+bundle and shows current/incoming workspace names and IDs. **Replace workspace**
+requires explicit consent to replace current data and discard unsaved drafts/capture
+recovery; it does not merge workspaces. The old database is retained privately.
+Back, backgrounding or rotation closes the confirmation without restoring. Device
+unlock is required to display and confirm it. Optional app lock uses the enrolled
+Android device credential, publishes the session's `Locked` state, hides workspace
+UI and clears private notification/widget projections until authentication succeeds.
+`--backup-export` on the disposable Android verifier checks cancellation, saving
+to Downloads, read-back verification and private-stage cleanup.
+Use `--document-export JSON` or `--document-export CSV` for the corresponding native
+report-export checks.
+Use `--backup-review <existing-filename.snook-backup>` to review a disposable
+Downloads fixture and check picker cancellation, Back/rotation dismissal and cleanup.
+`--backup-restore <filename.snook-backup>` additionally replaces the disposable
+`org.snook.spike` workspace with a different-workspace fixture and checks its database
+identity, discarded capture, retained rollback and restart. This test is destructive
+to that disposable workspace; never run it against a workspace containing real data.
+Android system Back first dismisses the keyboard; with an editor open, it asks
+whether to keep editing or discard that editor's unsaved changes. Back on the
+confirmation keeps the draft. Rotation dismisses the confirmation but retains the
+editor. Discard does not undo saved changes or cancel an already requested save.
+Run `scripts/verify-android-spike.py --serial <disposable-emulator> --output <new-dir>
+--editor-back` to check this independently. Predictive-gesture animation/cancellation,
+other API levels and physical-device acceptance remain pending.
+Run `scripts/verify-android-spike.py --serial <disposable-emulator> --output <new-dir>
+--onboarding` to clear only `org.snook.spike` data and verify the clean-install host
+choice, cancelled setup, absence of a pre-confirmation database, fail-closed daemon
+entry, confirmed creation, and restart. This scenario is destructive to that
+disposable package and must never target real data.
+Hiding/disposal requests cooperative cancellation of primary presentation reads;
+late results are still discarded if a backend ignores cancellation. Full refresh
+bursts share one running pass and one pending follow-up per visibility period.
+Mutation handling is unchanged.
+Android also accepts `text/plain` Sharesheet input of up to 300 characters as a
+pending task capture. Choose **Review shared task** to prefill the title, then
+review its project and choose **Add task** to save. An existing capture or editor
+blocks replacement. **Discard share** clears the pending input; unreviewed text
+expires after ten minutes and is not persisted across process death. One shared
+fail-closed activity router classifies normal launch, text share and timer-content
+open on both cold and warm entry. A share must contain exactly one text extra and no
+URI, stream, ClipData or additional keys. Timer content requires the exact internal
+scheme/host/path and matching 256-bit opaque token; its coordinator then performs a
+second workspace/session lookup. Unknown actions, payload-bearing launcher intents,
+arbitrary URI entry and substitutions are rejected without changing a draft.
+Long-text and journal sharing remain unsupported. Add `--share --workspace` to the
+Android verifier for cold/warm share, draft protection, rotation, unexpected-extra,
+VIEW-URI and forged-timer rejection checks.
+Settings can also share completed JSON and CSV exports through a non-exported
+`FileProvider`. Only a bounded private cache subtree is exposed, the chooser receives
+a temporary read-only `content:` grant, and failed/cancelled or expired cache
+artifacts are removed without exposing a raw path.
+The Android checks exposed and fixed PID-reuse recovery: workspace ownership now
+uses an exclusive OS file lock and fails closed if locking is disabled or unsupported.
+Stop all hosts before upgrading; see [ownership recovery](docs/operations.md).
+The [native spike](docs/android-native-spike.md) also exercises Android Keystore,
+immutable receiver actions, and an explicitly requested synthetic ongoing
+notification. Its file-picker probe exports a synthetic file and verifies it through
+bounded private staging; it never exports or restores a workspace.
+
+The independent Android host now also projects real committed running and paused
+timers into the low-importance **Active timers** channel. Settings explains the
+feature before requesting notification permission. Each bounded timer notification
+uses Android's system chronometer while running, shows Pause/Resume and Stop, opens
+the Time tracker when tapped, and exposes only redacted state on the lock screen.
+Actions carry random opaque tokens; their bounded records and stable mutation
+receipts are encrypted with Android Keystore under private no-backup storage. The
+backend revision is rechecked before a mutation, and stale, denied, disabled-channel
+or replaced-workspace state is reconciled without changing in-app timer truth. The
+notification survives an app-process stop and can cold-start the process for an
+action. A credential-protected, non-exported system receiver reconstructs the
+surface from the private committed workspace after completed boot and also
+reconciles after package replacement, wall-clock change and time-zone change. It
+never creates an unselected workspace or runs at locked boot. No foreground service
+or periodic tick loop is used. Run the destructive, disposable-emulator-only
+verifier with `--timer-notification`; it includes an actual reboot. On Android 16
+and newer, the first deterministically selected running timer also requests eligible
+promoted-ongoing treatment while retaining the same standard notification as the
+fallback. Paused timers and group summaries never request promotion. Android 16
+Settings offers **Review Live Update access** when the platform exposes that system
+destination; an unavailable destination produces an ordinary-notification status
+instead. The API 36 x64 verifier confirmed the request metadata on running and
+post-boot surfaces, its absence while paused, and the normal ongoing fallback. The
+emulator image did not expose the access screen or grant a promoted surface, so
+actual promotion/demotion, native acceptance of the other three system events,
+custom notification artwork, attached-mode device acceptance and physical-device
+acceptance remain pending. Explicit timed task deadlines now preserve local date,
+time, zone and DST-fold choice. Android uses inexact alarms, authoritative delivery
+checks, WorkManager repair and a bounded Keystore-authenticated attached derivative.
+Settings provides permission education and a test notification. Optional app lock
+uses the enrolled Android device credential and hides the activity while locked.
+The full [Android plan](docs/android-plan.md)
+and [attachment threat model](docs/android-security.md) track the remaining gates.
 
 Start with the [Snook specification](.opencode/artifacts/specs/spec-2026-09-08-snook/README.md).
 
@@ -203,6 +390,12 @@ GUI startup failures keep the settings and a visible Retry action. Changes made
 from the running workspace apply on the next launch and do not discard drafts or
 switch an active workspace. An outage shows a stale-data warning and Retry refresh;
 there is no offline write queue or automatic embedded fallback.
+
+Contract 1.7 adds `inspect-backup` / `InspectBackupAsync`: it verifies the original
+backup pair and checks schema upgrades on a private copy, returning the incoming
+workspace identity, original byte count/hash and backup time without replacing the
+active workspace. Restore still revalidates the input. Deploy matching 1.7 clients
+and daemon. Android uses this inspection API before destructive restore confirmation.
 
 Contract 1.6 supports caller-owned operation IDs for entity create/add actions.
 The GUI preserves an unchanged creation attempt after an uncertain response;
@@ -462,6 +655,12 @@ Task-drawer checks cover preserved drafts, saves, keyboard focus, and revision
 conflicts. The older `settings-details` / `settings-details-bottom` section names
 now select the organization catalog; `tracker-details-bottom` opens new activity
 creation. `settings-bottom` captures the lower General & data page.
+`SNOOK_SCREENSHOT_VERIFY_HOST=1` with seeded `tasks-list` replaces the workspace
+control while keeping its session and unsaved editor draft. It verifies that a
+backend refresh preserves the draft and Escape discards it without saving, and
+captures `workspace-recreated.png`. This checks the shared view boundary, not
+Android process-death draft restoration or compact mobile layouts.
+
 `SNOOK_SCREENSHOT_VERIFY_PALETTE=1` adds focused-input, open-dropdown, and
 hover/pressed-button captures when `tasks-details` is included.
 `SNOOK_SCREENSHOT_VERIFY_WORKSPACE=1` checks the dashboard column order, Enter

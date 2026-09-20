@@ -16,7 +16,7 @@ internal static partial class InteractionChecks
     {
         var backend = App.ConfiguredBackend!;
         var vm = (MainWindowViewModel)window.DataContext!;
-        var scroll = window.FindControl<ScrollViewer>("BoardScroll")!;
+        var scroll = window.Workspace.FindControl<ScrollViewer>("BoardScroll")!;
         scroll.Offset = default;
         window.UpdateLayout();
         var bounds = new Rect(scroll.TranslatePoint(default, window)!.Value, scroll.Viewport);
@@ -36,7 +36,7 @@ internal static partial class InteractionChecks
         Save(window, Path.Combine(Path.GetDirectoryName(path)!, "tasks-edge-drag.png"));
         window.MouseUp(destination, MouseButton.Left);
         await UntilAsync(async () => (await backend.GetTaskDetailsAsync(task.Task.Id)).Task.ProjectId == lastProject);
-        var jump = window.FindControl<ComboBox>("BoardProjectJump")!;
+        var jump = window.Workspace.FindControl<ComboBox>("BoardProjectJump")!;
         jump.SelectedItem = vm.TaskGroups[0];
         await UntilAsync(() => Task.FromResult(scroll.Offset.X < 10));
         Console.WriteLine("PASS: holding a dragged card at the edge reaches an offscreen project; the project picker returns to the first lane.");
@@ -53,7 +53,7 @@ internal static partial class InteractionChecks
         await vm.SelectSectionForScreenshotAsync("Tasks", "details");
         window.UpdateLayout();
         var editor = vm.TaskEditor!;
-        var title = window.FindControl<TextBox>("TaskEditorTitle")!;
+        var title = window.Workspace.FindControl<TextBox>("TaskEditorTitle")!;
         var saveButton = Visible<Button>(window).Single(button => AutomationProperties.GetName(button) == "Save task editor");
         var archive = Visible<Button>(window).Single(button => AutomationProperties.GetName(button) == "Archive or restore task");
         var tags = Visible<Expander>(window).Single(expander => Equals(expander.Header, "Tags, dependencies & references"));

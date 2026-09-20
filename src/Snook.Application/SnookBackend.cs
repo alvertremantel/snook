@@ -656,6 +656,12 @@ public sealed partial class SnookBackend : IBackendClient
         return new ExportResult(result.Path, result.Bytes, result.Sha256, result.SchemaVersion);
     }
 
+    public async Task<BackupInspection> InspectBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        var result = await _store.InspectBackupAsync(sourcePath, cancellationToken);
+        return new BackupInspection(result.Workspace, result.Bytes, result.Sha256, result.CreatedAtUtc);
+    }
+
     public async Task<RestoreResult> RestoreBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
     {
         var result = await _store.RestoreBackupAsync(sourcePath, cancellationToken);

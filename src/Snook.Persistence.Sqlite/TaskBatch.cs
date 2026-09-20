@@ -82,6 +82,11 @@ public sealed partial class SqliteStore
                     DueDate = update.ChangeDueDate ? update.DueDate : before.DueDate,
                     DueAtUtc = update.ChangeDueDate ? null : before.DueAtUtc,
                     DueTimeZone = update.ChangeDueDate ? null : before.DueTimeZone,
+                    ReminderId = update.ChangeDueDate ? null : before.ReminderId,
+                    ReminderLocalDate = update.ChangeDueDate ? null : before.ReminderLocalDate,
+                    ReminderLocalTime = update.ChangeDueDate ? null : before.ReminderLocalTime,
+                    ReminderFoldChoice = update.ChangeDueDate ? null : before.ReminderFoldChoice,
+                    ReminderDeliveryPolicy = update.ChangeDueDate ? null : before.ReminderDeliveryPolicy,
                     DefaultActivityId = update.ChangeActivity ? update.DefaultActivityId : before.DefaultActivityId,
                     Starred = update.Starred ?? before.Starred,
                     ProjectId = update.ProjectId ?? before.ProjectId,
@@ -93,12 +98,13 @@ public sealed partial class SqliteStore
                 command.CommandText = """
                     UPDATE tasks SET title=$title,description=$description,priority=$priority,status=$status,
                         completed_at_utc_ms=$completed,due_date=$due_date,due_at_utc_ms=$due_at,due_time_zone=$due_zone,
+                        reminder_id=$reminder_id,reminder_local_date=$reminder_date,
+                        reminder_local_time=$reminder_time,reminder_fold=$reminder_fold,
+                        reminder_delivery=$reminder_delivery,
                         default_activity_id=$activity,starred=$starred,project_id=$project,archived_at_utc_ms=$archived,
                         revision=$revision,updated_at_utc_ms=$updated WHERE id=$id AND revision=$expected;
                     """;
                 BindTask(command, after, nowUtc);
-                command.Parameters.AddWithValue("$due_at", after.DueAtUtc is null ? DBNull.Value : after.DueAtUtc.Value.ToUnixTimeMilliseconds());
-                command.Parameters.AddWithValue("$due_zone", (object?)after.DueTimeZone ?? DBNull.Value);
                 command.Parameters.AddWithValue("$archived", after.ArchivedAtUtc is null ? DBNull.Value : after.ArchivedAtUtc.Value.ToUnixTimeMilliseconds());
                 command.Parameters.AddWithValue("$expected", target.ExpectedRevision);
                 if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)

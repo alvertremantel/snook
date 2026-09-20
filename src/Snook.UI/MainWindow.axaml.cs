@@ -12,8 +12,8 @@ namespace Snook.UI;
 public partial class MainWindow : Window, IAsyncDisposable
 {
     private readonly MainWindowViewModel _viewModel;
-    private Control? _editorReturnFocus;
-    private Control? _utilityReturnFocus;
+    private readonly WorkspaceView _workspace;
+    public WorkspaceView Workspace => _workspace;
 
     public MainWindow()
         : this(App.ConfiguredBackend ?? throw new InvalidOperationException("The desktop backend was not configured."))
@@ -23,73 +23,16 @@ public partial class MainWindow : Window, IAsyncDisposable
     public MainWindow(IBackendClient backend)
     {
         InitializeComponent();
-        ConnectionSettingsButton.IsVisible = App.ClientProfiles is not null && App.CurrentClientProfile is not null;
         _viewModel = new MainWindowViewModel(backend);
         DataContext = _viewModel;
-        var calendarResize = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        calendarResize.Tick += async (_, _) =>
+        _workspace = new WorkspaceView(_viewModel)
         {
-            calendarResize.Stop();
-            await _viewModel.SetCalendarViewportWidthAsync(CalendarTimeGrid.Bounds.Width);
+            CanConfigureConnection = App.ClientProfiles is not null && App.CurrentClientProfile is not null
         };
-        CalendarTimeGrid.SizeChanged += (_, _) => { calendarResize.Stop(); calendarResize.Start(); };
-        Closed += (_, _) => calendarResize.Stop();
-        _viewModel.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(MainWindowViewModel.BoardTabs))
-                Dispatcher.UIThread.Post(() => BoardTabsScroll.GetVisualDescendants().OfType<Button>()
-                    .FirstOrDefault(button => button.DataContext is BoardTab { IsSelected: true })?.BringIntoView());
-            if (e.PropertyName is nameof(MainWindowViewModel.CurrentSection) or nameof(MainWindowViewModel.SettingsPage))
-                PageScroll.Offset = default;
-            if (e.PropertyName == nameof(MainWindowViewModel.IsUtilityEditorOpen))
-            {
-                if (_viewModel.IsUtilityEditorOpen)
-                {
-                    _utilityReturnFocus = FocusManager?.GetFocusedElement() as Control;
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        UtilityDrawer.GetVisualDescendants().OfType<ScrollViewer>().First().Offset = default;
-                        UtilityDrawer.GetVisualDescendants().OfType<Control>()
-                            .FirstOrDefault(control => control.IsEffectivelyVisible && control.IsEffectivelyEnabled && control is TextBox or ComboBox or CheckBox)?.Focus();
-                    });
-                }
-                else Dispatcher.UIThread.Post(() =>
-                {
-                    if (_utilityReturnFocus?.IsEffectivelyVisible == true && TopLevel.GetTopLevel(_utilityReturnFocus) is not null)
-                        _utilityReturnFocus.Focus();
-                    else this.GetVisualDescendants().OfType<Button>().FirstOrDefault(button => button.Classes.Contains("nav") && button.Classes.Contains("selected"))?.Focus();
-                });
-            }
-            if (e.PropertyName != nameof(MainWindowViewModel.IsTaskEditorOpen)) return;
-            if (_viewModel.IsTaskEditorOpen)
-            {
-                _editorReturnFocus = FocusManager?.GetFocusedElement() as Control;
-                Dispatcher.UIThread.Post(() => TaskEditorTitle.Focus());
-            }
-            else
-            {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (_editorReturnFocus?.IsEffectivelyVisible == true && TopLevel.GetTopLevel(_editorReturnFocus) is not null)
-                        _editorReturnFocus.Focus();
-                    else if (_viewModel.IsTasksVisible) TaskListViewButton.Focus();
-                });
-            }
-        };
-        SizeChanged += (_, _) =>
-        {
-            TrackerActivitiesScroll.MaxHeight = Math.Max(260, Bounds.Height - 270);
-            TrackerSessionsScroll.MaxHeight = Math.Max(260, Bounds.Height - 270);
-            BoardScroll.Height = Math.Max(260, Bounds.Height - 380);
-        };
+        _workspace.ConnectionSettingsRequested += OnConnectionSettings;
+        Content = _workspace;
         Opened += OnOpened;
         Closed += OnClosed;
-    }
-
-    private void OnBoardCreationOpened(object? sender, EventArgs e)
-    {
-        if (sender is Flyout { Content: Control content })
-            Dispatcher.UIThread.Post(() => content.GetVisualDescendants().OfType<TextBox>().FirstOrDefault()?.Focus());
     }
 
     private async void OnOpened(object? sender, EventArgs e)
@@ -159,10 +102,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             UpdateLayout();
             foreach (var expander in this.GetVisualDescendants().OfType<Expander>().ToArray())
                 expander.IsExpanded = section.Contains("-details", StringComparison.Ordinal);
-            PageScroll.Offset = default;
-            UpdateLayout();
-            if (section.EndsWith("-bottom", StringComparison.Ordinal))
-                PageScroll.ScrollToEnd();
+            _workspace.ResetPageScroll(section.EndsWith("-bottom", StringComparison.Ordinal));
             await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render);
             await Task.Delay(section == "calendar-history-flex" ? 250 : 50);
 
@@ -183,7 +123,6 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private async void OnClosed(object? sender, EventArgs e)
     {
-        ClearBoardDrag();
         await DisposeAsync();
     }
 

@@ -26,18 +26,20 @@
       <Border Classes="card" Padding="24">
         <StackPanel Spacing="20">
           <StackPanel Spacing="6"><TextBlock Text="YOUR DATA" Classes="eyebrow" /><TextBlock Text="A workspace you can keep." Classes="section-heading" /><TextBlock Text="Create a verified copy, or take your work with you." Classes="muted" /></StackPanel>
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
-            <StackPanel Spacing="10">
+          <Grid x:Name="DataActionsGrid" ColumnDefinitions="*,*" ColumnSpacing="24" RowSpacing="18">
+            <StackPanel x:Name="BackupActions" Spacing="10">
               <TextBlock Text="Back up &amp; recover" FontWeight="SemiBold" />
               <TextBlock Text="Save a checked copy of your workspace. Restore the latest backup when you need it." Classes="muted" TextWrapping="Wrap" />
               <Button Classes="primary" Content="Create backup" AutomationProperties.Name="Create verified backup" Command="{Binding BackupCommand}" />
-              <Button Classes="ghost" Content="Restore latest backup" AutomationProperties.Name="Restore latest backup" Command="{Binding RestoreCommand}" />
+              <Button Classes="ghost" Content="{Binding RestoreActionLabel}" AutomationProperties.Name="{Binding RestoreActionLabel}" Command="{Binding RestoreCommand}" />
             </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="10">
+            <StackPanel x:Name="ExportActions" Grid.Column="1" Spacing="10">
               <TextBlock Text="Export your work" FontWeight="SemiBold" />
               <TextBlock Text="Keep a full JSON export, or use your last 30 days of time entries in a spreadsheet." Classes="muted" TextWrapping="Wrap" />
               <Button Classes="secondary" Content="Export workspace JSON" AutomationProperties.Name="Export workspace JSON" Command="{Binding ExportCommand}" />
               <Button Classes="ghost" Content="Export worklog CSV" AutomationProperties.Name="Export CSV worklog" Command="{Binding ExportCsvCommand}" />
+              <Button Classes="secondary" Content="Share workspace JSON" AutomationProperties.Name="Share workspace JSON" Command="{Binding ShareExportCommand}" IsVisible="{Binding HasDocumentShare}" />
+              <Button Classes="ghost" Content="Share worklog CSV" AutomationProperties.Name="Share CSV worklog" Command="{Binding ShareCsvCommand}" IsVisible="{Binding HasDocumentShare}" />
             </StackPanel>
           </Grid>
         </StackPanel>
@@ -52,6 +54,49 @@
             <Button Classes="secondary" Content="Save timer preference" Command="{Binding SaveSettingsCommand}" />
             <Button Classes="ghost" Content="Reset to saved" Command="{Binding ResetTimerPreferenceCommand}" />
           </StackPanel>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24" IsVisible="{Binding HasTimerNotificationSetup}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="TIMER NOTIFICATIONS" Classes="eyebrow" />
+          <TextBlock Text="Keep active time visible." Classes="section-heading" />
+          <TextBlock Text="Allow Snook to show running and paused timers with Pause, Resume, and Stop actions. Timer truth stays in the workspace; denial does not affect timers inside the app. Task and activity details are hidden on the lock screen." Classes="muted" TextWrapping="Wrap" />
+          <WrapPanel Orientation="Horizontal">
+            <Button Classes="secondary" Content="Enable timer notifications" AutomationProperties.Name="Enable timer notifications" Command="{Binding TimerNotificationSetupCommand}" />
+            <Button Classes="ghost" Margin="8,0,0,0" Content="Review Live Update access" AutomationProperties.Name="Review Live Update access" Command="{Binding TimerLiveUpdateSetupCommand}" IsVisible="{Binding HasTimerLiveUpdateSetup}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24" IsVisible="{Binding HasReminderNotificationSetup}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="TASK REMINDERS" Classes="eyebrow" />
+          <TextBlock Text="Timed deadlines, without false promises." Classes="section-heading" />
+          <TextBlock Text="Allow Snook to schedule inexact notifications for tasks with an explicit date, time, and zone. Android can delay delivery under Doze, battery restrictions, force-stop, or permission changes. Attached reminders use a bounded encrypted last-synced index and say when the daemon could not be reached." Classes="muted" TextWrapping="Wrap" />
+          <Button Classes="secondary" Content="Enable and test reminders" AutomationProperties.Name="Enable and test task reminders" Command="{Binding ReminderNotificationSetupCommand}" />
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24" IsVisible="{Binding HasAppLockSetup}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="APP LOCK" Classes="eyebrow" />
+          <TextBlock Text="Hide the workspace when you step away." Classes="section-heading" />
+          <TextBlock Text="Enable or disable an optional foreground gate backed by Android's enrolled device credential. Snook hides its activity before authentication; this does not encrypt the SQLite workspace or replace full-device encryption." Classes="muted" TextWrapping="Wrap" />
+          <Button Classes="secondary" Content="Change app lock" AutomationProperties.Name="Change Android app lock" Command="{Binding AppLockSetupCommand}" />
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24" IsVisible="{Binding HasNotificationPrivacySetup}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="NOTIFICATION PRIVACY" Classes="eyebrow" />
+          <TextBlock Text="Choose whether private titles leave the app." Classes="section-heading" />
+          <TextBlock Text="Details are hidden by default. Toggle private notification details to allow task and activity titles in the notification shade. Public lock-screen versions stay redacted, and descriptions or journal text are never included." Classes="muted" TextWrapping="Wrap" />
+          <Button Classes="secondary" Content="Toggle private notification details" AutomationProperties.Name="Toggle private notification details" Command="{Binding NotificationPrivacySetupCommand}" />
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="24" IsVisible="{Binding HasScreenPrivacySetup}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="SCREEN PRIVACY" Classes="eyebrow" />
+          <TextBlock Text="Control screenshots and recent-task previews." Classes="section-heading" />
+          <TextBlock Text="Toggle capture blocking for the ordinary workspace. Locked screens are always protected. Leaving screenshots available can help accessibility and support workflows; enable blocking when shoulder-surfing or recent-task previews are the greater risk." Classes="muted" TextWrapping="Wrap" />
+          <Button Classes="secondary" Content="Toggle workspace capture blocking" AutomationProperties.Name="Toggle workspace screenshot blocking" Command="{Binding ScreenPrivacySetupCommand}" />
         </StackPanel>
       </Border>
     </StackPanel>

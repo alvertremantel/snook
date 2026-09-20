@@ -104,13 +104,16 @@ public sealed partial class MainWindowViewModel
 
     private async Task ReloadCalendarAsync()
     {
+        if (!IsPresentationActive) return;
+        var presentationGeneration = _presentationGeneration;
         ++_calendarLoadVersion;
         _historyGridEnd = default;
         CalendarDayColumns.Clear();
         CalendarRangeLabel = "Loading calendar…";
-        try { await LoadCalendarAsync(await _backend.GetBootstrapAsync()); }
+        try { await LoadVisibleCalendarAsync(); }
         catch (Exception)
         {
+            if (!IsPresentationActive || presentationGeneration != _presentationGeneration) return;
             CalendarRangeLabel = "Calendar unavailable";
             StatusMessage = "That calendar range could not be loaded. Use Refresh to try again.";
         }

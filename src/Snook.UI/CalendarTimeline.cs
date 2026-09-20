@@ -21,6 +21,10 @@ public sealed class CalendarTimeline : UserControl
     private DateTime? _rangeStart;
     private bool _rangeIsHistory;
     private bool _rebuildQueued;
+    private ScrollViewer? _dayScroll;
+    private Grid? _dayNavigation;
+    private ComboBox? _dayPicker;
+    private DateTime? _selectedDay;
     public IEnumerable<CalendarDayColumnViewModel>? Days { get => GetValue(DaysProperty); set => SetValue(DaysProperty, value); }
 
     public CalendarTimeline()
@@ -58,13 +62,27 @@ public sealed class CalendarTimeline : UserControl
     private void ResizeSheet()
     {
         if (_sheet is not null)
-            _sheet.Width = Math.Max(Bounds.Width, 56 + (Days?.Count() ?? 1) * 80);
+        {
+            var count = Days?.Count() ?? 1;
+            _sheet.Width = Math.Max(Bounds.Width, 56 + count * (Bounds.Width < 600 ? 160 : 80));
+            if (_dayNavigation is not null) _dayNavigation.IsVisible = count > 1 && _sheet.Width > Bounds.Width + 1;
+        }
+    }
+
+    private void JumpToDay(int index)
+    {
+        if (_sheet is null || _dayScroll is null) return;
+        var days = Days?.ToArray() ?? [];
+        if (index < 0 || index >= days.Length) return;
+        _selectedDay = days[index].Date;
+        var width = (_sheet.Width - 56) / days.Length;
+        _dayScroll.Offset = new Vector(Math.Clamp(index * width, 0, Math.Max(0, _sheet.Width - _dayScroll.Viewport.Width)), 0);
     }
 
     private void Rebuild()
     {
         var days = Days?.ToArray() ?? [];
-        if (days.Length is < 1 or > 21) { Content = null; _sheet = null; return; }
+        if (days.Length is < 1 or > 21) { Content = null; _sheet = null; _dayScroll = null; _dayNavigation = null; _dayPicker = null; return; }
         var focusedKey = (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Button)?.DataContext is CalendarGridItemViewModel focused ? focused.Key : null;
         _sheet = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto") };
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("56," + string.Join(',', days.Select(_ => "*"))) };
@@ -116,11 +134,47 @@ public sealed class CalendarTimeline : UserControl
         _sheet.Children.Add(header);
         _sheet.Children.Add(allDay);
         _sheet.Children.Add(scroll);
-        Content = new ScrollViewer
+        _dayScroll = new ScrollViewer
         {
             Content = _sheet, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
         };
+        var dayScroll = _dayScroll;
+        dayScroll.ScrollChanged += (_, _) => panel.SetHorizontalOffset(dayScroll.Offset.X);
+        _dayPicker = new ComboBox
+        {
+            ItemsSource = days.Select(day => day.Date.ToString("ddd, MMM d", CultureInfo.CurrentCulture)).ToArray(),
+            MinHeight = 48, HorizontalAlignment = HorizontalAlignment.Stretch,
+            SelectedIndex = Math.Max(0, Array.FindIndex(days, day => day.Date == _selectedDay))
+        };
+        AutomationProperties.SetName(_dayPicker, "Jump to calendar day");
+        var picker = _dayPicker;
+        var previousDay = new Button { Content = "‹", MinWidth = 48, MinHeight = 48 };
+        var nextDay = new Button { Content = "›", MinWidth = 48, MinHeight = 48 };
+        AutomationProperties.SetName(previousDay, "Earlier calendar day");
+        AutomationProperties.SetName(nextDay, "Later calendar day");
+        void UpdateDay()
+        {
+            previousDay.IsEnabled = picker.SelectedIndex > 0;
+            nextDay.IsEnabled = picker.SelectedIndex < days.Length - 1;
+            if (ReferenceEquals(picker, _dayPicker)) JumpToDay(picker.SelectedIndex);
+        }
+        picker.SelectionChanged += (_, _) => UpdateDay();
+        previousDay.Click += (_, _) => picker.SelectedIndex = Math.Max(0, picker.SelectedIndex - 1);
+        nextDay.Click += (_, _) => picker.SelectedIndex = Math.Min(days.Length - 1, picker.SelectedIndex + 1);
+        previousDay.IsEnabled = picker.SelectedIndex > 0;
+        nextDay.IsEnabled = picker.SelectedIndex < days.Length - 1;
+        _dayNavigation = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 8, Margin = new Thickness(0, 0, 0, 10) };
+        Grid.SetColumn(_dayPicker, 1);
+        Grid.SetColumn(nextDay, 2);
+        _dayNavigation.Children.Add(previousDay);
+        _dayNavigation.Children.Add(_dayPicker);
+        _dayNavigation.Children.Add(nextDay);
+        var container = new StackPanel();
+        container.Children.Add(_dayNavigation);
+        container.Children.Add(_dayScroll);
+        _dayScroll.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(UpdateDay);
+        Content = container;
         ResizeSheet();
         if (focusedKey is { Length: > 0 })
             Dispatcher.UIThread.Post(() => this.GetVisualDescendants().OfType<Button>()
@@ -242,10 +296,21 @@ internal sealed class SchedulePanel : Panel
         _hours = (int)Math.Ceiling(days.Max(day => day.MinuteCount) / 60);
         ClipToBounds = true;
         for (var hour = 0; hour < _hours; hour++)
-            Children.Add(new TextBlock { Text = hour == 24 ? "24h" : DateTime.Today.AddHours(hour).ToString("HH:mm", CultureInfo.CurrentCulture), FontSize = 10,
-                Foreground = Brush.Parse("#60747A") });
+            Children.Add(new Border
+            {
+                Background = Brushes.White, ZIndex = 1,
+                Child = new TextBlock { Text = hour == 24 ? "24h" : DateTime.Today.AddHours(hour).ToString("HH:mm", CultureInfo.CurrentCulture), FontSize = 10,
+                    Margin = new Thickness(0, 5, 8, 0), Foreground = Brush.Parse("#60747A") }
+            });
         foreach (var placement in _placements) Children.Add(CalendarTimeline.CreateEntry(placement.Item, true));
         Children.Add(new ScheduleGrid(days) { ZIndex = -1, IsHitTestVisible = false });
+    }
+
+    public void SetHorizontalOffset(double offset)
+    {
+        // Keep the time scale visible while the day columns pan underneath it.
+        for (var hour = 0; hour < _hours; hour++)
+            Children[hour].RenderTransform = new TranslateTransform(offset, 0);
     }
 
     protected override Size MeasureOverride(Size availableSize)
@@ -264,7 +329,7 @@ internal sealed class SchedulePanel : Panel
     {
         var dayWidth = (finalSize.Width - Gutter) / _days.Length;
         Children[^1].Arrange(new Rect(finalSize));
-        for (var hour = 0; hour < _hours; hour++) Children[hour].Arrange(new Rect(0, hour * HourHeight + 5, Gutter - 8, 20));
+        for (var hour = 0; hour < _hours; hour++) Children[hour].Arrange(new Rect(0, hour * HourHeight, Gutter, HourHeight));
         for (var index = 0; index < _placements.Count; index++)
         {
             var p = _placements[index];

@@ -80,7 +80,8 @@ public sealed partial class SqliteStore
 
     private static async Task ValidateAdditiveMigrationsAsync(SqliteConnection connection, int latest, CancellationToken cancellationToken)
     {
-        string[] checksums = [TaskWorkspaceChecksum, HabitsChecksum, JournalsChecksum, ExactReceiptsChecksum];
+        string[] checksums = [TaskWorkspaceChecksum, HabitsChecksum, JournalsChecksum,
+            ExactReceiptsChecksum, TaskRemindersChecksum];
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT sequence,checksum FROM schema_migrations WHERE sequence>=7 ORDER BY sequence;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

@@ -60,6 +60,12 @@ public static class Program
             }
 
             await using var backend = await CreateBackendAsync(invocation.Options, cancellationToken);
+            if (invocation.Command == "pairing")
+            {
+                var pairingResult = await RunPairingAsync(backend, invocation.Arguments, cancellationToken);
+                WriteJson(pairingResult, stdout);
+                return 0;
+            }
             if (invocation.Command == "watch")
             {
                 await RunWatchAsync(backend, invocation.Arguments, stdout, cancellationToken);
@@ -130,6 +136,28 @@ public static class Program
         }
 
         return await backend.SearchTasksAsync(args.Count == 0 ? null : args[0], includeCompleted: true, cancellationToken: cancellationToken);
+    }
+
+    private static async Task<object> RunPairingAsync(IBackendClient backend,
+        IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (backend is not DaemonBackendClient { EndpointKind: DaemonEndpointKind.Loopback } daemon)
+            throw new CliUsageException("pairing administration requires --host daemon and an authenticated HTTP loopback endpoint.");
+        if (args.Count == 1 && args[0] == "list")
+            return new { devices = await daemon.ListPairedDevicesAsync(cancellationToken) };
+        if (args.Count == 2 && args[0] == "create")
+        {
+            if (!Uri.TryCreate(args[1], UriKind.Absolute, out var origin))
+                throw new CliUsageException("pairing create requires an HTTPS *.ts.net Serve origin.");
+            return await daemon.CreatePairingChallengeAsync(origin, cancellationToken);
+        }
+        if (args.Count == 2 && args[0] == "revoke"
+            && Guid.TryParse(args[1], out var credentialId) && credentialId != Guid.Empty)
+            return await daemon.RevokePairedDeviceAsync(credentialId, cancellationToken);
+        if (args.Count == 3 && args[0] == "rename"
+            && Guid.TryParse(args[1], out credentialId) && credentialId != Guid.Empty)
+            return await daemon.RenamePairedDeviceAsync(credentialId, args[2], cancellationToken);
+        throw new CliUsageException("pairing requires create HTTPS_ORIGIN, list, rename CREDENTIAL_ID NAME, or revoke CREDENTIAL_ID.");
     }
 
     private static async Task<object> RunHabitsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -684,6 +712,7 @@ public static class Program
         writer.WriteLine("          call create-journal-entry|update-journal-entry|set-journal-entry-deleted JSON");
         writer.WriteLine("          call get-journal-entry|get-journal-tags JSON");
         writer.WriteLine("          calendar blocks|events [Range JSON] | task-batch plan|apply JSON | doctor | watch | api");
+        writer.WriteLine("          pairing create HTTPS_ORIGIN | pairing list | pairing rename CREDENTIAL_ID NAME | pairing revoke CREDENTIAL_ID");
         writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();
         writer.WriteLine("Example: snook-cli call create-task '{\"projectId\":\"...\",\"title\":\"Write brief\",\"priority\":\"High\"}'");

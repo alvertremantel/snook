@@ -11,10 +11,18 @@ using DomainCalendar = Snook.Domain.Calendar;
 
 namespace Snook.UI;
 
+public enum UiHaptic
+{
+    Confirm,
+    Reorder,
+    Invalid
+}
+
 public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private const string LocalDateTimeFormat = "yyyy-MM-dd HH:mm";
     private readonly IBackendClient _backend;
+    private readonly bool _ownsBackend;
     private readonly TimeProvider _clock;
     private readonly PendingCreateOperation _createTaskOperation = new();
     private readonly PendingCreateOperation _createProjectOperation = new();
@@ -26,7 +34,19 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private readonly PendingCreateOperation _planOperation = new();
     private readonly PendingCreateOperation _manualOperation = new();
     private readonly PendingCreateOperation _quickManualOperation = new();
-    private readonly Timer _displayTimer;
+    private readonly ITimer _displayTimer;
+    private volatile bool _presentationActive;
+    private volatile bool _disposed;
+    private int _presentationGeneration;
+    private CancellationTokenSource _presentationReads = new();
+    private RefreshBatch? _refreshBatch;
+
+    private sealed class RefreshBatch(int generation)
+    {
+        public int Generation { get; } = generation;
+        public bool Pending { get; set; }
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
     private bool _initialized;
     private string _taskTitle = string.Empty;
     private string _searchText = string.Empty;
@@ -91,9 +111,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private DateTimeOffset _nextDayRefresh;
     private TaskDetailsPanelViewModel? _selectedTaskDetails;
 
-    public MainWindowViewModel(IBackendClient backend, TimeProvider? clock = null)
+    public MainWindowViewModel(IBackendClient backend, TimeProvider? clock = null, bool ownsBackend = true, bool presentationActive = true)
     {
         _backend = backend;
+        _ownsBackend = ownsBackend;
+        _presentationActive = presentationActive;
+        if (!presentationActive) _presentationReads.Cancel();
         _clock = clock ?? TimeProvider.System;
         InitializeCalendarCommands();
         InitializeTaskWorkspaceCommands();
@@ -101,7 +124,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         InitializeHabitCommands();
         InitializeJournalCommands();
         _backend.Changed += OnBackendChanged;
-        if (_backend is DaemonBackendClient daemon) daemon.ConnectionStateChanged += OnConnectionStateChanged;
+        if (_backend is IBackendConnectionState connection) connection.ConnectionStateChanged += OnConnectionStateChanged;
         RefreshCommand = new AsyncCommand(_ => RefreshAsync());
         CreateTaskCommand = new AsyncCommand(_ => CreateTaskAsync(), _ => !string.IsNullOrWhiteSpace(TaskTitle) && SelectedProjectId != Guid.Empty);
         StartFocusCommand = new AsyncCommand(_ => StartFocusAsync());
@@ -110,6 +133,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         BackupCommand = new AsyncCommand(_ => CreateBackupAsync());
         ExportCommand = new AsyncCommand(_ => ExportAsync());
         ExportCsvCommand = new AsyncCommand(_ => ExportCsvAsync());
+        ShareExportCommand = new AsyncCommand(_ => ShareExportAsync());
+        ShareCsvCommand = new AsyncCommand(_ => ShareCsvAsync());
         RestoreCommand = new AsyncCommand(_ => RestoreLatestBackupAsync());
         LoadMoreHistoryCommand = new AsyncCommand(_ => LoadMoreHistoryAsync(), _ => HistoryHasMore);
         ShowTaskDetailsCommand = new AsyncCommand(row => row is TaskRowViewModel taskRow ? ShowTaskDetailsAsync(taskRow) : Task.CompletedTask);
@@ -126,12 +151,22 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         CreateCalendarEventCommand = new AsyncCommand(_ => CreateCalendarEventAsync(), _ => !string.IsNullOrWhiteSpace(NewEventTitle) && SelectedCalendarId != Guid.Empty);
         CreateCalendarCommand = new AsyncCommand(_ => CreateCalendarAsync(), _ => !string.IsNullOrWhiteSpace(NewCalendarName));
         SaveSettingsCommand = new AsyncCommand(_ => SaveSettingsAsync());
+        TimerNotificationSetupCommand = new AsyncCommand(_ => ConfigureTimerNotificationsAsync());
+        ReminderNotificationSetupCommand = new AsyncCommand(_ => ConfigureReminderNotificationsAsync());
+        AppLockSetupCommand = new AsyncCommand(_ => ConfigureAppLockAsync());
+        NotificationPrivacySetupCommand = new AsyncCommand(_ => ConfigureNotificationPrivacyAsync());
+        ScreenPrivacySetupCommand = new AsyncCommand(_ => ConfigureScreenPrivacyAsync());
+        TimerLiveUpdateSetupCommand = new AsyncCommand(_ => ConfigureTimerLiveUpdatesAsync());
         ResetTimerPreferenceCommand = new AsyncCommand(async _ =>
         {
             _timerPreferenceDirty = false;
             await RefreshAsync();
         });
-        _displayTimer = new Timer(_ => Dispatcher.UIThread.Post(UpdateDisplayTimes), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        _displayTimer = _clock.CreateTimer(_ =>
+        {
+            if (_presentationActive && !_disposed) Dispatcher.UIThread.Post(UpdateDisplayTimes);
+        }, null, presentationActive ? TimeSpan.FromSeconds(1) : Timeout.InfiniteTimeSpan,
+            presentationActive ? TimeSpan.FromSeconds(1) : Timeout.InfiniteTimeSpan);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -190,6 +225,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ICommand BackupCommand { get; }
     public ICommand ExportCommand { get; }
     public ICommand ExportCsvCommand { get; }
+    public ICommand ShareExportCommand { get; }
+    public ICommand ShareCsvCommand { get; }
     public ICommand RestoreCommand { get; }
     public ICommand LoadMoreHistoryCommand { get; }
     public ICommand ShowTaskDetailsCommand { get; }
@@ -207,6 +244,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public ICommand CreateCalendarCommand { get; }
     public ICommand SaveSettingsCommand { get; }
     public ICommand ResetTimerPreferenceCommand { get; }
+    public ICommand TimerNotificationSetupCommand { get; }
+    public ICommand ReminderNotificationSetupCommand { get; }
+    public ICommand AppLockSetupCommand { get; }
+    public ICommand NotificationPrivacySetupCommand { get; }
+    public ICommand ScreenPrivacySetupCommand { get; }
+    public ICommand TimerLiveUpdateSetupCommand { get; }
 
     public string WorkspaceName { get => _workspaceName; private set => SetField(ref _workspaceName, value); }
     public string CurrentSection { get => _currentSection; private set => SetField(ref _currentSection, value); }
@@ -294,7 +337,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
     private bool _connectionProblem;
     public bool ConnectionProblem { get => _connectionProblem; private set => SetField(ref _connectionProblem, value); }
-    public string ConnectionLabel => _backend is DaemonBackendClient daemon ? $"Daemon · {daemon.Endpoint}" : "Embedded workspace";
+    public string ConnectionLabel => _backend is IBackendConnectionState connection
+        ? connection.ConnectionLabel : "Embedded workspace";
     public string TrackedToday { get => _trackedToday; private set => SetField(ref _trackedToday, value); }
     public int OpenTaskCount { get => _openTaskCount; private set => SetField(ref _openTaskCount, value); }
     public bool HasNoActiveSessions { get => _hasNoActiveSessions; private set => SetField(ref _hasNoActiveSessions, value); }
@@ -374,11 +418,52 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         await RefreshAsync();
     }
 
-    private async Task RefreshAsync()
+    private Task RefreshAsync()
+    {
+        if (!_presentationActive || _disposed) return Task.CompletedTask;
+        if (_refreshBatch is { } current && current.Generation == _presentationGeneration)
+        {
+            current.Pending = true;
+            return current.Completion.Task;
+        }
+
+        var batch = new RefreshBatch(_presentationGeneration);
+        _refreshBatch = batch;
+        _ = RunRefreshBatchAsync(batch);
+        return batch.Completion.Task;
+    }
+
+    private async Task RunRefreshBatchAsync(RefreshBatch batch)
     {
         try
         {
-            var bootstrap = await _backend.GetBootstrapAsync();
+            do
+            {
+                batch.Pending = false;
+                await RefreshCoreAsync();
+            }
+            while (batch.Pending && _presentationActive && !_disposed && batch.Generation == _presentationGeneration);
+        }
+        catch (Exception exception)
+        {
+            batch.Completion.TrySetException(exception);
+        }
+        finally
+        {
+            if (ReferenceEquals(_refreshBatch, batch)) _refreshBatch = null;
+        }
+        batch.Completion.TrySetResult();
+    }
+
+    private async Task RefreshCoreAsync()
+    {
+        if (!_presentationActive || _disposed) return;
+        var presentationGeneration = _presentationGeneration;
+        var cancellationToken = _presentationReads.Token;
+        try
+        {
+            var bootstrap = await _backend.GetBootstrapAsync(cancellationToken);
+            if (!_presentationActive || _disposed || presentationGeneration != _presentationGeneration) return;
             ConnectionProblem = false;
             WorkspaceName = bootstrap.Workspace.Name;
             if (bootstrap.Settings is not null && !_timerPreferenceDirty)
@@ -436,9 +521,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 SelectedTrackingActivityId = Activities.Count == 0 ? Guid.Empty : Activities[0].Id;
             }
 
+            var manualTasks = await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true,
+                cancellationToken: cancellationToken);
+            if (!_presentationActive || _disposed || presentationGeneration != _presentationGeneration) return;
             ReconcileOptions(ManualTaskOptions,
-                (await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true))
-                    .Select(task => new TaskOption(task.Task.Id, task.Task.Title)), task => task.Id);
+                manualTasks.Select(task => new TaskOption(task.Task.Id, task.Task.Title)), task => task.Id);
 
             ReconcileOptions(ActivityGroups,
                 new[] { new ActivityGroupOption(Guid.Empty, "No group") }.Concat(
@@ -520,12 +607,17 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             RaisePropertyChanged(nameof(HasRecoverySessions));
 
             await LoadTasksAsync();
+            if (!_presentationActive || _disposed || presentationGeneration != _presentationGeneration) return;
             if (IsTodayVisible)
             {
                 await LoadTodayReviewAsync();
             }
 
-            if (!IsTaskEditorOpen && !IsUtilityEditorOpen) StatusMessage = "All changes are saved locally.";
+            if (!_presentationActive || _disposed || presentationGeneration != _presentationGeneration) return;
+            if (!IsTaskEditorOpen && !IsUtilityEditorOpen)
+                StatusMessage = _backend is IBackendConnectionState
+                    ? "Workspace refreshed from the paired daemon."
+                    : "All changes are saved locally.";
             if (IsHabitsVisible) await LoadHabitsAsync();
             if (IsJournalsVisible) await LoadJournalsAsync();
             if (IsHistoryVisible)
@@ -543,17 +635,24 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         catch (Exception exception)
         {
-            ConnectionProblem = _backend is DaemonBackendClient;
+            if (!_presentationActive || _disposed || presentationGeneration != _presentationGeneration) return;
+            ConnectionProblem = _backend is IBackendConnectionState;
             StatusMessage = exception is SnookException snook ? snook.Message : "Snook could not refresh the workspace.";
         }
     }
+
+    public Func<TaskCaptureIntent, OperationRequest, Task>? TaskCreationCheckpointAsync { get; set; }
 
     private async Task CreateTaskAsync()
     {
         try
         {
-            await _createTaskOperation.RunAsync(() => new { ProjectId = SelectedProjectId, Title = TaskTitle.Trim() },
-                (draft, request) => _backend.CreateTaskAsync(draft.ProjectId, draft.Title, request: request));
+            await _createTaskOperation.RunAsync(() => new TaskCaptureIntent(SelectedProjectId, TaskTitle.Trim()),
+                async (draft, request) =>
+                {
+                    if (TaskCreationCheckpointAsync is { } checkpoint) await checkpoint(draft, request);
+                    return await _backend.CreateTaskAsync(draft.ProjectId, draft.Title, request: request);
+                });
             TaskTitle = string.Empty;
             await RefreshAsync();
         }
@@ -561,6 +660,25 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         {
             StatusMessage = PendingCreateOperation.Failure(exception, "The task could not be created.");
         }
+    }
+
+    public TaskCaptureDraft? CaptureTaskDraft(Guid workspaceId)
+    {
+        var intent = new TaskCaptureIntent(SelectedProjectId, TaskTitle.Trim());
+        var draft = new TaskCaptureDraft(1, workspaceId, _clock.GetUtcNow(), intent, _createTaskOperation.RequestFor(intent));
+        return draft.IsValid(workspaceId, _clock.GetUtcNow()) ? draft : null;
+    }
+
+    public bool RestoreTaskDraft(TaskCaptureDraft draft, Guid workspaceId)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        if (_disposed || !draft.IsValid(workspaceId, _clock.GetUtcNow()) || !string.IsNullOrEmpty(TaskTitle)
+            || IsTaskEditorOpen || IsUtilityEditorOpen || !Projects.Any(project => project.Id == draft.Intent.ProjectId)) return false;
+        SelectedProjectId = draft.Intent.ProjectId;
+        TaskTitle = draft.Intent.Title;
+        if (draft.PendingRequest is { } request) _createTaskOperation.Restore(draft.Intent, request);
+        else _createTaskOperation.Reset();
+        return true;
     }
 
     private async Task CreateProjectAsync()
@@ -608,7 +726,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             {
                 Name = NewActivityName.Trim(), Description = NewActivityDescription.Trim(), Lane = NewActivityLane,
                 GroupId = NewActivityGroupId == Guid.Empty ? (Guid?)null : NewActivityGroupId
-            }, (draft, request) => _backend.CreateActivityAsync(draft.Name, draft.Description, draft.Lane, draft.GroupId, request));
+            }, (draft, request) => _backend.CreateActivityAsync(draft.Name, draft.Description, draft.Lane, draft.GroupId, request),
+                CheckpointUtilityEditorAsync);
             NewActivityName = string.Empty;
             NewActivityDescription = string.Empty;
             FinishUtilityEdit("activity");
@@ -655,6 +774,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             await _backend.ReorderActivityGroupAsync(row.Group.Id, direction, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Group.Revision));
+            RequestHaptic(UiHaptic.Reorder);
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -797,6 +917,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             await _backend.ReorderProjectAsync(row.Project.Id, direction, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Project.Revision));
+            RequestHaptic(UiHaptic.Reorder);
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -845,6 +966,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             await _backend.ReorderBoardAsync(row.Board.Id, direction, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Board.Revision));
+            RequestHaptic(UiHaptic.Reorder);
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -1096,7 +1218,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
         else if (normalized == "Calendar")
         {
-            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+            await ReloadCalendarAsync();
         }
         else if (normalized == "Summary")
         {
@@ -1159,118 +1281,161 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private Task LoadMoreHistoryAsync() => LoadHistoryAsync(true);
 
+    private int _todayLoadVersion;
+    private int _historyLoadVersion;
+    private int _summaryLoadVersion;
+
     private async Task LoadTodayReviewAsync()
     {
-        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.Local);
-        var localStart = LocalDateToUtc(localNow.Date);
-        var localEnd = LocalDateToUtc(localNow.Date.AddDays(7));
-        var upcoming = new List<(DateTimeOffset At, ReviewRowViewModel Row)>();
-        TodayRecentRows.Clear();
-        TodayUpcomingRows.Clear();
-
-        foreach (var task in Tasks.Where(item => item.Task.DueDate is not null).OrderBy(item => item.Task.DueDate).Take(5))
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
+        try
         {
-            upcoming.Add((LocalDateToUtc(task.Task.DueDate!.Value.ToDateTime(TimeOnly.MaxValue)), new ReviewRowViewModel(task.Title, $"Deadline · {task.DueLabel}")));
-        }
+            var version = ++_todayLoadVersion;
+            var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.Local);
+            var localStart = LocalDateToUtc(localNow.Date);
+            var localEnd = LocalDateToUtc(localNow.Date.AddDays(7));
+            var upcoming = new List<(DateTimeOffset At, ReviewRowViewModel Row)>();
 
-        var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
-        var taskNames = taskItems.ToDictionary(item => item.Task.Id, item => item.Task.Title);
-        var activityNames = Activities.ToDictionary(item => item.Id, item => item.Name);
-        foreach (var block in await _backend.GetCalendarRangeAsync(new CalendarRangeQuery(localStart, localEnd)))
-        {
-            if (block.EndAtUtc <= DateTimeOffset.UtcNow) continue;
-            var label = block.TaskId is { } taskId && taskNames.TryGetValue(taskId, out var taskName)
-                ? taskName
-                : block.ActivityId is { } activityId && activityNames.TryGetValue(activityId, out var activityName)
-                    ? activityName
-                    : block.TitleOverride ?? "Planned work";
-            upcoming.Add((block.StartAtUtc, new ReviewRowViewModel(label, $"Scheduled · {block.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}")));
-        }
+            foreach (var task in Tasks.Where(item => EffectiveDueDate(item.Task) is not null)
+                .OrderBy(item => EffectiveDueDate(item.Task)).Take(5))
+            {
+                var at = task.Task.DueAtUtc
+                    ?? LocalDateToUtc(EffectiveDueDate(task.Task)!.Value.ToDateTime(TimeOnly.MaxValue));
+                upcoming.Add((at, new ReviewRowViewModel(task.Title, $"Deadline · {task.DueLabel}")));
+            }
 
-        foreach (var item in await _backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(localStart, localEnd)))
-        {
-            if (item.EndAtUtc <= DateTimeOffset.UtcNow) continue;
-            upcoming.Add((item.StartAtUtc, new ReviewRowViewModel(item.Title, item.AllDay
-                ? $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d} all day"
-                : $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}")));
-        }
-        foreach (var item in upcoming.OrderBy(item => item.At)) TodayUpcomingRows.Add(item.Row);
+            var taskItems = await _backend.SearchTasksAsync(includeCompleted: true, cancellationToken: cancellationToken);
+            if (version != _todayLoadVersion) return;
+            var taskNames = taskItems.ToDictionary(item => item.Task.Id, item => item.Task.Title);
+            var activityNames = Activities.ToDictionary(item => item.Id, item => item.Name);
+            var blocks = await _backend.GetCalendarRangeAsync(new CalendarRangeQuery(localStart, localEnd), cancellationToken: cancellationToken);
+            if (version != _todayLoadVersion) return;
+            foreach (var block in blocks)
+            {
+                if (block.EndAtUtc <= DateTimeOffset.UtcNow) continue;
+                var label = block.TaskId is { } taskId && taskNames.TryGetValue(taskId, out var taskName)
+                    ? taskName
+                    : block.ActivityId is { } activityId && activityNames.TryGetValue(activityId, out var activityName)
+                        ? activityName
+                        : block.TitleOverride ?? "Planned work";
+                upcoming.Add((block.StartAtUtc, new ReviewRowViewModel(label, $"Scheduled · {block.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}")));
+            }
 
-        var history = await _backend.GetHistoryAsync(new HistoryQuery(localStart.AddDays(-7), DateTimeOffset.UtcNow, PageSize: 5));
-        foreach (var item in history.Items)
-        {
-            var label = item.TaskTitle ?? item.ActivityName ?? "Tracked work";
-            TodayRecentRows.Add(new ReviewRowViewModel(label, $"{item.Session.StartedAtUtc.ToLocalTime():ddd, MMM d h:mm tt} · {FormatForRow(item.AttributedMilliseconds)}"));
-        }
+            var events = await _backend.GetCalendarEventsRangeAsync(new CalendarRangeQuery(localStart, localEnd), cancellationToken: cancellationToken);
+            if (version != _todayLoadVersion) return;
+            foreach (var item in events)
+            {
+                if (item.EndAtUtc <= DateTimeOffset.UtcNow) continue;
+                upcoming.Add((item.StartAtUtc, new ReviewRowViewModel(item.Title, item.AllDay
+                    ? $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d} all day"
+                    : $"Event · {item.StartAtUtc.ToLocalTime():ddd, MMM d h:mm tt}")));
+            }
+            var history = await _backend.GetHistoryAsync(new HistoryQuery(localStart.AddDays(-7), DateTimeOffset.UtcNow, PageSize: 5), cancellationToken: cancellationToken);
+            if (version != _todayLoadVersion) return;
+            TodayUpcomingRows.Clear();
+            TodayRecentRows.Clear();
+            foreach (var item in upcoming.OrderBy(item => item.At)) TodayUpcomingRows.Add(item.Row);
+            foreach (var item in history.Items)
+            {
+                var label = item.TaskTitle ?? item.ActivityName ?? "Tracked work";
+                TodayRecentRows.Add(new ReviewRowViewModel(label, $"{item.Session.StartedAtUtc.ToLocalTime():ddd, MMM d h:mm tt} · {FormatForRow(item.AttributedMilliseconds)}"));
+            }
 
-        HasNoTodayRecentRows = TodayRecentRows.Count == 0;
-        HasNoTodayUpcomingRows = TodayUpcomingRows.Count == 0;
-        RaisePropertyChanged(nameof(TodayAgendaPreview));
+            HasNoTodayRecentRows = TodayRecentRows.Count == 0;
+            HasNoTodayUpcomingRows = TodayUpcomingRows.Count == 0;
+            RaisePropertyChanged(nameof(TodayAgendaPreview));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
     private async Task LoadHistoryAsync(bool append = false)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (!append)
+        if (!IsPresentationActive || (append && _historyContinuation is null)) return;
+        var cancellationToken = _presentationReads.Token;
+        try
         {
-            _historyContinuation = null;
-            HistoryItems.Clear();
-        }
+            var version = ++_historyLoadVersion;
+            var now = DateTimeOffset.UtcNow;
+            if (!append)
+            {
+                _historyContinuation = null;
+                HistoryHasMore = false;
+            }
 
-        var items = await _backend.GetHistoryAsync(new HistoryQuery(now.AddDays(-30), now.AddDays(1), SearchText, 50, _historyContinuation));
-        var taskItems = await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true);
-        var taskOptions = taskItems.Select(item => new TaskOption(item.Task.Id, item.Task.Title)).ToArray();
-        foreach (var item in items.Items)
-        {
-            HistoryItems.Add(new HistoryRowViewModel(item, taskOptions, Activities, CorrectHistoryAsync));
+            var items = await _backend.GetHistoryAsync(new HistoryQuery(now.AddDays(-30), now.AddDays(1), SearchText, 50, _historyContinuation), cancellationToken: cancellationToken);
+            if (version != _historyLoadVersion) return;
+            var taskItems = await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true, cancellationToken: cancellationToken);
+            if (version != _historyLoadVersion) return;
+            var taskOptions = taskItems.Select(item => new TaskOption(item.Task.Id, item.Task.Title)).ToArray();
+            if (!append) HistoryItems.Clear();
+            foreach (var item in items.Items)
+            {
+                HistoryItems.Add(new HistoryRowViewModel(item, taskOptions, Activities, CorrectHistoryAsync));
+            }
+            HasNoHistory = HistoryItems.Count == 0;
+            _historyContinuation = items.ContinuationToken;
+            HistoryHasMore = items.HasMore;
         }
-        HasNoHistory = HistoryItems.Count == 0;
-        _historyContinuation = items.ContinuationToken;
-        HistoryHasMore = items.HasMore;
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
     private async Task LoadSummaryAsync()
     {
-        var now = DateTimeOffset.UtcNow;
-        var grouping = Enum.TryParse<Snook.Domain.SummaryGrouping>(SummaryGrouping, true, out var parsed) ? parsed : Snook.Domain.SummaryGrouping.Tag;
-        var buckets = await _backend.GetSummaryAsync(now.AddDays(-30), now.AddDays(1), grouping, TimeZoneInfo.Local.Id);
-        SummaryItems.Clear();
-        var largest = buckets.Select(bucket => bucket.AttributedMilliseconds).DefaultIfEmpty(0).Max();
-        foreach (var bucket in buckets.OrderByDescending(bucket => bucket.AttributedMilliseconds))
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
+        try
         {
-            SummaryItems.Add(new SummaryRowViewModel(bucket, largest));
-        }
+            var version = ++_summaryLoadVersion;
+            var now = DateTimeOffset.UtcNow;
+            var grouping = Enum.TryParse<Snook.Domain.SummaryGrouping>(SummaryGrouping, true, out var parsed) ? parsed : Snook.Domain.SummaryGrouping.Tag;
+            var buckets = await _backend.GetSummaryAsync(now.AddDays(-30), now.AddDays(1), grouping, TimeZoneInfo.Local.Id, cancellationToken: cancellationToken);
+            if (version != _summaryLoadVersion) return;
+            SummaryItems.Clear();
+            var largest = buckets.Select(bucket => bucket.AttributedMilliseconds).DefaultIfEmpty(0).Max();
+            foreach (var bucket in buckets.OrderByDescending(bucket => bucket.AttributedMilliseconds))
+            {
+                SummaryItems.Add(new SummaryRowViewModel(bucket, largest));
+            }
 
-        HasNoSummary = SummaryItems.Count == 0;
+            HasNoSummary = SummaryItems.Count == 0;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
     private int _tasksLoadVersion;
     private async Task LoadTasksAsync()
     {
-        var version = ++_tasksLoadVersion;
-        var tasks = await _backend.SearchTasksAsync(SearchText, ShowCompleted, ShowArchived, ShowDeleted);
-        if (version != _tasksLoadVersion) return;
-        tasks = TaskSortMode switch
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
+        try
         {
-            "DueDate" => tasks.OrderBy(item => item.Task.DueDate is null).ThenBy(item => item.Task.DueDate).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
-            "Tracked" => tasks.OrderByDescending(item => item.TrackedMilliseconds).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
-            "Title" => tasks.OrderBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
-            _ => tasks.OrderByDescending(item => item.Task.Priority).ThenBy(item => item.Task.DueDate is null).ThenBy(item => item.Task.DueDate).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray()
-        };
-        var prerequisiteOptions = tasks.Select(item => new TaskOption(item.Task.Id, item.Task.Title)).ToArray();
-        Tasks.Clear();
-        foreach (var task in tasks)
-        {
-            var row = new TaskRowViewModel(task, Projects, Activities, prerequisiteOptions, StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
-            row.IsSelected = _selectedTaskIds.Contains(task.Task.Id);
-            row.PropertyChanged += OnTaskSelectionChanged;
-            Tasks.Add(row);
-        }
+            var version = ++_tasksLoadVersion;
+            var tasks = await _backend.SearchTasksAsync(SearchText, ShowCompleted, ShowArchived, ShowDeleted, cancellationToken: cancellationToken);
+            if (version != _tasksLoadVersion) return;
+            tasks = TaskSortMode switch
+            {
+                "DueDate" => tasks.OrderBy(item => EffectiveDueDate(item.Task) is null).ThenBy(item => EffectiveDueDate(item.Task)).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
+                "Tracked" => tasks.OrderByDescending(item => item.TrackedMilliseconds).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
+                "Title" => tasks.OrderBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray(),
+                _ => tasks.OrderByDescending(item => item.Task.Priority).ThenBy(item => EffectiveDueDate(item.Task) is null).ThenBy(item => EffectiveDueDate(item.Task)).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase).ToArray()
+            };
+            var prerequisiteOptions = tasks.Select(item => new TaskOption(item.Task.Id, item.Task.Title)).ToArray();
+            Tasks.Clear();
+            foreach (var task in tasks)
+            {
+                var row = new TaskRowViewModel(task, Projects, Activities, prerequisiteOptions, StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync, ShowTaskDetailsAsync);
+                row.IsSelected = _selectedTaskIds.Contains(task.Task.Id);
+                row.PropertyChanged += OnTaskSelectionChanged;
+                Tasks.Add(row);
+            }
 
-        RebuildTaskWorkspace();
-        HasNoTasks = Tasks.Count == 0;
-        RaisePropertyChanged(nameof(TodayNextTasks));
-        RaisePropertyChanged(nameof(HasNoTodayNextTasks));
+            RebuildTaskWorkspace();
+            HasNoTasks = Tasks.Count == 0;
+            RaisePropertyChanged(nameof(TodayNextTasks));
+            RaisePropertyChanged(nameof(HasNoTodayNextTasks));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
     private void RebuildTaskWorkspace()
@@ -1293,93 +1458,116 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         ReconcileTaskSelection();
     }
 
+    private async Task LoadVisibleCalendarAsync()
+    {
+        if (!IsPresentationActive) return;
+        var generation = _presentationGeneration;
+        var cancellationToken = _presentationReads.Token;
+        try
+        {
+            var bootstrap = await _backend.GetBootstrapAsync(cancellationToken);
+            if (generation != _presentationGeneration || !IsPresentationActive) return;
+            await LoadCalendarAsync(bootstrap);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
     private async Task LoadCalendarAsync(BootstrapSnapshot bootstrap)
     {
-        var version = ++_calendarLoadVersion;
-        var localNow = _calendarAnchor;
-        var localStart = CalendarView switch
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
+        try
         {
-            "Day" => localNow.Date,
-            "Month" => new DateTime(localNow.Year, localNow.Month, 1),
-            "Agenda" => localNow.Date,
-            "Flex" => localNow.Date.AddDays(-((_calendarFlexDays - 1) / 2)),
-            _ => localNow.Date.AddDays(-(int)localNow.DayOfWeek + (localNow.DayOfWeek == DayOfWeek.Sunday ? -6 : 1))
-        };
-        var localEnd = CalendarView switch
-        {
-            "Day" => localStart.AddDays(1),
-            "Month" => localStart.AddMonths(1),
-            "Agenda" => localStart.AddDays(14),
-            "Flex" => localStart.AddDays(_calendarFlexDays),
-            _ => localStart.AddDays(7)
-        };
-        var gridStart = localStart;
-        var rangeLabel = IsCalendarMonth ? localStart.ToString("MMMM yyyy", CultureInfo.CurrentCulture)
-            : IsCalendarDay ? localStart.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture)
-            : $"{localStart:MMM d} – {localEnd.AddDays(-1):MMM d, yyyy}";
-        var gridEnd = localEnd;
-        if (IsCalendarMonth)
-        {
-            while (gridStart.DayOfWeek != DayOfWeek.Monday)
+            var version = ++_calendarLoadVersion;
+            var localNow = _calendarAnchor;
+            var localStart = CalendarView switch
             {
-                gridStart = gridStart.AddDays(-1);
+                "Day" => localNow.Date,
+                "Month" => new DateTime(localNow.Year, localNow.Month, 1),
+                "Agenda" => localNow.Date,
+                "Flex" => localNow.Date.AddDays(-((_calendarFlexDays - 1) / 2)),
+                _ => localNow.Date.AddDays(-(int)localNow.DayOfWeek + (localNow.DayOfWeek == DayOfWeek.Sunday ? -6 : 1))
+            };
+            var localEnd = CalendarView switch
+            {
+                "Day" => localStart.AddDays(1),
+                "Month" => localStart.AddMonths(1),
+                "Agenda" => localStart.AddDays(14),
+                "Flex" => localStart.AddDays(_calendarFlexDays),
+                _ => localStart.AddDays(7)
+            };
+            var gridStart = localStart;
+            var rangeLabel = IsCalendarMonth ? localStart.ToString("MMMM yyyy", CultureInfo.CurrentCulture)
+                : IsCalendarDay ? localStart.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture)
+                : $"{localStart:MMM d} – {localEnd.AddDays(-1):MMM d, yyyy}";
+            var gridEnd = localEnd;
+            if (IsCalendarMonth)
+            {
+                while (gridStart.DayOfWeek != DayOfWeek.Monday)
+                {
+                    gridStart = gridStart.AddDays(-1);
+                }
+
+                while (gridEnd.DayOfWeek != DayOfWeek.Monday)
+                {
+                    gridEnd = gridEnd.AddDays(1);
+                }
             }
 
-            while (gridEnd.DayOfWeek != DayOfWeek.Monday)
+            var rangeStart = LocalDateToUtc(gridStart);
+            var rangeEnd = LocalDateToUtc(gridEnd);
+            var range = new CalendarRangeQuery(rangeStart, rangeEnd);
+            var blocks = await _backend.GetCalendarRangeAsync(range, cancellationToken: cancellationToken);
+            if (version != _calendarLoadVersion) return;
+            var events = IsCalendarHistoryMode ? [] : await _backend.GetCalendarEventsRangeAsync(range, cancellationToken: cancellationToken);
+            if (version != _calendarLoadVersion) return;
+            var taskItems = await _backend.SearchTasksAsync(includeCompleted: true, cancellationToken: cancellationToken);
+            if (version != _calendarLoadVersion) return;
+            var history = new List<HistoryItem>();
+            var historyTruncated = false;
+            if (IsCalendarHistoryMode && rangeStart < DateTimeOffset.UtcNow)
             {
-                gridEnd = gridEnd.AddDays(1);
+                string? continuation = null;
+                // Bound work without silently presenting a partial day as complete.
+                for (var pageIndex = 0; pageIndex < 50; pageIndex++)
+                {
+                    var page = await _backend.GetHistoryAsync(new HistoryQuery(rangeStart, rangeEnd, PageSize: 200, ContinuationToken: continuation), cancellationToken: cancellationToken);
+                    if (version != _calendarLoadVersion) return;
+                    history.AddRange(page.Items);
+                    historyTruncated = page.HasMore;
+                    if (!page.HasMore) break;
+                    continuation = page.ContinuationToken;
+                }
             }
-        }
-
-        var rangeStart = LocalDateToUtc(gridStart);
-        var rangeEnd = LocalDateToUtc(gridEnd);
-        var range = new CalendarRangeQuery(rangeStart, rangeEnd);
-        var blocks = await _backend.GetCalendarRangeAsync(range);
-        var events = IsCalendarHistoryMode ? [] : await _backend.GetCalendarEventsRangeAsync(range);
-        var taskItems = await _backend.SearchTasksAsync(includeCompleted: true);
-        var history = new List<HistoryItem>();
-        var historyTruncated = false;
-        if (IsCalendarHistoryMode && rangeStart < DateTimeOffset.UtcNow)
-        {
-            string? continuation = null;
-            // Bound work without silently presenting a partial day as complete.
-            for (var pageIndex = 0; pageIndex < 50; pageIndex++)
+            if (version != _calendarLoadVersion) return;
+            CalendarRangeLabel = rangeLabel;
+            CalendarHistoryNotice = historyTruncated ? "This range exceeds 10,000 sessions. Some history is omitted; use a narrower Flex range." : string.Empty;
+            ReconcileOptions(CalendarPlanTasks, taskItems.Where(item => item.Task.Status != TaskState.Completed && item.Task.ArchivedAtUtc is null && item.Task.DeletedAtUtc is null)
+                .Select(item => new TaskOption(item.Task.Id, item.Task.Title)), item => item.Id);
+            CalendarBlocks.Clear();
+            CalendarEvents.Clear();
+            foreach (var block in blocks)
             {
-                var page = await _backend.GetHistoryAsync(new HistoryQuery(rangeStart, rangeEnd, PageSize: 200, ContinuationToken: continuation));
-                if (version != _calendarLoadVersion) return;
-                history.AddRange(page.Items);
-                historyTruncated = page.HasMore;
-                if (!page.HasMore) break;
-                continuation = page.ContinuationToken;
+                var task = taskItems.FirstOrDefault(item => item.Task.Id == block.TaskId)?.Task.Title;
+                var activity = bootstrap.Activities.FirstOrDefault(item => item.Id == block.ActivityId)?.Name;
+                CalendarBlocks.Add(new CalendarBlockRowViewModel(block, task ?? activity ?? block.TitleOverride ?? "Planned work", UpdateCalendarBlockAsync, StartCalendarBlockAsync));
             }
+            foreach (var item in events)
+            {
+                CalendarEvents.Add(new CalendarEventRowViewModel(item, UpdateCalendarEventAsync, DeleteCalendarEventAsync));
+            }
+            if (IsCalendarHistoryMode)
+            {
+                _calendarHistory = history;
+                _historyGridStart = gridStart;
+                _historyGridEnd = gridEnd;
+                _nextCalendarTick = DateTimeOffset.MinValue;
+                RefreshCalendarHistory(_clock.GetUtcNow());
+            }
+            else BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents, taskItems);
+            HasNoCalendarBlocks = CalendarBlocks.Count == 0 && CalendarEvents.Count == 0;
         }
-        if (version != _calendarLoadVersion) return;
-        CalendarRangeLabel = rangeLabel;
-        CalendarHistoryNotice = historyTruncated ? "This range exceeds 10,000 sessions. Some history is omitted; use a narrower Flex range." : string.Empty;
-        ReconcileOptions(CalendarPlanTasks, taskItems.Where(item => item.Task.Status != TaskState.Completed && item.Task.ArchivedAtUtc is null && item.Task.DeletedAtUtc is null)
-            .Select(item => new TaskOption(item.Task.Id, item.Task.Title)), item => item.Id);
-        CalendarBlocks.Clear();
-        CalendarEvents.Clear();
-        foreach (var block in blocks)
-        {
-            var task = taskItems.FirstOrDefault(item => item.Task.Id == block.TaskId)?.Task.Title;
-            var activity = bootstrap.Activities.FirstOrDefault(item => item.Id == block.ActivityId)?.Name;
-            CalendarBlocks.Add(new CalendarBlockRowViewModel(block, task ?? activity ?? block.TitleOverride ?? "Planned work", UpdateCalendarBlockAsync, StartCalendarBlockAsync));
-        }
-        foreach (var item in events)
-        {
-            CalendarEvents.Add(new CalendarEventRowViewModel(item, UpdateCalendarEventAsync, DeleteCalendarEventAsync));
-        }
-        if (IsCalendarHistoryMode)
-        {
-            _calendarHistory = history;
-            _historyGridStart = gridStart;
-            _historyGridEnd = gridEnd;
-            _nextCalendarTick = DateTimeOffset.MinValue;
-            RefreshCalendarHistory(DateTimeOffset.UtcNow);
-        }
-        else BuildCalendarGrid(gridStart, gridEnd, localStart, CalendarBlocks, CalendarEvents, taskItems);
-        HasNoCalendarBlocks = CalendarBlocks.Count == 0 && CalendarEvents.Count == 0;
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
     private void BuildCalendarGrid(
@@ -1418,7 +1606,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 date,
                 IsCalendarMonth && date.Month != displayedMonth.Month,
                 items.OrderBy(item => item.StartAtUtc).ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase).ToArray(),
-                dueTasks: taskItems.Where(item => item.Task.DueDate == DateOnly.FromDateTime(date)
+                dueTasks: taskItems.Where(item => EffectiveDueDate(item.Task) == DateOnly.FromDateTime(date)
                     && item.Task.Status == TaskState.Open && item.Task.ArchivedAtUtc is null && item.Task.DeletedAtUtc is null)
                     .OrderByDescending(item => item.Task.Priority).ThenBy(item => item.Task.Title, StringComparer.OrdinalIgnoreCase)
                     .Select(item => new DueTaskViewModel(item.Task.Title, $"{item.BoardName} / {item.ProjectName}",
@@ -1428,6 +1616,19 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private static DateTimeOffset LocalDateToUtc(DateTime date)
         => new DateTimeOffset(date, TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();
+
+    private static DateOnly? EffectiveDueDate(TaskItem task)
+    {
+        if (task.DueDate is { } date) return date;
+        if (task.DueAtUtc is not { } instant || string.IsNullOrWhiteSpace(task.DueTimeZone)) return null;
+        try
+        {
+            return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant,
+                TimeZoneInfo.FindSystemTimeZoneById(task.DueTimeZone)).DateTime);
+        }
+        catch (TimeZoneNotFoundException) { return DateOnly.FromDateTime(instant.LocalDateTime); }
+        catch (InvalidTimeZoneException) { return DateOnly.FromDateTime(instant.LocalDateTime); }
+    }
 
     private Task ShowDueTaskAsync(TaskListItem item) => ShowTaskDetailsAsync(new TaskRowViewModel(item, Projects, Activities, [],
         StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync, DeleteTaskAsync,
@@ -1483,7 +1684,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 var block = await _backend.CreateScheduleBlockAsync(draft.Intent.CalendarId, draft.Intent.TaskId, draft.ActivityId,
                     null, draft.Start, draft.End, draft.TimeZone, request: request);
                 return new { Block = block, draft.Title };
-            }, () => readIntent());
+            }, () => readIntent(), CheckpointUtilityEditorAsync, draft =>
+                _planRecoveryArguments = new(draft.Start, draft.End, draft.TimeZone,
+                    draft.ActivityId, draft.Title));
             _calendarAnchor = planned.Block.StartAtUtc.ToLocalTime().Date;
             RaisePropertyChanged(nameof(CalendarAnchor));
             StatusMessage = $"Planned {planned.Title} for {planned.Block.StartAtUtc.ToLocalTime():MMM d, h:mm tt}.";
@@ -1557,7 +1760,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 return Task.FromResult(new { Intent = intent, Start = start.ToUniversalTime(), End = end.ToUniversalTime(), TimeZone = zone.Id, RecurrenceEnd = recurrenceEnd });
             }, (draft, request) => _backend.CreateCalendarEventAsync(draft.Intent.CalendarId, draft.Intent.Title, draft.Start, draft.End,
                 draft.Intent.Description, draft.Intent.Location, draft.Intent.Color, draft.Intent.AllDay, draft.TimeZone,
-                draft.Intent.Recurrence, draft.RecurrenceEnd, request), () => readIntent());
+                draft.Intent.Recurrence, draft.RecurrenceEnd, request), () => readIntent(),
+                CheckpointUtilityEditorAsync, draft => _eventRecoveryArguments = new(
+                    draft.Start, draft.End, draft.TimeZone, draft.RecurrenceEnd));
             NewEventTitle = string.Empty;
             NewEventDescription = string.Empty;
             NewEventLocation = string.Empty;
@@ -1586,7 +1791,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         {
             await _backend.DeleteCalendarEventAsync(row.Event.Id, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Event.Revision));
             StatusMessage = "Calendar event deleted.";
-            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+            await ReloadCalendarAsync();
         }
         catch (Exception exception)
         {
@@ -1634,7 +1839,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Event.Revision));
             StatusMessage = "Calendar event updated.";
             FinishUtilityEdit(row);
-            await LoadCalendarAsync(await _backend.GetBootstrapAsync());
+            await ReloadCalendarAsync();
         }
         catch (Exception exception)
         {
@@ -1729,10 +1934,160 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
     }
 
+    public Func<Task<string>>? BackupExportAsync { get; set; }
+    public Action<UiHaptic>? HapticFeedback { get; set; }
+    public void RequestHaptic(UiHaptic kind) => HapticFeedback?.Invoke(kind);
+    public Func<Task<string>>? BackupReviewAsync { get; set; }
+    public string RestoreActionLabel => BackupReviewAsync is null ? "Restore latest backup" : "Review backup to restore";
+    public Func<Task<string>>? JsonDocumentExportAsync { get; set; }
+    public Func<DateTimeOffset, DateTimeOffset, Task<string>>? CsvDocumentExportAsync { get; set; }
+    private Func<Task<string>>? _jsonDocumentShareAsync;
+    public Func<Task<string>>? JsonDocumentShareAsync
+    {
+        get => _jsonDocumentShareAsync;
+        set
+        {
+            if (ReferenceEquals(_jsonDocumentShareAsync, value)) return;
+            _jsonDocumentShareAsync = value;
+            RaisePropertyChanged(nameof(HasDocumentShare));
+        }
+    }
+    private Func<DateTimeOffset, DateTimeOffset, Task<string>>? _csvDocumentShareAsync;
+    public Func<DateTimeOffset, DateTimeOffset, Task<string>>? CsvDocumentShareAsync
+    {
+        get => _csvDocumentShareAsync;
+        set
+        {
+            if (ReferenceEquals(_csvDocumentShareAsync, value)) return;
+            _csvDocumentShareAsync = value;
+            RaisePropertyChanged(nameof(HasDocumentShare));
+        }
+    }
+    public bool HasDocumentShare => JsonDocumentShareAsync is not null && CsvDocumentShareAsync is not null;
+    private Func<Task<string>>? _timerNotificationSetupAsync;
+    public Func<Task<string>>? TimerNotificationSetupAsync
+    {
+        get => _timerNotificationSetupAsync;
+        set
+        {
+            if (ReferenceEquals(_timerNotificationSetupAsync, value)) return;
+            _timerNotificationSetupAsync = value;
+            RaisePropertyChanged(nameof(HasTimerNotificationSetup));
+        }
+    }
+    public bool HasTimerNotificationSetup => TimerNotificationSetupAsync is not null;
+    private Func<Task<string>>? _reminderNotificationSetupAsync;
+    public Func<Task<string>>? ReminderNotificationSetupAsync
+    {
+        get => _reminderNotificationSetupAsync;
+        set
+        {
+            if (ReferenceEquals(_reminderNotificationSetupAsync, value)) return;
+            _reminderNotificationSetupAsync = value;
+            RaisePropertyChanged(nameof(HasReminderNotificationSetup));
+        }
+    }
+    public bool HasReminderNotificationSetup => ReminderNotificationSetupAsync is not null;
+    private Func<Task<string>>? _appLockSetupAsync;
+    public Func<Task<string>>? AppLockSetupAsync
+    {
+        get => _appLockSetupAsync;
+        set
+        {
+            if (ReferenceEquals(_appLockSetupAsync, value)) return;
+            _appLockSetupAsync = value;
+            RaisePropertyChanged(nameof(HasAppLockSetup));
+        }
+    }
+    public bool HasAppLockSetup => AppLockSetupAsync is not null;
+    private Func<Task<string>>? _notificationPrivacySetupAsync;
+    public Func<Task<string>>? NotificationPrivacySetupAsync
+    {
+        get => _notificationPrivacySetupAsync;
+        set
+        {
+            if (ReferenceEquals(_notificationPrivacySetupAsync, value)) return;
+            _notificationPrivacySetupAsync = value;
+            RaisePropertyChanged(nameof(HasNotificationPrivacySetup));
+        }
+    }
+    public bool HasNotificationPrivacySetup => NotificationPrivacySetupAsync is not null;
+    private Func<Task<string>>? _screenPrivacySetupAsync;
+    public Func<Task<string>>? ScreenPrivacySetupAsync
+    {
+        get => _screenPrivacySetupAsync;
+        set
+        {
+            if (ReferenceEquals(_screenPrivacySetupAsync, value)) return;
+            _screenPrivacySetupAsync = value;
+            RaisePropertyChanged(nameof(HasScreenPrivacySetup));
+        }
+    }
+    public bool HasScreenPrivacySetup => ScreenPrivacySetupAsync is not null;
+    private Func<Task<string>>? _timerLiveUpdateSetupAsync;
+    public Func<Task<string>>? TimerLiveUpdateSetupAsync
+    {
+        get => _timerLiveUpdateSetupAsync;
+        set
+        {
+            if (ReferenceEquals(_timerLiveUpdateSetupAsync, value)) return;
+            _timerLiveUpdateSetupAsync = value;
+            RaisePropertyChanged(nameof(HasTimerLiveUpdateSetup));
+        }
+    }
+    public bool HasTimerLiveUpdateSetup => TimerLiveUpdateSetupAsync is not null;
+
+    private async Task ConfigureTimerNotificationsAsync()
+    {
+        if (TimerNotificationSetupAsync is not { } setup) return;
+        try { StatusMessage = await setup(); }
+        catch (Exception) { StatusMessage = "Timer notifications could not be configured. Timers still work inside Snook."; }
+    }
+
+    private async Task ConfigureTimerLiveUpdatesAsync()
+    {
+        if (TimerLiveUpdateSetupAsync is not { } setup) return;
+        try { StatusMessage = await setup(); }
+        catch (Exception) { StatusMessage = "Live Update access could not be opened. Ordinary timer notifications remain available."; }
+    }
+
+    private async Task ConfigureReminderNotificationsAsync()
+    {
+        if (ReminderNotificationSetupAsync is not { } setup) return;
+        try { StatusMessage = await setup(); }
+        catch (Exception) { StatusMessage = "Reminder notifications could not be configured. Timed deadlines still work inside Snook."; }
+    }
+
+    private async Task ConfigureAppLockAsync()
+    {
+        if (AppLockSetupAsync is not { } setup) return;
+        try { StatusMessage = await setup(); }
+        catch (Exception) { StatusMessage = "App lock could not be changed. Workspace data was not modified."; }
+    }
+
+    private async Task ConfigureNotificationPrivacyAsync()
+    {
+        if (NotificationPrivacySetupAsync is not { } setup) return;
+        try { StatusMessage = await setup(); }
+        catch (Exception) { StatusMessage = "Notification privacy could not be changed. Workspace data was not modified."; }
+    }
+
+    private async Task ConfigureScreenPrivacyAsync()
+    {
+        if (ScreenPrivacySetupAsync is not { } setup) return;
+        try { StatusMessage = await setup(); }
+        catch (Exception) { StatusMessage = "Screen privacy could not be changed. Workspace data was not modified."; }
+    }
+
     private async Task CreateBackupAsync()
     {
         try
         {
+            if (BackupExportAsync is { } export)
+            {
+                StatusMessage = await export();
+                return;
+            }
             var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var path = Path.Combine(root, "Snook", "Backups", $"workspace-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.db");
@@ -1749,6 +2104,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
+            if (JsonDocumentExportAsync is { } export)
+            {
+                StatusMessage = await export();
+                return;
+            }
             var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var path = Path.Combine(root, "Snook", "Exports", $"workspace-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
@@ -1765,10 +2125,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     {
         try
         {
+            var now = _clock.GetUtcNow();
+            if (CsvDocumentExportAsync is { } export)
+            {
+                StatusMessage = await export(now.AddDays(-30), now.AddDays(1));
+                return;
+            }
             var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var path = Path.Combine(root, "Snook", "Exports", $"worklog-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.csv");
-            var now = DateTimeOffset.UtcNow;
             var result = await _backend.ExportCsvAsync(path, now.AddDays(-30), now.AddDays(1));
             StatusMessage = $"Exported {result.Bytes:N0} bytes of CSV time history.";
         }
@@ -1778,10 +2143,33 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         }
     }
 
+    private async Task ShareExportAsync()
+    {
+        if (JsonDocumentShareAsync is not { } share) return;
+        try { StatusMessage = await share(); }
+        catch (Exception) { StatusMessage = "The JSON export could not be shared. Workspace data was not modified."; }
+    }
+
+    private async Task ShareCsvAsync()
+    {
+        if (CsvDocumentShareAsync is not { } share) return;
+        try
+        {
+            var now = _clock.GetUtcNow();
+            StatusMessage = await share(now.AddDays(-30), now.AddDays(1));
+        }
+        catch (Exception) { StatusMessage = "The CSV report could not be shared. Workspace data was not modified."; }
+    }
+
     private async Task RestoreLatestBackupAsync()
     {
         try
         {
+            if (BackupReviewAsync is { } review)
+            {
+                StatusMessage = await review();
+                return;
+            }
             var root = Environment.GetEnvironmentVariable("SNOOK_DATA_DIR")
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var backupDirectory = Path.Combine(root, "Snook", "Backups");
@@ -1826,7 +2214,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 if (!TryParseLocalDateTime(intent.StartText, out var start, zone) || !TryParseLocalDateTime(intent.EndText, out var end, zone) || end <= start)
                     throw new SnookException(SnookErrorCode.ValidationFailed, "Use valid manual start and end instants.");
                 return Task.FromResult(new { Intent = intent, Start = start.ToUniversalTime(), End = end.ToUniversalTime() });
-            }, (draft, request) => _backend.CreateManualSessionAsync(draft.Intent.TaskId, draft.Intent.ActivityId, draft.Start, draft.End, draft.Intent.Notes, request), () => readIntent());
+            }, (draft, request) => _backend.CreateManualSessionAsync(draft.Intent.TaskId, draft.Intent.ActivityId, draft.Start, draft.End, draft.Intent.Notes, request),
+                () => readIntent(), CheckpointUtilityEditorAsync, draft =>
+                    _manualRecoveryArguments = new(draft.Start, draft.End));
             StatusMessage = "Manual time added.";
             ManualStartText = FormatLocalDateTime(DateTimeOffset.UtcNow.AddMinutes(-30));
             ManualEndText = FormatLocalDateTime(DateTimeOffset.UtcNow);
@@ -1945,6 +2335,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
     private async Task SaveTaskAsync(TaskRowViewModel row)
     {
         DateOnly? dueDate = null;
+        DateTimeOffset? dueAtUtc = null;
+        string? dueTimeZone = null;
         if (!string.IsNullOrWhiteSpace(row.DueDateText))
         {
             if (!DateOnly.TryParseExact(row.DueDateText.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDueDate)
@@ -1957,9 +2349,46 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             dueDate = parsedDueDate;
         }
 
+        if (!string.IsNullOrWhiteSpace(row.ReminderTimeText))
+        {
+            if (dueDate is null)
+            {
+                StatusMessage = "A reminder time also needs a date.";
+                return;
+            }
+            if (!TimeOnly.TryParseExact(row.ReminderTimeText.Trim(), "HH:mm",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var localTime))
+            {
+                StatusMessage = "Use a reminder time in 24-hour HH:mm format, or leave it blank for a date-only deadline.";
+                return;
+            }
+            try
+            {
+                dueTimeZone = row.ReminderTimeZone.Trim();
+                dueAtUtc = LocalCivilTime.Resolve(dueDate.Value, localTime, dueTimeZone,
+                    row.ReminderFoldChoice);
+                dueDate = null;
+            }
+            catch (SnookException exception)
+            {
+                StatusMessage = exception.Message;
+                return;
+            }
+        }
+
         try
         {
-            var updated = await _backend.UpdateTaskAsync(row.Task.Id, new TaskUpdate(row.DraftTitle, row.DraftDescription, row.DraftPriority, dueDate, row.DraftActivityId, row.DraftStarred), new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
+            var updated = await _backend.UpdateTaskAsync(row.Task.Id,
+                new TaskUpdate(row.DraftTitle, row.DraftDescription, row.DraftPriority,
+                    dueDate, row.DraftActivityId, row.DraftStarred, dueAtUtc, dueTimeZone,
+                    ChangeTimedDue: dueAtUtc is not null || dueDate is null,
+                    ReminderLocalDate: dueAtUtc is null ? null : DateOnly.ParseExact(
+                        row.DueDateText.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ReminderLocalTime: dueAtUtc is null ? null : TimeOnly.ParseExact(
+                        row.ReminderTimeText.Trim(), "HH:mm", CultureInfo.InvariantCulture),
+                    ReminderFoldChoice: dueAtUtc is null ? null : row.ReminderFoldChoice,
+                    ReminderDeliveryPolicy: dueAtUtc is null ? null : ReminderDeliveryPolicy.Inexact),
+                new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Task.Revision));
             row.AcceptTask(updated);
             await RefreshAsync();
             if (ReferenceEquals(TaskEditor, row)) CloseTaskEditorCommand.Execute(null);
@@ -2142,6 +2571,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                 await _backend.ResumeSessionAsync(row.Session.Id, request);
             }
 
+            RequestHaptic(UiHaptic.Confirm);
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -2155,6 +2585,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         try
         {
             await _backend.StopSessionAsync(row.Session.Id, null, new OperationRequest(Guid.NewGuid(), Guid.NewGuid(), row.Session.Revision));
+            RequestHaptic(UiHaptic.Confirm);
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -2178,25 +2609,65 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     private void OnConnectionStateChanged(object? sender, EventArgs args)
     {
-        if (sender is DaemonBackendClient daemon && !daemon.IsConnected)
+        if (sender is IBackendConnectionState connection && !connection.IsConnected)
             Dispatcher.UIThread.Post(() => ConnectionProblem = true);
     }
 
     private void OnBackendChanged(object? sender, ChangeNotification notification)
     {
-        _ = Dispatcher.UIThread.InvokeAsync(RefreshAsync);
+        if (_presentationActive && !_disposed) _ = Dispatcher.UIThread.InvokeAsync(RefreshAsync);
+    }
+
+    /// <summary>UI-thread host visibility, independent of view creation and backend ownership.</summary>
+    public async Task SetPresentationActiveAsync(bool active)
+    {
+        if (_disposed || _presentationActive == active) return;
+        _presentationGeneration++;
+        InvalidatePresentationLoads();
+        _presentationActive = active;
+        if (active)
+        {
+            _presentationReads.Dispose();
+            _presentationReads = new CancellationTokenSource();
+        }
+        else _presentationReads.Cancel();
+        _displayTimer.Change(active ? TimeSpan.FromSeconds(1) : Timeout.InfiniteTimeSpan,
+            active ? TimeSpan.FromSeconds(1) : Timeout.InfiniteTimeSpan);
+        if (active && _initialized)
+        {
+            await RefreshAsync();
+            UpdateDisplayTimes();
+        }
+    }
+
+    public bool IsPresentationActive => _presentationActive && !_disposed;
+
+    private void InvalidatePresentationLoads()
+    {
+        _tasksLoadVersion++;
+        _todayLoadVersion++;
+        _historyLoadVersion++;
+        _summaryLoadVersion++;
+        _calendarLoadVersion++;
+        _habitLoadVersion++;
+        _journalCatalogLoadVersion++;
+        _journalEntryLoadVersion++;
+        _historyContinuation = null;
+        HistoryHasMore = false;
+        ResetJournalPagination();
     }
 
     private void UpdateDisplayTimes()
     {
-        RefreshHabitDay(DateTimeOffset.UtcNow);
-        RefreshCalendarHistory(DateTimeOffset.UtcNow);
+        if (!_presentationActive || _disposed) return;
+        var now = _clock.GetUtcNow();
+        RefreshHabitDay(now);
+        RefreshCalendarHistory(now);
         foreach (var session in ActiveSessions)
         {
             session.UpdateElapsed();
         }
         if (_todayClockSnapshot is not { } snapshot) return;
-        var now = DateTimeOffset.UtcNow;
         var displayed = FormatDuration(LiveTodayClock.Milliseconds(snapshot, now, TimeZoneInfo.Local));
         if (TrackedToday != displayed)
         {
@@ -2232,10 +2703,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
+        InvalidatePresentationLoads();
+        _presentationReads.Cancel();
+        _presentationReads.Dispose();
         _displayTimer.Dispose();
         _backend.Changed -= OnBackendChanged;
-        if (_backend is DaemonBackendClient daemon) daemon.ConnectionStateChanged -= OnConnectionStateChanged;
-        await _backend.DisposeAsync();
+        if (_backend is IBackendConnectionState connection) connection.ConnectionStateChanged -= OnConnectionStateChanged;
+        if (_ownsBackend) await _backend.DisposeAsync();
     }
 }
 
@@ -2499,7 +2975,19 @@ public sealed class TaskRowViewModel : INotifyPropertyChanged
     private readonly Func<TaskRowViewModel, Task> _addLink;
     private readonly Func<TaskRowViewModel, Task> _showDetails;
     private string _draftTitle;
+    private string _draftDescription;
+    private Priority _draftPriority;
+    private string _dueDateText;
+    private string _reminderTimeText = string.Empty;
+    private string _reminderTimeZone = TimeZoneInfo.Local.Id;
+    private AmbiguousTimeChoice _reminderFoldChoice;
+    private Guid? _draftActivityId;
+    private bool _draftStarred;
     private Guid _targetProjectId;
+    private string _tagText = string.Empty;
+    private Guid? _prerequisiteTaskId;
+    private string _linkLabelText = string.Empty;
+    private string _linkUriText = string.Empty;
 
     public TaskRowViewModel(TaskListItem item, IEnumerable<ProjectOption> projects, IEnumerable<ActivityOption> activities, IEnumerable<TaskOption> prerequisiteOptions, Func<TaskRowViewModel, Task> start, Func<TaskRowViewModel, Task> complete, Func<TaskRowViewModel, Task> save, Func<TaskRowViewModel, Task> move, Func<TaskRowViewModel, Task> archive, Func<TaskRowViewModel, Task> delete, Func<TaskRowViewModel, Task> addTag, Func<TaskRowViewModel, Task> addDependency, Func<TaskRowViewModel, Task> addLink, Func<TaskRowViewModel, Task> showDetails)
     {
@@ -2524,12 +3012,27 @@ public sealed class TaskRowViewModel : INotifyPropertyChanged
         _addLink = addLink;
         _showDetails = showDetails;
         _draftTitle = item.Task.Title;
+        _draftDescription = item.Task.Description;
+        _draftPriority = item.Task.Priority;
+        if (item.Task.DueAtUtc is { } dueAt && !string.IsNullOrWhiteSpace(item.Task.DueTimeZone))
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(item.Task.DueTimeZone);
+            var local = TimeZoneInfo.ConvertTime(dueAt, zone);
+            _dueDateText = (item.Task.ReminderLocalDate ?? DateOnly.FromDateTime(local.DateTime))
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            _reminderTimeText = (item.Task.ReminderLocalTime ?? TimeOnly.FromDateTime(local.DateTime))
+                .ToString("HH:mm", CultureInfo.InvariantCulture);
+            _reminderTimeZone = item.Task.DueTimeZone;
+            _reminderFoldChoice = item.Task.ReminderFoldChoice
+                ?? ResolveFoldChoice(dueAt, local.DateTime, zone);
+        }
+        else
+        {
+            _dueDateText = item.Task.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+        }
+        _draftActivityId = item.Task.DefaultActivityId;
+        _draftStarred = item.Task.Starred;
         _targetProjectId = item.Task.ProjectId;
-        DueDateText = item.Task.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
-        DraftPriority = item.Task.Priority;
-        DraftDescription = item.Task.Description;
-        DraftActivityId = item.Task.DefaultActivityId;
-        DraftStarred = item.Task.Starred;
         StartCommand = new AsyncCommand(_ => _start(this));
         CompleteCommand = new AsyncCommand(_ => _complete(this));
         SaveCommand = new AsyncCommand(_ => _save(this));
@@ -2561,8 +3064,8 @@ public sealed class TaskRowViewModel : INotifyPropertyChanged
     public IReadOnlyList<TaskPickerEntry> DependencyOptions { get; }
     public TaskItem Task => Item.Task;
     public string Title => Task.Title;
-    public string DraftTitle { get => _draftTitle; set => _draftTitle = value; }
-    public string DraftDescription { get; set; } = string.Empty;
+    public string DraftTitle { get => _draftTitle; set => SetDraft(ref _draftTitle, value); }
+    public string DraftDescription { get => _draftDescription; set => SetDraft(ref _draftDescription, value); }
     public IReadOnlyList<ProjectOption> ProjectOptions { get; }
     public IReadOnlyList<ActivityOption> ActivityOptions { get; }
     public IReadOnlyList<TaskOption> PrerequisiteOptions { get; }
@@ -2574,18 +3077,28 @@ public sealed class TaskRowViewModel : INotifyPropertyChanged
         new(Priority.High, "High"),
         new(Priority.Urgent, "Urgent")
     ];
-    public Guid TargetProjectId { get => _targetProjectId; set => _targetProjectId = value; }
-    public string DueDateText { get; set; }
-    public string TagText { get; set; } = string.Empty;
-    public Priority DraftPriority { get; set; }
-    public Guid? DraftActivityId { get; set; }
-    public Guid? PrerequisiteTaskId { get; set; }
-    public string LinkLabelText { get; set; } = string.Empty;
-    public string LinkUriText { get; set; } = string.Empty;
-    public bool DraftStarred { get; set; }
+    public Guid TargetProjectId { get => _targetProjectId; set => SetDraft(ref _targetProjectId, value); }
+    public string DueDateText { get => _dueDateText; set => SetDraft(ref _dueDateText, value); }
+    public string ReminderTimeText { get => _reminderTimeText; set => SetDraft(ref _reminderTimeText, value); }
+    public string ReminderTimeZone { get => _reminderTimeZone; set => SetDraft(ref _reminderTimeZone, value); }
+    public AmbiguousTimeChoice ReminderFoldChoice { get => _reminderFoldChoice; set => SetDraft(ref _reminderFoldChoice, value); }
+    public IReadOnlyList<ReminderFoldOption> ReminderFoldOptions { get; } =
+    [
+        new(AmbiguousTimeChoice.Earlier, "Earlier occurrence"),
+        new(AmbiguousTimeChoice.Later, "Later occurrence")
+    ];
+    public string TagText { get => _tagText; set => SetDraft(ref _tagText, value); }
+    public Priority DraftPriority { get => _draftPriority; set => SetDraft(ref _draftPriority, value); }
+    public Guid? DraftActivityId { get => _draftActivityId; set => SetDraft(ref _draftActivityId, value); }
+    public Guid? PrerequisiteTaskId { get => _prerequisiteTaskId; set => SetDraft(ref _prerequisiteTaskId, value); }
+    public string LinkLabelText { get => _linkLabelText; set => SetDraft(ref _linkLabelText, value); }
+    public string LinkUriText { get => _linkUriText; set => SetDraft(ref _linkUriText, value); }
+    public bool DraftStarred { get => _draftStarred; set => SetDraft(ref _draftStarred, value); }
     public string ProjectName => Item.ProjectName;
     public string PriorityLabel => Task.Priority switch { Priority.Urgent => "Urgent", Priority.High => "High", Priority.Medium => "Medium", Priority.Low => "Low", _ => "No priority" };
-    public string DueLabel => Task.DueDate is null ? "No deadline" : $"Due {Task.DueDate:MMM d}";
+    public string DueLabel => Task.DueAtUtc is { } instant
+        ? $"Reminder {FormatTimedDue(instant, Task.DueTimeZone)}"
+        : Task.DueDate is null ? "No deadline" : $"Due {Task.DueDate:MMM d}";
     public string TrackedLabel => Item.TrackedMilliseconds == 0 ? "No time yet" : MainWindowViewModel.FormatForRow(Item.TrackedMilliseconds);
     public string ActionLabel => Task.Status == TaskState.Completed ? "Reopen" : "Done";
     public string CompletionGlyph => Task.Status == TaskState.Completed ? "✓" : "○";
@@ -2601,7 +3114,40 @@ public sealed class TaskRowViewModel : INotifyPropertyChanged
     public ICommand AddDependencyCommand { get; }
     public ICommand AddLinkCommand { get; }
     public ICommand ShowDetailsCommand { get; }
+
+    private void SetDraft<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private static string FormatTimedDue(DateTimeOffset instant, string? zoneId)
+    {
+        try
+        {
+            var local = TimeZoneInfo.ConvertTime(instant,
+                TimeZoneInfo.FindSystemTimeZoneById(zoneId ?? TimeZoneInfo.Utc.Id));
+            return local.ToString("MMM d, HH:mm", CultureInfo.CurrentCulture);
+        }
+        catch (TimeZoneNotFoundException) { return instant.ToLocalTime().ToString("MMM d, HH:mm", CultureInfo.CurrentCulture); }
+        catch (InvalidTimeZoneException) { return instant.ToLocalTime().ToString("MMM d, HH:mm", CultureInfo.CurrentCulture); }
+    }
+
+    private static AmbiguousTimeChoice ResolveFoldChoice(DateTimeOffset instant, DateTime local,
+        TimeZoneInfo zone)
+    {
+        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        if (!zone.IsAmbiguousTime(local)) return AmbiguousTimeChoice.Earlier;
+        var instants = zone.GetAmbiguousTimeOffsets(local)
+            .Select(offset => new DateTimeOffset(local, offset).ToUniversalTime())
+            .OrderBy(value => value)
+            .ToArray();
+        return instant == instants[^1] ? AmbiguousTimeChoice.Later : AmbiguousTimeChoice.Earlier;
+    }
 }
+
+public sealed record ReminderFoldOption(AmbiguousTimeChoice Value, string Name);
 
 public sealed class ActiveSessionRowViewModel : INotifyPropertyChanged
 {

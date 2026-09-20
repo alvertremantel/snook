@@ -42,10 +42,12 @@ public sealed partial class MainWindowViewModel
 
     private async Task LoadHabitsAsync()
     {
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
         var version = ++_habitLoadVersion;
         try
         {
-            var progress = await _backend.GetHabitsAsync(new HabitQuery(30, _habitThrough, ShowArchivedHabits, ShowDeletedHabits));
+            var progress = await _backend.GetHabitsAsync(new HabitQuery(30, _habitThrough, ShowArchivedHabits, ShowDeletedHabits), cancellationToken: cancellationToken);
             if (version != _habitLoadVersion) return;
             var ids = progress.Select(item => item.Habit.Id).ToHashSet();
             foreach (var removed in Habits.Where(row => !ids.Contains(row.Habit.Id)).ToArray()) Habits.Remove(removed);
@@ -57,7 +59,7 @@ public sealed partial class MainWindowViewModel
             }
             RaisePropertyChanged(nameof(HasNoHabits));
         }
-        catch (Exception exception) { StatusMessage = exception.Message; }
+        catch (Exception exception) { if (version == _habitLoadVersion) StatusMessage = exception.Message; }
     }
 
     private void OpenHabitEditor(HabitRowViewModel? row)
@@ -78,14 +80,19 @@ public sealed partial class MainWindowViewModel
             if (draft.Habit is { } habit)
             {
                 var update = new HabitUpdate(draft.Name, draft.Description);
-                await _backend.UpdateHabitAsync(habit.Id, update, draft.OperationFor(update, habit.Revision));
+                var request = draft.OperationFor(update, habit.Revision);
+                await CheckpointUtilityEditorAsync();
+                await _backend.UpdateHabitAsync(habit.Id, update, request);
             }
             else
             {
                 if (!DateOnly.TryParseExact(draft.StartDateText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var start))
                     throw new SnookException(SnookErrorCode.ValidationFailed, "Enter the start date as YYYY-MM-DD.");
-                var definition = new HabitDefinition(draft.Name, draft.Description, start, TimeZoneInfo.Local.Id);
-                await _backend.CreateHabitAsync(definition, draft.OperationFor(definition, null));
+                var definition = new HabitDefinition(draft.Name, draft.Description, start,
+                    draft.CreationTimeZone);
+                var request = draft.OperationFor(definition, null);
+                await CheckpointUtilityEditorAsync();
+                await _backend.CreateHabitAsync(definition, request);
             }
             StatusMessage = "Habit saved.";
             FinishUtilityEdit(draft);
@@ -228,9 +235,12 @@ public sealed class HabitDayViewModel : INotifyPropertyChanged
 public sealed class HabitEditorViewModel : INotifyPropertyChanged
 {
     private readonly HabitOperation _operation = new();
-    public HabitEditorViewModel(Habit? habit, Func<HabitEditorViewModel, Task> save, Func<HabitEditorViewModel, Task> review)
+    private readonly string _creationTimeZone;
+    public HabitEditorViewModel(Habit? habit, Func<HabitEditorViewModel, Task> save,
+        Func<HabitEditorViewModel, Task> review, string? creationTimeZone = null)
     {
         Habit = habit;
+        _creationTimeZone = habit?.TimeZone ?? creationTimeZone ?? TimeZoneInfo.Local.Id;
         Name = habit?.Name ?? string.Empty;
         Description = habit?.Description ?? string.Empty;
         StartDateText = (habit?.StartDate ?? DateOnly.FromDateTime(DateTime.Now)).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -244,11 +254,16 @@ public sealed class HabitEditorViewModel : INotifyPropertyChanged
     public string Name { get; set; }
     public string Description { get; set; }
     public string StartDateText { get; set; }
-    public string ZoneLabel => $"Daily in {Habit?.TimeZone ?? TimeZoneInfo.Local.Id}. Start date and time zone stay fixed after creation.";
+    internal string CreationTimeZone => _creationTimeZone;
+    public string ZoneLabel => $"Daily in {_creationTimeZone}. Start date and time zone stay fixed after creation.";
     public string SavedDetails { get; private set; } = string.Empty;
     public ICommand SaveCommand { get; }
     public ICommand ReviewCommand { get; }
     public OperationRequest OperationFor(object value, long? revision) => _operation.For(value, revision);
+    internal OperationRequest? RequestFor(object value, long? revision)
+        => _operation.RequestFor(value, revision);
+    internal void RestoreRequest(object value, long? revision, OperationRequest request)
+        => _operation.Restore(value, revision, request);
     public void Review(Habit habit)
     {
         Habit = habit;
@@ -271,5 +286,22 @@ internal sealed class HabitOperation
             _request = new OperationRequest(Guid.NewGuid(), _deviceId, revision);
         }
         return _request;
+    }
+
+    public OperationRequest? RequestFor(object value, long? revision)
+        => _request is not null
+            && _fingerprint == JsonSerializer.Serialize(new { value, revision })
+                ? _request
+                : null;
+
+    public void Restore(object value, long? revision, OperationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.OperationId == Guid.Empty || request.ClientDeviceId == Guid.Empty
+            || request.ExpectedRevision != revision)
+            throw new ArgumentException("Invalid habit recovery request.", nameof(request));
+        _fingerprint = JsonSerializer.Serialize(new { value, revision });
+        _request = request;
     }
 }

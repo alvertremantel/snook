@@ -183,6 +183,10 @@ public sealed class HabitTests
             var sourceBytes = await File.ReadAllBytesAsync(backupPath);
             await BackupFixture.WriteManifestAsync(backupPath);
             await backend.CreateHabitAsync(new HabitDefinition("After v7", "", DateOnly.FromDateTime(DateTime.UtcNow), "UTC"), Request());
+            var inspection = await backend.InspectBackupAsync(backupPath);
+            Assert.Equal((await backend.GetBootstrapAsync()).Workspace, inspection.Workspace);
+            Assert.Equal(sourceBytes, await File.ReadAllBytesAsync(backupPath));
+            Assert.Single(await backend.GetHabitsAsync(new HabitQuery()));
             await backend.RestoreBackupAsync(backupPath);
             Assert.Empty(await backend.GetHabitsAsync(new HabitQuery()));
             Assert.Equal(sourceBytes, await File.ReadAllBytesAsync(backupPath));
@@ -195,6 +199,7 @@ public sealed class HabitTests
                 await command.ExecuteNonQueryAsync();
             }
             await BackupFixture.WriteManifestAsync(backupPath);
+            Assert.Equal(SnookErrorCode.SchemaIncompatible, (await Assert.ThrowsAsync<SnookException>(() => backend.InspectBackupAsync(backupPath))).Code);
             Assert.Equal(SnookErrorCode.SchemaIncompatible, (await Assert.ThrowsAsync<SnookException>(() => backend.RestoreBackupAsync(backupPath))).Code);
             Assert.Equal(habit, Assert.Single(await backend.GetHabitsAsync(new HabitQuery())).Habit);
         }

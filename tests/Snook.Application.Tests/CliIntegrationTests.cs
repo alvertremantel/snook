@@ -30,6 +30,7 @@ public sealed class CliIntegrationTests
         Assert.Equal(typeof(IBackendClient).GetMethods().Count(method => method.ReturnType != typeof(ValueTask)), methodNames.Count);
         Assert.Contains("CreateTaskAsync", methodNames);
         Assert.Contains("RestoreBackupAsync", methodNames);
+        Assert.Contains("InspectBackupAsync", methodNames);
         Assert.Contains("UpsertCalendarEventExceptionAsync", methodNames);
         Assert.Contains("CorrectSessionAsync", methodNames);
         Assert.Contains("BulkUpdateTasksAsync", methodNames);
@@ -273,6 +274,7 @@ public sealed class CliIntegrationTests
         process.StartInfo.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "snookd.dll"));
         process.StartInfo.Environment["SNOOK_DATA_DIR"] = directory.FullName;
         process.StartInfo.Environment["SNOOK_DAEMON_PORT"] = port.ToString(CultureInfo.InvariantCulture);
+        process.StartInfo.Environment["SNOOK_TRUST_TAILSCALE_SERVE_HEADERS"] = "1";
 
         try
         {
@@ -288,6 +290,29 @@ public sealed class CliIntegrationTests
 
             Assert.Equal(0, result.ExitCode);
             Assert.Contains("Remote board", result.StandardOutput, StringComparison.Ordinal);
+
+            var challenge = await RunCliAsync(
+                "--data-dir", directory.FullName,
+                "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token", token,
+                "pairing", "create", "https://snook.example.ts.net/");
+            Assert.True(challenge.ExitCode == 0, challenge.StandardError);
+            using (var challengeDocument = JsonDocument.Parse(challenge.StandardOutput))
+            {
+                Assert.Equal("https://snook.example.ts.net/",
+                    challengeDocument.RootElement.GetProperty("serveOrigin").GetString());
+                Assert.Contains('.', challengeDocument.RootElement.GetProperty("code").GetString()!);
+            }
+            var devices = await RunCliAsync(
+                "--data-dir", directory.FullName,
+                "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/",
+                "--token", token,
+                "pairing", "list");
+            Assert.True(devices.ExitCode == 0, devices.StandardError);
+            using (var devicesDocument = JsonDocument.Parse(devices.StandardOutput))
+                Assert.Empty(devicesDocument.RootElement.GetProperty("devices").EnumerateArray());
 
             var bootstrap = await RunCliAsync(
                 "--data-dir", directory.FullName,

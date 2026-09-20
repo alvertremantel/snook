@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 6;
+    public const int Minor = 9;
 }
 
 public sealed record OperationRequest(
@@ -442,6 +442,12 @@ public interface IBackendClient : IAsyncDisposable
 
     // Requires a standalone backup and matching format-1 .manifest.json.
     // The original manifest path is informational; moved valid pairs are supported.
+    // Inspection validates a private copy without changing the active workspace or
+    // the source pair. Restore must revalidate; inspection is not an activation token.
+    Task<BackupInspection> InspectBackupAsync(
+        string sourcePath,
+        CancellationToken cancellationToken = default);
+
     Task<RestoreResult> RestoreBackupAsync(
         string sourcePath,
         CancellationToken cancellationToken = default);
@@ -452,3 +458,5 @@ public sealed record BackupResult(string Path, long Bytes, string Sha256, string
 public sealed record ExportResult(string Path, long Bytes, string Sha256, int SchemaVersion);
 
 public sealed record RestoreResult(string SourcePath, long Bytes, string Sha256);
+
+public sealed record BackupInspection(Workspace Workspace, long Bytes, string Sha256, DateTimeOffset CreatedAtUtc);

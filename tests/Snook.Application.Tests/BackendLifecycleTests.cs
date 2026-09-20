@@ -686,7 +686,7 @@ public sealed class BackendLifecycleTests
         await verification.OpenAsync();
         await using var query = verification.CreateCommand();
         query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-        Assert.Equal(10L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+        Assert.Equal(11L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
 
         Directory.Delete(directory.FullName, recursive: true);
     }

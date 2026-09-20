@@ -1,4 +1,3 @@
-using Process = System.Diagnostics.Process;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -78,13 +77,21 @@ public sealed partial class SqliteStore : IAsyncDisposable
         try
         {
             _lease = AcquireLease();
+            _lease.SetLength(0);
             await using var writer = new StreamWriter(_lease, leaveOpen: true);
-            await writer.WriteAsync($"pid={Environment.ProcessId}{Environment.NewLine}started={DateTimeOffset.UtcNow:O}");
+            // Deliberately not the legacy `pid=` field: older hosts must fail closed
+            // rather than unlinking a new owner's marker based on PID guesses.
+            await writer.WriteAsync($"lease-version=2{Environment.NewLine}owner-pid={Environment.ProcessId}{Environment.NewLine}started={_clock.GetUtcNow():O}");
             await writer.FlushAsync(cancellationToken);
         }
-        catch (IOException exception)
+        catch (Exception exception)
         {
-            throw new SnookException(SnookErrorCode.StoreUnavailable, "The workspace is already open in another Snook host.", exception);
+            _lease?.Dispose();
+            _lease = null;
+            if (exception is IOException or UnauthorizedAccessException)
+                throw new SnookException(SnookErrorCode.StoreUnavailable,
+                    "The workspace ownership lock is unavailable. Another host may own it, or the filesystem may not support exclusive locking.", exception);
+            throw;
         }
 
         try
@@ -99,6 +106,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await EnsureHabitsMigrationAsync(connection, cancellationToken);
             await EnsureJournalsMigrationAsync(connection, cancellationToken);
             await EnsureExactReceiptsMigrationAsync(connection, cancellationToken);
+            await EnsureTaskRemindersMigrationAsync(connection, cancellationToken);
             await SeedAsync(connection, cancellationToken);
             await EnsureDefaultSettingsAsync(connection, cancellationToken);
             await EnsureDefaultCalendarAsync(connection, cancellationToken);
@@ -116,60 +124,30 @@ public sealed partial class SqliteStore : IAsyncDisposable
 
     private FileStream AcquireLease()
     {
-        try
-        {
-            return OpenLeaseFile();
-        }
-        catch (IOException) when (TryRemoveStaleLease())
-        {
-            return OpenLeaseFile();
-        }
-    }
+        if (new FileInfo(_leasePath).LinkTarget is not null)
+            throw new IOException("Workspace ownership markers must not be symbolic links.");
 
-    private FileStream OpenLeaseFile()
-        => new(_leasePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 128, FileOptions.DeleteOnClose);
-
-    private bool TryRemoveStaleLease()
-    {
-        try
+        // FileShare locking on Unix is advisory and .NET may silently omit it on
+        // unsupported filesystems or when disabled by runtime configuration. Test
+        // a file created by us on this filesystem before opening any owner marker.
+        var probePath = _leasePath + ".lock-test-" + Guid.NewGuid().ToString("N");
+        using (var probe = new FileStream(probePath, FileMode.CreateNew, FileAccess.ReadWrite,
+            FileShare.None, 128, FileOptions.DeleteOnClose))
         {
-            var marker = File.ReadAllText(_leasePath);
-            var pidText = marker
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault(line => line.StartsWith("pid=", StringComparison.Ordinal));
-            if (pidText is null || !int.TryParse(pidText[4..], CultureInfo.InvariantCulture, out var pid) || IsProcessAlive(pid))
+            var excluded = false;
+            try
             {
-                return false;
+                using var contender = new FileStream(probePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
             }
+            catch (IOException) { excluded = true; }
+            if (!excluded) throw new IOException("Exclusive filesystem locking is required.");
+        }
 
-            File.Delete(_leasePath);
-            return true;
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
-    private static bool IsProcessAlive(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
+        // No PID parsing and no read/delete/create stale-recovery race. The kernel
+        // releases the lock even on process death. .NET's OpenOrCreate + exclusive
+        // DeleteOnClose path rechecks inode identity when a prior owner unlinks it.
+        return new FileStream(_leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+            FileShare.None, 128, FileOptions.DeleteOnClose);
     }
 
     public async Task<StoreState> LoadStateAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
@@ -854,6 +832,44 @@ public sealed partial class SqliteStore : IAsyncDisposable
         {
             throw new SnookException(SnookErrorCode.ValidationFailed, "The task priority is invalid.");
         }
+        if (update.DueDate is { Year: < 1900 })
+            throw new SnookException(SnookErrorCode.ValidationFailed,
+                "Task due dates must be on or after 1900-01-01.");
+        if (!update.ChangeTimedDue && (update.DueAtUtc is not null || update.DueTimeZone is not null)
+            || update.ChangeTimedDue && update.DueDate is not null
+            || update.ChangeTimedDue && (update.DueAtUtc is null) != (update.DueTimeZone is null))
+            throw new SnookException(SnookErrorCode.ValidationFailed,
+                "A timed deadline requires an explicit UTC instant and time zone, or clears both.");
+        string? dueTimeZone = null;
+        if (update.ChangeTimedDue && update.DueAtUtc is { } dueAt)
+        {
+            if (update.ReminderLocalDate is null || update.ReminderLocalTime is null
+                || update.ReminderFoldChoice is null || update.ReminderDeliveryPolicy is null
+                || !Enum.IsDefined(update.ReminderFoldChoice.Value)
+                || !Enum.IsDefined(update.ReminderDeliveryPolicy.Value))
+                throw new SnookException(SnookErrorCode.ValidationFailed,
+                    "A timed deadline requires its local date, time, fold choice and delivery policy.");
+            if (dueAt.Offset != TimeSpan.Zero || dueAt.Year < 1900)
+                throw new SnookException(SnookErrorCode.ValidationFailed,
+                    "Timed deadlines require an explicit UTC instant on or after 1900-01-01.");
+            try { dueTimeZone = TimeZoneInfo.FindSystemTimeZoneById(update.DueTimeZone!).Id; }
+            catch (Exception exception) when (exception is TimeZoneNotFoundException
+                or InvalidTimeZoneException or ArgumentException)
+            {
+                throw new SnookException(SnookErrorCode.ValidationFailed,
+                    "Choose a valid timed-deadline time zone.", exception);
+            }
+            var resolved = LocalCivilTime.Resolve(update.ReminderLocalDate.Value,
+                update.ReminderLocalTime.Value, dueTimeZone, update.ReminderFoldChoice.Value);
+            if (resolved != dueAt)
+                throw new SnookException(SnookErrorCode.ValidationFailed,
+                    "The timed deadline does not match its local date, time, zone and fold choice.");
+        }
+        else if (update.ChangeTimedDue && (update.ReminderLocalDate is not null
+            || update.ReminderLocalTime is not null || update.ReminderFoldChoice is not null
+            || update.ReminderDeliveryPolicy is not null))
+            throw new SnookException(SnookErrorCode.ValidationFailed,
+                "Clearing a timed deadline must clear all reminder fields.");
 
         return await WriteAsync(async (connection, transaction) =>
         {
@@ -874,14 +890,32 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 await EnsureActivityAsync(connection, transaction, update.DefaultActivityId.Value, cancellationToken);
             }
 
+            var nextDueAt = update.ChangeTimedDue ? update.DueAtUtc
+                : update.DueDate is not null ? null : task.DueAtUtc;
+            var nextDueZone = update.ChangeTimedDue ? dueTimeZone
+                : update.DueDate is not null ? null : task.DueTimeZone;
+            var nextReminderId = update.ChangeTimedDue
+                ? update.DueAtUtc is null ? null : task.ReminderId ?? Guid.NewGuid()
+                : update.DueDate is not null ? null : task.ReminderId;
+            var nextReminderDate = update.ChangeTimedDue ? update.ReminderLocalDate
+                : update.DueDate is not null ? null : task.ReminderLocalDate;
+            var nextReminderTime = update.ChangeTimedDue ? update.ReminderLocalTime
+                : update.DueDate is not null ? null : task.ReminderLocalTime;
+            var nextReminderFold = update.ChangeTimedDue ? update.ReminderFoldChoice
+                : update.DueDate is not null ? null : task.ReminderFoldChoice;
+            var nextReminderDelivery = update.ChangeTimedDue ? update.ReminderDeliveryPolicy
+                : update.DueDate is not null ? null : task.ReminderDeliveryPolicy;
+
             var nextRevision = task.Revision + 1;
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
         UPDATE tasks SET title=$title, description=$description, priority=$priority,
             due_date=$due_date,
-            due_at_utc_ms=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_at_utc_ms END,
-            due_time_zone=CASE WHEN $due_date IS NOT NULL THEN NULL ELSE due_time_zone END,
+            due_at_utc_ms=$due_at, due_time_zone=$due_zone,
+            reminder_id=$reminder_id, reminder_local_date=$reminder_date,
+            reminder_local_time=$reminder_time, reminder_fold=$reminder_fold,
+            reminder_delivery=$reminder_delivery,
             default_activity_id=$activity, starred=$starred,
             updated_at_utc_ms=$updated, revision=$revision
         WHERE id=$id AND revision=$expected AND deleted_at_utc_ms IS NULL;
@@ -890,6 +924,13 @@ public sealed partial class SqliteStore : IAsyncDisposable
             command.Parameters.AddWithValue("$description", description);
             command.Parameters.AddWithValue("$priority", (int)update.Priority);
             command.Parameters.AddWithValue("$due_date", update.DueDate is null ? DBNull.Value : update.DueDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$due_at", nextDueAt is null ? DBNull.Value : nextDueAt.Value.ToUnixTimeMilliseconds());
+            command.Parameters.AddWithValue("$due_zone", (object?)nextDueZone ?? DBNull.Value);
+            command.Parameters.AddWithValue("$reminder_id", nextReminderId is null ? DBNull.Value : Id(nextReminderId.Value));
+            command.Parameters.AddWithValue("$reminder_date", nextReminderDate is null ? DBNull.Value : nextReminderDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$reminder_time", nextReminderTime is null ? DBNull.Value : nextReminderTime.Value.ToString("HH:mm:ss.fffffff", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$reminder_fold", nextReminderFold is null ? DBNull.Value : nextReminderFold == AmbiguousTimeChoice.Earlier ? "earlier" : "later");
+            command.Parameters.AddWithValue("$reminder_delivery", nextReminderDelivery is null ? DBNull.Value : "inexact");
             command.Parameters.AddWithValue("$activity", update.DefaultActivityId is null ? DBNull.Value : Id(update.DefaultActivityId.Value));
             command.Parameters.AddWithValue("$starred", update.Starred ? 1 : 0);
             command.Parameters.AddWithValue("$updated", nowUtc.ToUnixTimeMilliseconds());
@@ -907,8 +948,13 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 Description = description,
                 Priority = update.Priority,
                 DueDate = update.DueDate,
-                DueAtUtc = update.DueDate is not null ? null : task.DueAtUtc,
-                DueTimeZone = update.DueDate is not null ? null : task.DueTimeZone,
+                DueAtUtc = nextDueAt,
+                DueTimeZone = nextDueZone,
+                ReminderId = nextReminderId,
+                ReminderLocalDate = nextReminderDate,
+                ReminderLocalTime = nextReminderTime,
+                ReminderFoldChoice = nextReminderFold,
+                ReminderDeliveryPolicy = nextReminderDelivery,
                 DefaultActivityId = update.DefaultActivityId,
                 Starred = update.Starred,
                 Revision = nextRevision
@@ -2236,18 +2282,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             }.ToString()))
             {
                 await validation.OpenAsync(cancellationToken);
-                await using var pragma = validation.CreateCommand();
-                pragma.CommandText = "PRAGMA trusted_schema = OFF; PRAGMA foreign_keys = ON;";
-                await pragma.ExecuteNonQueryAsync(cancellationToken);
-                await ValidateIntegrityAsync(validation, cancellationToken);
-                _ = await ReadWorkspaceAsync(validation, cancellationToken);
-                // Upgrade the staging copy before replacing the live workspace. A v7
-                // backup has no habit tables, and must be usable immediately after restore.
-                await EnsureSchemaVersionAsync(validation, cancellationToken);
-                await EnsureTaskWorkspaceMigrationAsync(validation, cancellationToken);
-                await EnsureHabitsMigrationAsync(validation, cancellationToken);
-                await EnsureJournalsMigrationAsync(validation, cancellationToken);
-                await EnsureExactReceiptsMigrationAsync(validation, cancellationToken);
+                _ = await ValidateAndUpgradeBackupAsync(validation, cancellationToken);
                 await ReconcileRestoredTimersAsync(validation, staged.BackupCreatedAtUtc, restoredAtUtc, cancellationToken);
                 await ValidateIntegrityAsync(validation, cancellationToken);
                 await using var checkpoint = validation.CreateCommand();
@@ -2449,7 +2484,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var sequence = reader.GetInt32(0);
         var current = reader.GetString(1);
         await reader.DisposeAsync();
-        if (sequence > 10)
+        if (sequence > 11)
             throw new SnookException(SnookErrorCode.SchemaIncompatible, "The workspace schema is newer or incompatible with this Snook build.");
         if (sequence >= 7)
         {
@@ -2724,8 +2759,12 @@ public sealed partial class SqliteStore : IAsyncDisposable
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO tasks(id,project_id,title,description,priority,status,due_date,default_activity_id,starred,completed_at_utc_ms,revision,created_at_utc_ms,updated_at_utc_ms)
-            VALUES($id,$project,$title,$description,$priority,$status,$due_date,$activity,$starred,$completed,$revision,$created,$updated);
+            INSERT INTO tasks(id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,
+                reminder_id,reminder_local_date,reminder_local_time,reminder_fold,reminder_delivery,
+                default_activity_id,starred,completed_at_utc_ms,revision,created_at_utc_ms,updated_at_utc_ms)
+            VALUES($id,$project,$title,$description,$priority,$status,$due_date,$due_at,$due_zone,
+                $reminder_id,$reminder_date,$reminder_time,$reminder_fold,$reminder_delivery,
+                $activity,$starred,$completed,$revision,$created,$updated);
             """;
         BindTask(command, task, nowUtc);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -3062,6 +3101,13 @@ public sealed partial class SqliteStore : IAsyncDisposable
         command.Parameters.AddWithValue("$priority", (int)task.Priority);
         command.Parameters.AddWithValue("$status", State(task.Status));
         command.Parameters.AddWithValue("$due_date", task.DueDate is null ? DBNull.Value : task.DueDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$due_at", task.DueAtUtc is null ? DBNull.Value : task.DueAtUtc.Value.ToUnixTimeMilliseconds());
+        command.Parameters.AddWithValue("$due_zone", (object?)task.DueTimeZone ?? DBNull.Value);
+        command.Parameters.AddWithValue("$reminder_id", task.ReminderId is null ? DBNull.Value : Id(task.ReminderId.Value));
+        command.Parameters.AddWithValue("$reminder_date", task.ReminderLocalDate is null ? DBNull.Value : task.ReminderLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$reminder_time", task.ReminderLocalTime is null ? DBNull.Value : task.ReminderLocalTime.Value.ToString("HH:mm:ss.fffffff", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$reminder_fold", task.ReminderFoldChoice is null ? DBNull.Value : task.ReminderFoldChoice == AmbiguousTimeChoice.Earlier ? "earlier" : "later");
+        command.Parameters.AddWithValue("$reminder_delivery", task.ReminderDeliveryPolicy is null ? DBNull.Value : "inexact");
         command.Parameters.AddWithValue("$activity", task.DefaultActivityId is null ? DBNull.Value : Id(task.DefaultActivityId.Value));
         command.Parameters.AddWithValue("$starred", task.Starred ? 1 : 0);
         command.Parameters.AddWithValue("$completed", task.CompletedAtUtc is null ? DBNull.Value : task.CompletedAtUtc.Value.ToUnixTimeMilliseconds());
@@ -3689,7 +3735,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var ids = projectIds.ToHashSet();
         var result = new List<TaskItem>();
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision FROM tasks{(includeDeleted ? string.Empty : " WHERE deleted_at_utc_ms IS NULL")} ORDER BY CASE priority WHEN 4 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 1 THEN 3 ELSE 4 END, COALESCE(due_date,'9999-12-31'), title;";
+        command.CommandText = $"SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision,reminder_id,reminder_local_date,reminder_local_time,reminder_fold,reminder_delivery FROM tasks{(includeDeleted ? string.Empty : " WHERE deleted_at_utc_ms IS NULL")} ORDER BY CASE priority WHEN 4 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 1 THEN 3 ELSE 4 END, COALESCE(due_date,'9999-12-31'), title;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -3699,7 +3745,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
                 continue;
             }
 
-            result.Add(new TaskItem(Guid.Parse(reader.GetString(0)), projectId, reader.GetString(2), reader.GetString(3), (Priority)reader.GetInt32(4), reader.GetString(5) == "completed" ? TaskState.Completed : TaskState.Open, reader.IsDBNull(6) ? null : DateOnly.Parse(reader.GetString(6), CultureInfo.InvariantCulture), NullableMs(reader, 7), reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : Guid.Parse(reader.GetString(9)), reader.GetInt64(10) == 1, NullableMs(reader, 11), NullableMs(reader, 12), NullableMs(reader, 13), reader.GetInt64(14)));
+            result.Add(ReadTaskRow(reader, projectId));
         }
 
         return result;
@@ -3740,7 +3786,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision FROM tasks WHERE id=$id AND deleted_at_utc_ms IS NULL;";
+        command.CommandText = "SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision,reminder_id,reminder_local_date,reminder_local_time,reminder_fold,reminder_delivery FROM tasks WHERE id=$id AND deleted_at_utc_ms IS NULL;";
         command.Parameters.AddWithValue("$id", Id(taskId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -3748,14 +3794,14 @@ public sealed partial class SqliteStore : IAsyncDisposable
             return null;
         }
 
-        return new TaskItem(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)), reader.GetString(2), reader.GetString(3), (Priority)reader.GetInt32(4), reader.GetString(5) == "completed" ? TaskState.Completed : TaskState.Open, reader.IsDBNull(6) ? null : DateOnly.Parse(reader.GetString(6), CultureInfo.InvariantCulture), NullableMs(reader, 7), reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : Guid.Parse(reader.GetString(9)), reader.GetInt64(10) == 1, NullableMs(reader, 11), NullableMs(reader, 12), NullableMs(reader, 13), reader.GetInt64(14));
+        return ReadTaskRow(reader, Guid.Parse(reader.GetString(1)));
     }
 
     private static async Task<TaskItem?> ReadTaskAnyAsync(SqliteConnection connection, SqliteTransaction? transaction, Guid taskId, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision FROM tasks WHERE id=$id;";
+        command.CommandText = "SELECT id,project_id,title,description,priority,status,due_date,due_at_utc_ms,due_time_zone,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision,reminder_id,reminder_local_date,reminder_local_time,reminder_fold,reminder_delivery FROM tasks WHERE id=$id;";
         command.Parameters.AddWithValue("$id", Id(taskId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -3763,8 +3809,22 @@ public sealed partial class SqliteStore : IAsyncDisposable
             return null;
         }
 
-        return new TaskItem(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)), reader.GetString(2), reader.GetString(3), (Priority)reader.GetInt32(4), reader.GetString(5) == "completed" ? TaskState.Completed : TaskState.Open, reader.IsDBNull(6) ? null : DateOnly.Parse(reader.GetString(6), CultureInfo.InvariantCulture), NullableMs(reader, 7), reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : Guid.Parse(reader.GetString(9)), reader.GetInt64(10) == 1, NullableMs(reader, 11), NullableMs(reader, 12), NullableMs(reader, 13), reader.GetInt64(14));
+        return ReadTaskRow(reader, Guid.Parse(reader.GetString(1)));
     }
+
+    private static TaskItem ReadTaskRow(SqliteDataReader reader, Guid projectId) => new(
+        Guid.Parse(reader.GetString(0)), projectId, reader.GetString(2), reader.GetString(3),
+        (Priority)reader.GetInt32(4), reader.GetString(5) == "completed" ? TaskState.Completed : TaskState.Open,
+        reader.IsDBNull(6) ? null : DateOnly.Parse(reader.GetString(6), CultureInfo.InvariantCulture),
+        NullableMs(reader, 7), reader.IsDBNull(8) ? null : reader.GetString(8),
+        reader.IsDBNull(9) ? null : Guid.Parse(reader.GetString(9)), reader.GetInt64(10) == 1,
+        NullableMs(reader, 11), NullableMs(reader, 12), NullableMs(reader, 13), reader.GetInt64(14),
+        reader.IsDBNull(15) ? null : Guid.Parse(reader.GetString(15)),
+        reader.IsDBNull(16) ? null : DateOnly.Parse(reader.GetString(16), CultureInfo.InvariantCulture),
+        reader.IsDBNull(17) ? null : TimeOnly.Parse(reader.GetString(17), CultureInfo.InvariantCulture),
+        reader.IsDBNull(18) ? null : reader.GetString(18) == "later" ? AmbiguousTimeChoice.Later : AmbiguousTimeChoice.Earlier,
+        reader.IsDBNull(19) ? null : reader.GetString(19) == "inexact" ? ReminderDeliveryPolicy.Inexact
+            : throw new SnookException(SnookErrorCode.SchemaIncompatible, "A task reminder has an unsupported delivery policy."));
 
     private static async Task<TaskLink?> ReadTaskLinkAsync(SqliteConnection connection, SqliteTransaction? transaction, Guid linkId, CancellationToken cancellationToken)
     {
@@ -3944,7 +4004,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
         CREATE TABLE IF NOT EXISTS calendar_events(id TEXT PRIMARY KEY, calendar_id TEXT NOT NULL REFERENCES calendars(id), title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 300), description TEXT NOT NULL DEFAULT '', location TEXT, color TEXT NOT NULL, start_at_utc_ms INTEGER NOT NULL, end_at_utc_ms INTEGER NOT NULL CHECK(end_at_utc_ms > start_at_utc_ms), all_day INTEGER NOT NULL DEFAULT 0 CHECK(all_day IN (0,1)), time_zone TEXT NOT NULL, recurrence_rule TEXT, recurrence_end_utc_ms INTEGER, deleted_at_utc_ms INTEGER, revision INTEGER NOT NULL CHECK(revision > 0), created_at_utc_ms INTEGER NOT NULL, updated_at_utc_ms INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS calendar_event_exceptions(id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES calendar_events(id), original_start_at_utc_ms INTEGER NOT NULL, new_start_at_utc_ms INTEGER, new_end_at_utc_ms INTEGER, title_override TEXT, cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN (0,1)), revision INTEGER NOT NULL CHECK(revision > 0), UNIQUE(event_id,original_start_at_utc_ms));
         CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), normalized_name TEXT NOT NULL, display_name TEXT NOT NULL, color TEXT, deleted_at_utc_ms INTEGER, revision INTEGER NOT NULL CHECK(revision > 0), UNIQUE(workspace_id,normalized_name));
-        CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 300), description TEXT NOT NULL DEFAULT '', priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 4), status TEXT NOT NULL CHECK(status IN ('open','completed')), due_date TEXT, due_at_utc_ms INTEGER, due_time_zone TEXT, default_activity_id TEXT REFERENCES activities(id), starred INTEGER NOT NULL DEFAULT 0 CHECK(starred IN (0,1)), completed_at_utc_ms INTEGER, archived_at_utc_ms INTEGER, deleted_at_utc_ms INTEGER, revision INTEGER NOT NULL CHECK(revision > 0), created_at_utc_ms INTEGER NOT NULL, updated_at_utc_ms INTEGER NOT NULL, CHECK(NOT (due_date IS NOT NULL AND due_at_utc_ms IS NOT NULL)), CHECK((status = 'completed' AND completed_at_utc_ms IS NOT NULL) OR (status = 'open' AND completed_at_utc_ms IS NULL)));
+        CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 300), description TEXT NOT NULL DEFAULT '', priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 4), status TEXT NOT NULL CHECK(status IN ('open','completed')), due_date TEXT, due_at_utc_ms INTEGER, due_time_zone TEXT, reminder_id TEXT, reminder_local_date TEXT, reminder_local_time TEXT, reminder_fold TEXT, reminder_delivery TEXT, default_activity_id TEXT REFERENCES activities(id), starred INTEGER NOT NULL DEFAULT 0 CHECK(starred IN (0,1)), completed_at_utc_ms INTEGER, archived_at_utc_ms INTEGER, deleted_at_utc_ms INTEGER, revision INTEGER NOT NULL CHECK(revision > 0), created_at_utc_ms INTEGER NOT NULL, updated_at_utc_ms INTEGER NOT NULL, CHECK(NOT (due_date IS NOT NULL AND due_at_utc_ms IS NOT NULL)), CHECK((status = 'completed' AND completed_at_utc_ms IS NOT NULL) OR (status = 'open' AND completed_at_utc_ms IS NULL)));
         CREATE TABLE IF NOT EXISTS task_dependencies(id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), prerequisite_task_id TEXT NOT NULL REFERENCES tasks(id), created_at_utc_ms INTEGER NOT NULL, revision INTEGER NOT NULL, CHECK(task_id <> prerequisite_task_id), UNIQUE(task_id,prerequisite_task_id));
         CREATE TABLE IF NOT EXISTS task_links(id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), label TEXT, uri TEXT NOT NULL, kind TEXT NOT NULL, created_at_utc_ms INTEGER NOT NULL, deleted_at_utc_ms INTEGER, revision INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS project_tags(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), tag_id TEXT NOT NULL REFERENCES tags(id), revision INTEGER NOT NULL, UNIQUE(project_id,tag_id));

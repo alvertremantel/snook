@@ -121,6 +121,7 @@ public sealed partial class MainWindowViewModel
             var update = draft.CreateUpdate();
             var targets = draft.Targets.Select(task => new TaskRevision(task.Id, task.Revision)).ToArray();
             var operation = draft.OperationFor(targets, update);
+            await CheckpointUtilityEditorAsync();
             await _backend.BulkUpdateTasksAsync(targets, update, operation);
             StatusMessage = $"Updated {targets.Length} tasks.";
             FinishUtilityEdit(draft);
@@ -234,5 +235,25 @@ public sealed class BulkTaskEditorViewModel : INotifyPropertyChanged
             _operation = new OperationRequest(Guid.NewGuid(), Guid.NewGuid());
         }
         return _operation!;
+    }
+
+    internal OperationRequest? RequestForCurrent()
+    {
+        var update = CreateUpdate();
+        var targets = Targets.Select(task => new TaskRevision(task.Id, task.Revision)).ToArray();
+        var signature = JsonSerializer.Serialize(new { targets, update });
+        return _operationSignature == signature ? _operation : null;
+    }
+
+    internal void RestoreRequest(OperationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.OperationId == Guid.Empty || request.ClientDeviceId == Guid.Empty
+            || request.ExpectedRevision is not null)
+            throw new ArgumentException("Invalid batch recovery request.", nameof(request));
+        var update = CreateUpdate();
+        var targets = Targets.Select(task => new TaskRevision(task.Id, task.Revision)).ToArray();
+        _operationSignature = JsonSerializer.Serialize(new { targets, update });
+        _operation = request;
     }
 }
