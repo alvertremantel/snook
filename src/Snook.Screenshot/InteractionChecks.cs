@@ -86,6 +86,10 @@ internal static partial class InteractionChecks
         }
         if (Path.GetFileName(path) == "tasks-board.png")
         {
+            // At minimum height the first drag handle starts below the page clip.
+            // Scroll through the real UI before sending pointer coordinates.
+            window.Workspace.FindControl<ScrollViewer>("PageScroll")!.ScrollToEnd();
+            window.UpdateLayout();
             var lanes = Visible<Border>(window).Where(b => b.Classes.Contains("project-lane")).ToArray();
             var handle = Visible<Border>(window).First(b => b.Classes.Contains("drag-handle"));
             var task = (TaskRowViewModel)handle.DataContext!;

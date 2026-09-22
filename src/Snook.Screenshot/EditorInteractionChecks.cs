@@ -41,7 +41,7 @@ internal static partial class InteractionChecks
             reset.BringIntoView();
             Click(window, reset);
             await UntilAsync(() => Task.FromResult(vm.AllowConcurrentForeground == savedPreference));
-            window.FindControl<ScrollViewer>("PageScroll")!.Offset = default;
+            window.Workspace.FindControl<ScrollViewer>("PageScroll")!.Offset = default;
             Click(window, Visible<Button>(window).Single(button => Equals(button.Content, "Boards & projects")));
             window.UpdateLayout();
             if (!vm.IsOrganizationSettings || Visible<Expander>(window).Any())

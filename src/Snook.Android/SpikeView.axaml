@@ -1,0 +1,24 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Snook.Android.SpikeView">
+  <ScrollViewer>
+    <StackPanel Margin="24,48" Spacing="16" MaxWidth="640">
+      <TextBlock Text="Snook Android platform spike" FontSize="24" TextWrapping="Wrap" />
+      <TextBlock Text="Development probe only. Run creates an isolated private test workspace. This is not the Android product or an approved release."
+                 TextWrapping="Wrap" />
+      <Button x:Name="RunButton" Content="Run local platform checks" MinHeight="48"
+              AutomationProperties.Name="Run local platform checks" Click="RunChecks" />
+      <TextBlock x:Name="ResultText" Text="Checks have not run." TextWrapping="Wrap"
+                 AutomationProperties.Name="Platform check result" />
+      <Button x:Name="NotificationButton" Content="Show synthetic timer notification" MinHeight="48"
+              Click="ShowNotification" />
+      <Button Content="Remove synthetic notification" MinHeight="48" Click="RemoveNotification" />
+      <TextBlock x:Name="NotificationResult" Text="Notification permission is requested only when you choose Show. No real timer is started."
+                 TextWrapping="Wrap" />
+      <Button x:Name="ExportDocumentButton" Content="Export synthetic file" MinHeight="48" Click="ExportDocument" />
+      <Button x:Name="VerifyDocumentButton" Content="Verify synthetic file" MinHeight="48" Click="VerifyDocument" />
+      <TextBlock x:Name="DocumentResult" Text="System file pickers only. This does not export or restore your workspace."
+                 TextWrapping="Wrap" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

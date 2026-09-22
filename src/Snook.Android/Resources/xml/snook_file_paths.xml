@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Only explicit, bounded share artifacts are exposed. Live workspace,
+       credential, draft, action, and restore paths are outside this subtree. -->
+  <cache-path name="snook_exports" path="snook-share/" />
+</paths>

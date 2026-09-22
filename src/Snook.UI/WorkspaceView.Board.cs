@@ -7,7 +7,7 @@ using Avalonia.VisualTree;
 
 namespace Snook.UI;
 
-public partial class MainWindow
+public partial class WorkspaceView
 {
     private Border? _dragCard;
     private Border? _dropLane;
@@ -42,15 +42,41 @@ public partial class MainWindow
         });
     }
 
-    private void OnBoardPrevious(object? sender, RoutedEventArgs e) => ScrollBoard(-306, 0);
-    private void OnBoardNext(object? sender, RoutedEventArgs e) => ScrollBoard(306, 0);
+    private void OnBoardPrevious(object? sender, RoutedEventArgs e) => SelectBoardLane(-1);
+    private void OnBoardNext(object? sender, RoutedEventArgs e) => SelectBoardLane(1);
+
+    private void SelectBoardLane(int direction)
+    {
+        if (BoardProjectJump.ItemCount == 0) return;
+        var index = BoardProjectJump.SelectedIndex >= 0 ? BoardProjectJump.SelectedIndex
+            : (int)(BoardScroll.Offset.X / (BoardLaneWidth + 14));
+        BoardProjectJump.SelectedIndex = Math.Clamp(index + direction, 0, BoardProjectJump.ItemCount - 1);
+    }
+
+    private void UpdateBoardNavigation()
+    {
+        UpdateBoardLaneWidth();
+        var index = BoardProjectJump.SelectedIndex >= 0 ? BoardProjectJump.SelectedIndex
+            : (int)(BoardScroll.Offset.X / (BoardLaneWidth + 14));
+        var overflow = BoardScroll.Extent.Width > BoardScroll.Viewport.Width + 1;
+        BoardPreviousButton.IsEnabled = overflow && index > 0;
+        BoardNextButton.IsEnabled = overflow && index < BoardProjectJump.ItemCount - 1;
+    }
+
+    private void UpdateBoardLaneWidth()
+    {
+        BoardLaneWidth = Bounds.Width < 600 && BoardScroll.Viewport.Width > 0
+            ? Math.Clamp(BoardScroll.Viewport.Width - 14, 160, 360) : 292;
+    }
 
     private void OnBoardProjectSelected(object? sender, SelectionChangedEventArgs e)
     {
+        UpdateBoardNavigation();
         if (BoardProjectJump.SelectedItem is not ProjectTaskGroupViewModel project) return;
         var lane = this.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("project-lane")
             && b.DataContext is ProjectTaskGroupViewModel p && p.ProjectId == project.ProjectId);
-        lane?.BringIntoView();
+        if (lane?.TranslatePoint(default, BoardScroll) is { } origin)
+            ScrollBoard(origin.X, 0);
     }
 
     private void ScrollBoard(double x, double y)
@@ -121,6 +147,7 @@ public partial class MainWindow
     {
         var task = _dragCard?.DataContext as TaskRowViewModel;
         var project = _dropLane?.DataContext as ProjectTaskGroupViewModel;
+        var wasDragging = _dragging;
         var shouldMove = _dragging && task is not null && project is not null && task.Task.ProjectId != project.ProjectId;
         ClearBoardDrag();
         e.Pointer.Capture(null);
@@ -129,6 +156,7 @@ public partial class MainWindow
             task!.TargetProjectId = project!.ProjectId;
             task.MoveCommand.Execute(null);
         }
+        else if (wasDragging) _viewModel.RequestHaptic(UiHaptic.Invalid);
         e.Handled = true;
     }
 
@@ -144,6 +172,13 @@ public partial class MainWindow
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        HandleWorkspaceKey(e);
+        base.OnKeyDown(e);
+    }
+
+    private void HandleWorkspaceKey(KeyEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel) return;
         if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _viewModel.IsTasksVisible
             && !_viewModel.IsTaskEditorOpen && !_viewModel.IsUtilityEditorOpen
             && FocusManager?.GetFocusedElement() is not TextBox)
@@ -172,7 +207,6 @@ public partial class MainWindow
             _viewModel.ClearTaskSelectionCommand.Execute(null);
             e.Handled = true;
         }
-        base.OnKeyDown(e);
     }
 
     private void ClearBoardDrag()

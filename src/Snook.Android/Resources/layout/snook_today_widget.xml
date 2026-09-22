@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/today_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="#F2F0EA">
+  <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="Today"
+      android:textColor="#17201D"
+      android:textSize="16sp"
+      android:textStyle="bold" />
+  <TextView
+      android:id="@+id/today_widget_task_one"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:maxLines="1"
+      android:ellipsize="end"
+      android:textColor="#17201D"
+      android:textSize="14sp" />
+  <TextView
+      android:id="@+id/today_widget_task_two"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:maxLines="1"
+      android:ellipsize="end"
+      android:textColor="#34433E"
+      android:textSize="13sp" />
+  <TextView
+      android:id="@+id/today_widget_task_three"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:maxLines="1"
+      android:ellipsize="end"
+      android:textColor="#34433E"
+      android:textSize="13sp" />
+  <TextView
+      android:id="@+id/today_widget_count"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:maxLines="1"
+      android:ellipsize="end"
+      android:textColor="#53655E"
+      android:textSize="12sp" />
+</LinearLayout>

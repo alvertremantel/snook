@@ -1,108 +1,562 @@
 # Snook implementation progress
 
-Updated: 2026-09-19
+
+## RSS reader (2026-09-22)
+
+- Shared RSS 2.0/Atom subscriptions, bounded manual refresh, offline plain-text
+  articles, read/star state, title search, pagination and reversible subscription
+  deletion are implemented across desktop, CLI, and Android independent/attached
+  backend paths. Contract 1.10 adds six methods; SQLite migration 12 and JSON
+  export schema 6 preserve RSS data through backup/restore/export.
+- Parser, network bounds/address policy, exact offline receipt replay, deduplication,
+  revision conflicts, migration checksums, backup/restart, CLI and shared-view-model
+  coverage pass. Full solution verification: 291 application tests and 19 domain
+  tests, zero build warnings/errors. Daemon and tailnet contract tests cover the
+  RSS method surface; live saved-profile CLI and GUI acceptance fetched a public
+  sample feed and verified no client SQLite creation.
+- Seeded/empty desktop and minimum-size captures were inspected, including persisted
+  read/star/filter/draft and cached-content checks. Screenshot profile loading now
+  honors saved connection settings, matching the actual client startup behavior.
+- Android Debug x64 and ARM64 APKs built with zero warnings/errors. API 36 x64 adb
+  acceptance subscribed/refreshed a real feed, changed read/star state, filtered,
+  and expanded cached content. A network-disabled force-stop/restart restored RSS
+  navigation and preserved all five cached articles and read/star state. Evidence:
+  `artifacts/rss/`; reproducible offline check: `scripts/verify-android-rss.py`.
+  No physical-device test or production-signing/release-readiness claim is made.
+- Scope and use: [RSS reader](rss-reader.md). Refresh is manual; no background
+  polling, OPML, enclosure downloads, or full-page scraping are implemented.
+
+Updated: 2026-09-22
 
 ## Current state
 
-Snook is a working desktop vertical slice for local work organization and time tracking. It builds as a .NET 10 Avalonia application, persists to SQLite, and can optionally use an authenticated local or paired Tailscale Serve daemon. The tailnet path remains experimental pending live and platform gates; this is not yet a finished multi-platform release.
+Snook is a working .NET 10 Avalonia application for local work organization and
+time tracking. Its desktop and Android composition roots share one backend contract,
+persist independent workspaces to SQLite, and can optionally use an authenticated
+loopback or Tailscale Serve daemon. Android Phases 0–4 and the desktop tailnet
+workflow are implemented and pass their available automated gates; the external,
+physical-device, and live-tailnet acceptance items below remain pending. This is not
+yet a finished multi-platform release.
 
 ## Implemented surface
 
-- The Tailscale operability implementation now keeps `snookd` loopback-only while
-  accepting strictly canonical `.ts.net` HTTPS origins in explicit version-2
-  profiles. Redirects/proxies stay disabled and standard TLS validation remains.
-  A private verifier-only host registry supplies stable server identity and
-  revocable per-device credentials; bounded five-minute, 128-bit, one-use pairing
-  routes are separate from `IBackendClient`, rate-limited, optionally login-bound,
-  and cancel/revoke on aborted confirmation or failed response delivery. Invitations
-  can also be cancelled explicitly before expiry. The desktop has Embedded, Local daemon
-  and Tailnet daemon modes with identity review; locally attached Settings can arm
-  invitations, cancel them, and list/revoke devices. CLI parity covers pairing, inventory,
-  structured doctor metadata and conflict-safe Tailscale status/setup/disable.
-  The Serve adapter bounds processes/output/JSON, refuses Funnel or occupied roots,
-  never resets Serve, durably records the exact planned ownership before mutation,
-  and verifies the same origin/upstream afterward. Pairing/admin responses and Serve
-  state/receipt JSON reject duplicate, unknown, mistyped and future-version data;
-  pairing/admin requests are equally strict, and local endpoint validation rejects
-  numeric IPv4 shorthand and every `127/8` address except exact `127.0.0.1`.
-  The host verifier registry also rejects case-variant duplicate properties, null
-  structures, invalid timestamps and duplicate scopes deterministically. Normal
-  GUI/CLI transport failures now preserve cautious DNS, TLS, tailnet-connectivity,
-  and local-loopback guidance instead of collapsing every failure into one message.
-  Local discovery descriptors are strict, duplicate-safe and loopback-only before
-  token loading. Shared pairing confirmation now authenticates the issued credential
-  and rechecks reviewed server/workspace identity before any protected-store write;
-  Serve receipts are private, atomic and non-link-following. Focused endpoint/profile/parser
-  and real daemon-process tests pass; the full baseline is 204 tests (186 application,
-  18 domain) with a zero-warning build. Fresh 620×600 tailnet pre-pairing and
-  saved-identity states plus 980×640 daemon Settings form/invitation renders were
-  inspected (`/tmp/snook-tailnet-ui-images-20260919a` and
-  `/tmp/snook-tailnet-admin-ui-images-20260919b`). A
-  read-only live query against Tailscale 1.102.4 confirmed a logged-in node,
-  MagicDNS/HTTPS, empty Serve state and Snook's exact `ready-to-apply` preview;
-  the opt-in `scripts/verify-tailscale-operability.sh` check passed again with the
-  audited release-5 package CLI (`/tmp/snook-tailnet-readonly-status-6.json`) and
-  Serve was not changed. Linux Secret Service, Windows
-  Credential Manager and macOS Keychain adapters are implemented without placing
-  secrets in process arguments; the owner-only file is now explicit. This is not
-  a support claim: native platform acceptance, independent security review, live
-  allowed/denied nodes, direct/DERP/roaming/restart acceptance and native package
-  install/upgrade/uninstall remain release gates in `tailscale-operability-plan.md`.
-  Setup status now emits public host/client pairing next-step commands alongside
-  its validated grant template. The Fedora RPM explicitly requires
-  `/usr/bin/secret-tool`, matching the default Linux protected-store adapter.
-  A current-tree Fedora `linux-x64` RPM was built without installation at
-  `/tmp/snook-rpm-tailnet-audited-9/snook-0.1.0-5.fc44.x86_64.rpm` (SHA-256
-  `e19306a2e2a6354fde188fe99e12cc286356da1d3f6c39bb5799a22b4d4e2917`). Extracted payload,
-  paths, launcher, docs, user unit, private token, daemon/CLI/watch, restart/stop
-  and lease-reopening checks passed; the transient service was removed and no
-  normal service was installed or enabled. A later disposable Fedora 44 DNF
-  install stopped before transaction because `liblttng-ust.so.0` was not
-  resolvable; the native lifecycle gate remains open and packaging repair is
-  deferred from the functional tailnet implementation.
+- The merged tailnet implementation keeps `snookd` loopback-only and exposes two
+  explicit, fail-closed Serve pairing protocols over one daemon. Desktop/CLI clients
+  use five-minute, one-use invitations, a verifier-only host registry, protected
+  per-device credential references, pinned server/workspace identity, provisional
+  credential promotion, and local list/revoke/cancel administration. Android uses
+  its separate Keystore-backed installation credential, challenge/confirmation
+  review, workspace binding, profile repair/revoke/forget, and bounded document
+  download/restore routes. Each protocol has distinct credential headers, records,
+  revocation handling, and SSE teardown; the recovery token remains loopback-only.
+  Both accept only canonical `https://<machine>.<tailnet>.ts.net/` origins, disable
+  redirects and proxies, retain platform TLS validation, reject Funnel/LAN/public
+  fallbacks, and require explicit trust of Serve-supplied login headers for Android
+  enrollment. Focused endpoint, pairing, daemon-process, revocation, identity, SSE,
+  and transfer tests pass after integration. Live two-node Tailscale, roaming/DERP,
+  native protected-store, and independent security-review gates remain open; see
+  [operations](operations.md), the [threat model](tailscale-threat-model.md), and the
+  [operability plan](tailscale-operability-plan.md).
 
-  A subsequent privacy audit removed the user-chosen workspace name from `doctor`
-  output and changed the host screenshot flow to replace the live single-use code
-  with an explicit redaction before pixels are captured; creation and cancellation
-  still exercise the real in-memory invitation. The fresh 980×640 result was
-  visually inspected at
-  `/tmp/snook-tailnet-redaction-images-20260919b/settings-tailnet-invitation.png`.
-  Unhandled CLI failures now emit a fixed redacted message rather than raw
-  exception text. Pairing device-name and intended-login checks occur inside the
-  atomic redemption decision, so a mismatched request counts toward limits but
-  cannot consume an otherwise valid invitation before a successful exchange.
-  Revoking a paired credential now also completes its already-open SSE streams;
-  subscriber registration rechecks active state so a concurrent revoke cannot
-  leave a stream attached. Real daemon coverage verifies the stream reaches EOF.
-  Redeemed credentials are now durable five-minute provisional records. The
-  official client uses health for identity review, saves the protected credential
-  and profile, and only then lets the first RPC/SSE request atomically promote the
-  record. Unused records expire across daemon restart and
-  remain visible with their deadline in the host inventory. A fresh 980×640
-  render and pointer-driven revoke passed at
-  `/tmp/snook-tailnet-provisional-ui-images-20260919c/settings-tailnet-provisional.png`;
-  the live invitation code was redacted before capture.
-  A global five-minute pairing-attempt budget now backs the per-session and
-  per-source limits, preventing forged source-signal cycling from enabling
-  unbounded guesses.
-  Daemon health and pairing metadata now read the current workspace identity
-  instead of a startup snapshot. Restore responses/notifications invalidate client
-  negotiation, and bootstrap rechecks the pinned workspace ID; a real daemon test
-  restores a different workspace, observes the new health identity, rejects the
-  old pinned profile, and restores the original workspace.
-  Health and RPC response envelopes reject case-variant duplicate root fields;
-  authenticated RPC results and SSE notifications reject nested duplicates too,
-  and all three parse with depth/frame bounds. Every daemon JSON response and the
-  SSE stream carry `Cache-Control: no-store`. A client now treats 30 seconds
-  without an SSE line as a broken heartbeat and enters its existing reconnect,
-  renegotiation and snapshot-refresh path. `doctor` keeps loopback connectivity
-  guidance distinct from Tailscale/grant failures.
-  A dedicated tailnet acceptance test now drives the official pairing client,
-  protected-reference profile save, authenticated RPC, SSE notification,
-  transient stream reconnect with identity/snapshot revalidation, and credential
-  revocation through a `.ts.net`-shaped Serve boundary. It also proves that the
-  remote profile creates no SQLite workspace. This is strong local transport
-  evidence, not a substitute for the separate two-node live-tailnet gate.
+- Android Phases 0–4 implementation now includes explicit timed task deadlines and
+  native reminders. The shared model persists a UTC instant plus chosen zone while
+  the editor preserves local date/time and explicit earlier/later DST-fold choice;
+  gaps fail validation. Android reconciles at most 64 reminders into inexact alarms,
+  revalidates current backend state at delivery, repairs through WorkManager and
+  boot/time-zone/package events, and stores only a Keystore-authenticated 24-hour
+  attached derivative for clearly labeled outage notifications. Settings explains
+  permission limits and posts a test notification. Optional device-credential app
+  lock hides activity UI before authentication. All utility editors now use a
+  bounded, workspace-bound, Android-Keystore-encrypted recovery record that retains
+  exact mutation requests, canonical timed arguments, conflict revisions, and bulk
+  target revisions across process death. The final manifest audit includes required
+  network access without broad storage, camera, or location permissions and keeps
+  cleartext transport disabled. Focused reminder, DST, deadline and editor-recovery
+  tests pass; all 293 shared tests pass (274 application, 19 domain), and Android x64
+  Debug plus trimmed Release build with zero warnings. Physical
+  tablet/foldable acceptance remains explicitly pending and nonblocking by project
+  direction; real Tailscale Serve/ACL/roaming/DERP and independent security-review
+  evidence remain external acceptance work.
+
+- Attached Android restore upload, multi-profile management, four shortcuts and four
+  widget surfaces are implemented. Restore uses a credential-bound expiring stage,
+  repeats identity/cursor verification at commit, blocks concurrent device dispatch,
+  rebinds only the authorizing device after cross-workspace replacement, revokes
+  other devices/streams, and retains the previous database. Profiles support
+  list/select/test/rename/repair/revoke/forget. Native physical-device acceptance
+  remains pending.
+
+- Phase 4 now has an end-to-end development pairing and attached-session slice.
+  The loopback daemon creates five-minute, attempt-bounded single-use challenges;
+  observes a trusted Serve login only when the operator explicitly enables that
+  boundary; persists only challenge/credential digests; binds a device credential
+  to installation, login, Serve origin, daemon instance and workspace; lists and
+  revokes device records; and closes that credential's SSE stream on revocation.
+  `snook-cli pairing create|list|revoke` provides the authenticated loopback admin
+  surface. The Android onboarding accepts only canonical HTTPS `*.ts.net`:443
+  origins, reviews every bound identity, stores the credential in a distinct
+  Android-Keystore AES-GCM envelope while keeping the profile non-secret, and only
+  selects attached mode after a fresh authenticated snapshot. There is no attached
+  SQLite file or independent fallback. Retry, forget/re-pair and explicit host
+  switching preserve workspace-bound encrypted drafts while draining the old
+  borrower and clearing timer surfaces. Paired task/batch/habit/journal calls,
+  restart persistence, identity substitution, revocation, SSE closure and bounded
+  backup/JSON/CSV download streaming pass loopback Serve-adapter integration tests.
+  The later milestones above supersede this historical test count and its former
+  restore/profile gaps. Actual Tailscale Serve/ACL/roaming/DERP/device acceptance and
+  independent security review remain external acceptance work.
+
+- Earlier Phase 4 foundation milestone (superseded by the end-to-end slice above):
+  `DaemonBackendClient` retains HTTP-loopback-only behavior for desktop/CLI and adds
+  a distinct tailnet policy accepting only HTTPS DNS origins below `.ts.net` on port
+  443 with no user-info, path, query or fragment; HTTP, IPs, alternate ports and
+  suffix lookalikes fail before credential use. Its default handler already disables
+  redirects and system proxies. `WorkspaceSession.OpenAttachedAsync` validates the
+  daemon capability before publishing `ReadyAttached`, makes initial failure
+  retryable as `StaleAttached`, reuses one borrower and refuses cross-host reuse.
+  Tests prove a failed/retried attached open never invokes the independent SQLite
+  factory and reject an embedded backend masquerading as attached. At that milestone,
+  full and Android Debug builds had zero warnings/errors and all 259 shared tests
+  passed (241 application, 18 domain); later work above replaces its old UI status.
+
+- Android cold/warm activity entry now uses one bounded fail-closed router for normal
+  launch, task share and timer-notification content open. Shares require exact
+  `SEND`/`text/plain`, one text extra at most 300 characters, and no URI, stream,
+  ClipData, token or unknown key. Timer content requires the exact internal action,
+  matching uppercase-hex 256-bit token and canonical internal route without port,
+  query or fragment; the encrypted record/current backend checks remain a second
+  gate. Unknown actions, malformed parcels, payload-bearing launcher entries and
+  substitutions reject without navigating, saving or replacing the draft. Fourteen
+  shared cases pass. The API 36 x64 Debug run in
+  `/tmp/snook-android-entry-router-final-20260920/evidence` passed valid cold/warm
+  sharing plus unexpected-extra, `VIEW file:` and forged-timer rejection; inspected
+  screenshots retain the Tasks draft. Android and full solution builds have zero
+  warnings/errors, and all 246 shared tests pass (228 application, 18 domain).
+  Shortcuts, widgets, external/deep links and physical-device acceptance remain open.
+
+- Android now restores bounded workspace navigation after process death. A versioned,
+  workspace-bound private no-backup snapshot records the current destination and
+  task, calendar, summary, Settings, board and journal subview selections; it excludes
+  search/filter text, capture/editor content, credentials and mutation requests.
+  Writes are serialized, staged and flushed after 250 ms and on backgrounding. Invalid
+  state is ignored, unavailable board/journal selections fall back through current
+  backend data, and a recovered task editor takes precedence by reopening Tasks.
+  Three shared tests cover codec/workspace bounds, full restoration and stale-board
+  fallback. The final API 36 x64 Debug run in
+  `/tmp/snook-android-navigation-recovery-final-20260920/evidence` verified the file
+  stayed under 2 KiB without capture text and restored Tasks across two different-
+  process restarts, both with and without a recovered capture. Both PNGs were
+  inspected. The final Android and full solution builds have zero warnings/errors;
+  all 232 shared tests pass (214 application, 18 domain). Recent-task/OS-pressure,
+  every destination, utility-editor, physical-device and accessibility acceptance
+  remain pending.
+
+- Android task editing now has bounded process-death recovery in the independent
+  development host. Every unsaved task field and the original expected revision are
+  checkpointed after 400 ms and on backgrounding to a separate workspace-bound,
+  Android-Keystore AES-GCM file under private no-backup storage. Recovery reloads
+  authoritative data and opens the normal editor without saving; a changed record
+  retains the normal revision-conflict path. Cancel/Save clears the file. The fresh
+  API 36 x64 Debug run in
+  `/tmp/snook-android-editor-recovery6-20260920/evidence` verified bounded ciphertext
+  without fixture plaintext, a different-process restore, no automatic mutation,
+  Cancel cleanup and a clean second restart. Final recovery/cleared PNGs were
+  inspected. Fresh desktop task-drawer interaction captures in
+  `/tmp/snook-task-editor-recovery-desktop-20260920-images` passed. The Android and
+  full solution builds have zero warnings/errors; all 229 shared tests pass (211
+  application, 18 domain), as do Python syntax and whitespace checks. Utility-editor
+  recovery, newest pre-checkpoint keystrokes, power-loss/storage/key-loss cases and
+  physical-device acceptance remain pending.
+
+- Real Android timer notifications now project committed independent-workspace
+  running/paused sessions through a bounded shared projection. Settings explains the
+  feature before requesting permission; low-importance ongoing notifications use the
+  Android chronometer, private task/activity content, a redacted public lock-screen
+  version, validated Time tracker content routing and Pause/Resume/Stop actions.
+  Random opaque action tokens resolve to fixed-size Keystore-authenticated private
+  records containing the revision and stable operation receipt; stale/wrong-workspace
+  actions fail without mutation, and restore/foreground/backend changes reconcile
+  native state. The non-exported receiver supports process-death action delivery
+  without a foreground service or tick worker. A second credential-protected,
+  non-exported receiver rebuilds from an existing selected workspace after completed
+  boot and handles package replacement, wall-clock and time-zone changes without
+  creating a clean-install database. The destructive API 36 x64 verifier
+  passed education/prompt, running presentation, content open, Pause, notification
+  survival, different-process Resume, actual reboot reconstruction, post-boot Stop
+  and encrypted-record cleanup. Android 16 promotion eligibility is now requested
+  only by the first deterministic running timer; paused timers and summaries retain
+  the ordinary surface without the request. Settings conditionally exposes the
+  system Live Update access handoff. The final run in
+  `/tmp/snook-android-live-update-Final02/evidence` confirmed request metadata on
+  running and boot-reconstructed notifications, its absence while paused, and the
+  usable ordinary fallback; this emulator could not resolve the platform access
+  screen and did not grant promoted treatment. The final PNGs were inspected. The
+  merged manifest confirms
+  both receivers are `exported=false`, the system receiver is not direct-boot-aware,
+  only the four intended actions plus `RECEIVE_BOOT_COMPLETED` are declared, and the
+  promoted-notification permission is present.
+  The Android Debug build and zero-warning full build pass, as do all 227 shared
+  tests and seeded/empty 980×640 desktop Settings captures. Actual promoted/demoted
+  Live Update presentation, native time/time-zone/package-replacement acceptance,
+  custom artwork, reminders, attached-mode notifications and physical-device
+  acceptance remain pending.
+
+- Compact calendar Month now replaces seven squeezed phone columns with a week
+  picker, 48 dp previous/next controls and seven full-width, vertically reachable
+  day cards below 600 dp; wide panes retain the complete seven-column overview.
+  The selected week survives refresh and width-mode rebuilding, due-task popups and
+  item inspection remain shared, and empty days are explicit. Seeded and empty
+  480/720-pane verification reached both boundary weeks and the existing persisted
+  due-task workflow passed. Captures in
+  `/tmp/snook-calendar-month-threshold-20260920-images` were inspected. The updated
+  Debug APK also passed on the API 36 x64 emulator: native hierarchy checks changed
+  weeks, reached all seven day cards, and the initial/scrolled captures in
+  `/tmp/snook-android-month-final/evidence` were inspected. Physical-device and
+  assistive-technology acceptance remain pending. The zero-warning full and Android
+  Debug builds pass, as do all 227 shared tests and tracked/untracked whitespace
+  checks.
+
+- Android clean-install host selection no longer creates the independent database
+  on activity startup. The first surface presents independent and daemon-attached
+  consequences without preselection; independent creation requires a resumed,
+  unlocked native confirmation and persists its non-secret device-local choice only
+  after the backend opens. Back cancellation and the currently unavailable daemon
+  entry leave SQLite absent, and the latter explicitly fails closed without a local
+  or less-private transport fallback. Existing development databases are adopted on
+  upgrade. The destructive-only `--onboarding` verifier passed on the API 36 x64
+  emulator through clean launch, unavailable attached entry, cancellation, confirmed
+  creation, force-stop and restart; screenshots were inspected in
+  `/tmp/snook-android-onboarding-final-AYNokw/evidence`. Full build and all 225 shared
+  tests pass; Android Debug builds with zero warnings/errors. Secure attached
+  onboarding, host switching and physical-device acceptance remain pending.
+
+- Android confirmed restore is connected end to end: native selection and verified
+  identity review, explicit replace/discard consent, resumed/unlocked-activity and
+  conservative free-space gates, guarded backend handoff, serialized capture cleanup,
+  old-projection retirement and fresh workspace/capture projection. The synthetic
+  probe notification and real timer notifications/action records are removed before
+  replacement, and the real coordinator attaches only to the reopened workspace;
+  widget integration remains pending. API 36 acceptance restored a different disposable workspace,
+  verified its actual SQLite identity after process restart, discarded the synthetic
+  capture, retained the previous database and removed document staging. Cancellation,
+  Back and rotation checks also pass. Evidence and inspected native screenshots:
+  `/tmp/snook-android-restore-KpRtxd/restore-verified` and sibling `cancel`. Full build
+  and 225 shared tests pass; Android Debug builds cleanly. Optional app lock,
+  low-storage/provider/interrupted-copy/process-kill-during-restore coverage and
+  physical-device acceptance remain pending. This supersedes the earlier read-only
+  restore milestones below.
+
+- Session restore handoff: independent sessions now return revocable backend
+  borrowers. Restore closes call admission, drains existing operations, rechecks the
+  confirmed workspace ID/cursor and backup identity/hash, and returns a fresh
+  borrower/snapshot only after replacement reopens. Old projections cannot write to
+  the replacement. Stale confirmation and pre-dispatch cancellation preserve the
+  borrower; post-dispatch uncertainty retires it and keeps ownership in a fatal
+  session until explicit disposal. Tests cover different-workspace replacement,
+  actual old/new UI capture commands, draining, stale confirmation, cancellation
+  after commit and lost responses. Full build and 225 tests pass. Native review and
+  editor Back/rotation checks pass through the guard in
+  `/tmp/snook-session-guard-CEwVXz`. Android now invokes this mechanism through the
+  confirmed native restore flow described above.
+
+- Calendar history initial loading now honors the injected clock, like subsequent
+  refreshes. The paging test uses a controlled local-midday clock, avoiding an
+  accidental extra day-column item when its old live-time fixture crossed midnight.
+
+- Initial native read-only backup review milestone (superseded above): Android Settings opens the system document
+  picker, stages the selected bundle and calls verified inspection before showing
+  current/incoming workspace names and IDs, backup time and size. The dialog
+  explicitly says replacement is not enabled, requires a resumed activity and
+  unlocked device, and dismisses on Back/background/rotation. API 36 picker
+  cancellation, valid review, Back/rotation dismissal and normal staging cleanup
+  pass in `/tmp/snook-native-review-5GCLIl/native-verified`. Native review and seeded/
+  empty 980×640 desktop Settings screenshots were inspected; desktop restore labeling
+  and behavior remain unchanged. Full build and 218 tests pass; Android Debug builds
+  cleanly. Destructive activation, workspace-bound draft/native-state handoff,
+  app-lock authentication and free-space/provider/process-kill gates remain pending.
+
+- Verified incoming-workspace inspection: contract 1.7 adds `InspectBackupAsync`
+  through embedded and daemon implementations and the derived CLI catalog. It
+  verifies the pair and runs the same schema/integrity preparation as restore on a
+  private copy, returning workspace identity and original backup metadata without
+  replacing live data or emitting a mutation. Embedded/daemon invalid-input tests,
+  cancellation, source preservation and v7 migration inspection pass. Full build
+  and all 218 tests pass; Android Debug builds cleanly. Saved-profile CLI inspection
+  and the daemon-backed GUI connection checks pass in
+  `/tmp/snook-backup-inspection-bUYClv`, including no client SQLite. Android restore
+  selection, confirmation/security/free-space gates and native reconciliation are
+  still pending; this provides the verified identity needed by that confirmation.
+
+- Restore document staging foundation: `WorkspaceBackupBundle.StageAsync` accepts
+  non-seekable streams, bounds the incoming copy, preflights ZIP/ZIP64 directory
+  allocation, and extracts only the fixed database/original-manifest pair into an
+  empty private staging directory. Tests cover non-seekable short reads, ZIP64
+  metadata, traversal/duplicate/directory entries, oversized manifests, cancellation,
+  and directory budgets. The bundle round trip now uses this reader and proves a
+  corrupted staged database is rejected without replacing the current workspace.
+  Full build and all 217 tests pass; Android Debug builds cleanly. This is container
+  staging, not backup trust or completed Android restore: the native picker,
+  workspace-naming confirmation, authentication/free-space gates and post-restore
+  native reconciliation remain pending.
+
+- Native JSON/CSV document export: Settings uses the same canonical private-stage,
+  system-picker and read-back verification flow as backups. CSV captures its existing
+  report range once from the injected clock before opening the picker. All three
+  export/cancellation/cleanup checks pass on the API 36 emulator in
+  `/tmp/snook-native-exports-7D22jb`; JSON schema-5 sections and the empty CSV header
+  were inspected from the actual downloaded documents. Full build and all 209 tests
+  pass; Android Debug builds cleanly. Android restore selection and the broader
+  provider/low-storage/process-death/physical-device matrix remain pending.
+
+- Android independent backup export: system save picker, private verified snapshot,
+  exact database/manifest ZIP bundle, bounded transfer, full document read-back hash
+  and staging cleanup. Canonicalizing the OS-private path fixes Android alias
+  rejection without relaxing backend path safety. API 36 cancellation/export checks
+  pass in `/tmp/snook-android-backup-Vdlfk1/canonical-private-stage`; the actual
+  exported document restored into a fresh desktop workspace via the normal CLI
+  verification path. Full build and all 208 tests pass; Android Debug builds cleanly.
+  Android restore picker, interrupted staging cleanup,
+  provider-failure/low-storage matrices and physical-device acceptance remain.
+
+- Adaptive board lanes and navigation: pane-based compact widths, full-row project
+  names, labeled More actions and selection-aware previous/next controls. Seeded
+  stress and empty captures at 320/480/720 dp in
+  `/tmp/snook-board-verified-tK3xln` were inspected. Reachability, touch-size and
+  boundary checks pass, as do persisted drag/drop, edge scrolling, task moves,
+  draft retention, save/conflict and Escape checks. Full build and all 207 tests
+  pass. Native board touch/accessibility acceptance remains pending.
+
+- Android editor Back confirmation: keep/discard choices, keyboard-first Back,
+  confirmation cancellation and rotation retention, plus unchanged root exit.
+  Fixed the earlier Android key path closing the editor before the Back callback.
+  `--editor-back` passes on the API 36 emulator; native dialog and rotated draft
+  captures in `artifacts/android-spike-api36/editor-back-key-routing` were inspected.
+  Shared tests cover task/utility discard identity and stale confirmations. Full
+  build and all 207 tests pass; Android Debug builds cleanly. Predictive gesture,
+  popup-ordering, other-API and physical-device acceptance remain pending.
+
+- Narrow calendar time-grid navigation: wider day columns, explicit day picker and
+  previous/next actions, plus pinned hour labels during horizontal pan. Seeded and
+  empty 480/720-width captures in `/tmp/snook-calendar-final-fqqHu0` were inspected;
+  first/last-day reachability and boundary states pass alongside existing calendar
+  interaction checks. Full build and all 206 tests pass. Android Debug builds cleanly;
+  API 36 emulator startup/restart, rotation, background return and share/draft checks
+  pass in `artifacts/android-spike-api36/adaptive-calendar-share`. Native taps reach
+  Sunday with the forward action disabled; its screenshot shows the pinned hours.
+  Month-grid adaptation is completed in the later milestone above; physical-device
+  acceptance remains pending.
+
+- Compact calendar toolbar/inspector and agenda: narrow range/actions stack, view
+  choices wrap, and agenda names/times/actions occupy separate rows. Populated and
+  empty captures in `/tmp/snook-calendar-review-h2ebRM` were inspected; toolbar
+  touch-size and width checks pass at 480/720, as do existing navigation, overlap,
+  inspection, planned starts and planning-validation checks. Full build and all
+  206 tests pass. The later time-grid and Month milestones above complete shared
+  grid adaptation; native-device acceptance remains.
+
+- Adaptive habits: narrow panes stack creation/date controls and habit actions;
+  seven-day buttons retain at least 48 dp touch targets while wrapping. Resize checks
+  preserve unapplied dates. Populated/empty captures in
+  `/tmp/snook-habits-review-Gs6lA7` were inspected. Persisted checks pass for creation,
+  check/undo, backfill, conflict review, drafts/focus, Escape and archive/delete/
+  restore. Full build and all 206 tests pass; native/assistive-device acceptance
+  remains pending.
+
+- Adaptive journals: narrow panes stack the picker, creation/settings actions and
+  search/tag filters; dates/empty headings and entry actions wrap. Resize checks
+  preserve unapplied search text and restore wide filter placement. Populated/empty
+  captures in `/tmp/snook-journals-review-VdGxFf` were inspected, and persisted journal
+  checks pass for writing, movement, filtering, mood, conflict recovery, draft/focus,
+  Cancel/Escape and delete/restore. Full build and all 206 tests pass. Journal
+  process-death drafts and native input/accessibility acceptance remain open.
+
+- Adaptive History/Summary: narrow rows separate titles from date/duration/Edit
+  actions and put labeled attributed/coverage totals below group bars. Desktop
+  columns return after resize. Seeded and empty 480/720/980-width captures in
+  `/tmp/snook-reports-final-eBJF0n` were inspected; checks verify touch-height Edit
+  actions, metric labels and restored wide positions. A resize-time Grid exception
+  was fixed by retaining column definitions for hidden headings. Full build and
+  all 206 tests pass. Native-device/accessibility acceptance is still outstanding.
+
+- Adaptive timer workspace: compact/medium widths show running sessions before
+  activities, with one page scroll, wrapped creation actions and separate state
+  labels. Expanded columns return on resize. Seeded and empty 480/720/980-width
+  captures were inspected; host checks verify layout restoration and retention of
+  the manual-time draft. Full build and all 206 tests pass. This is shared-layout
+  evidence, not physical-device or full native timer acceptance.
+
+- Android quick capture now checkpoints to a private Keystore-encrypted file and
+  restores title/project plus pending request identity. A pre-dispatch checkpoint
+  failure prevents task creation; a new regression verifies unchanged retry keeps
+  its request. Clearing capture deletes its recovery copy. Full build and all 206
+  tests pass. This does not restore task/utility editor drafts or complete the
+  process-death acceptance matrix.
+
+- Quick-capture recovery now has bounded, versioned, workspace-scoped metadata
+  containing title, project and any pending creation request. The UI can restore
+  that request without changing its exact-retry identity, and refuses to overwrite
+  an existing capture/editor or restore into an unavailable project. Codec and
+  committed-response-loss regressions pass; full build and all 205 tests pass.
+  Android encrypted storage and lifecycle wiring are not implemented yet, so this
+  does not claim process-death draft recovery on-device.
+
+- Android now opens the independent Today workspace directly. Development probes
+  are behind Tools, with a compact on-device host label. Ordinary component launches
+  no longer show a share rejection. Bounded plain-text sharing has a separate
+  review/discard inbox and protects existing capture/editor drafts; it never saves
+  automatically. Shared build and all 203 tests pass (one daemon-watch timeout on
+  the first run, full rerun green). These are Phase 1/partial UI improvements, not
+  completion of Android feature parity or native integration acceptance.
+
+- Full presentation refreshes now coalesce within each visibility period. A burst
+  queues one trailing pass rather than overlapping bootstrap refresh chains; fresh
+  resume is independent of an obsolete blocked read. Burst and stale-generation
+  regressions pass, with the full build clean and all 196 tests green. Individual
+  page/editor reads, process-death restoration and physical acceptance remain open.
+
+- Closed a remaining refresh-time task-picker lifecycle gap: its query now receives
+  the presentation token, and obsolete responses cannot publish picker options or
+  continue refreshing hidden/disposed views. Four cooperative/non-cooperative
+  hide/dispose cases pass; full build and all 195 tests pass. Fresh seeded/empty
+  captures and the workspace/editor-retention check pass. Physical acceptance
+  remains pending at the user's direction (phone available, no tablet).
+
+- Presentation read cancellation: primary page reads now use a visibility-scoped
+  token, with fresh scope on resume and quiet expected cancellation in navigation
+  commands. Nine new cases verify cooperative cancellation and that task creation
+  is excluded. Existing non-cooperative response tests remain green. Full build,
+  editor/calendar captures and all 191 tests pass. Request coalescing and physical
+  acceptance remain pending.
+
+- Page-lifecycle stale-response guards: all primary page loaders invalidate pending
+  results across visibility/disposal, and Today/History stage replacement rows.
+  Eight delayed-response cases cover Tasks, Today, History, Calendar, Summary,
+  Habits and journal catalog/entries; hidden responses neither publish nor continue
+  read chains. Full build, editor-retention checks and all 182 tests pass.
+  Transport cancellation, request coalescing and physical acceptance remain open.
+
+- Android presentation lifecycle: activity visibility and probe selection now gate
+  display ticks and backend-driven projection refresh. Resume refreshes committed
+  state without replacing drafts; a generation guard rejects an earlier visibility
+  period's delayed bootstrap. Three new lifecycle tests, the hidden-editor refresh
+  check, full build and all 174 tests pass. In-flight page-work cancellation,
+  process-death recovery, battery and physical acceptance remain pending.
+
+- Medium-width navigation rail: 600–839 dp windows use a labeled 88 dp rail with
+  scrollable 64 dp destination buttons; Today/Tasks retain stacked content.
+  Boundary checks cover 599/600/839/840 dp, retained capture and Settings scroll
+  reachability. Contrast was corrected during visual review. Native landscape
+  captures, emulator regression, full build and all 171 tests pass. Physical
+  tablet/foldable acceptance and complete adaptive feature layouts remain pending.
+
+- Compact Tasks pass: toolbar and capture stack below 600 dp, list actions move
+  beneath task text, and creation form width is bounded. Headless assertions verify
+  compact placement, wide-layout restoration and retained capture text. Seeded and
+  empty 980×640 captures were inspected; all 171 tests and full build pass.
+  Board lanes, short-height/IME behavior and physical acceptance remain pending.
+
+- Compact Today refinement: timers and next tasks now precede the agenda; task
+  actions move below their text at compact width, and timer Stop has a visible
+  label. Seeded/empty captures and retained-draft/card-order/action-row assertions
+  pass. The full solution builds without warnings and all 171 tests pass.
+  This remains partial adaptive UI work, not mobile or physical acceptance.
+
+- First compact layout pass: below 600 dp, bottom navigation replaces the sidebar,
+  Today panes stack and drawers fit the viewport width. Resizing preserves the
+  same editor draft. Desktop seeded/empty 980×640 and compact-width captures pass;
+  the x64 emulator verifies rotation, More → Habits → Today and retained capture
+  text. All 171 tests and Release publishing pass. Medium navigation rail, remaining
+  feature layouts, native Back and physical acceptance are still pending.
+
+- Android development workspace host: activity views now borrow an application-
+  owned backend and shared UI model, separate from the platform probe database.
+  The installed x64 Release package opens the complete workspace and retains an
+  unsaved capture through actual activity recreation in the same process. Native
+  probes, desktop host recreation, seeded/empty captures and all 171 tests pass.
+  The portrait layout is visibly cramped and not accepted; adaptive UI, native
+  Back, process-death drafts and physical-device acceptance remain pending.
+
+- Independent session ownership foundation: `WorkspaceSession` serializes startup
+  and close, shares one backend across repeated opens, validates committed state
+  before readiness, isolates observer failures, and cleans up cancelled startup.
+  Four new disposable-workspace tests cover concurrency, retry, cancellation and
+  lease release. Full build has zero warnings/errors and all 170 tests pass.
+  Android activity wiring and session-owned UI projections remain pending;
+  attached/locked lifecycle states are reserved only, not implemented.
+
+- Shared Android UI foundation: extracted the complete workspace AXAML and pointer/
+  keyboard handlers into `WorkspaceView`, leaving `MainWindow` as the desktop host.
+  Ancestor bindings no longer require a `Window`; detachment stops view-local work
+  without disposing the session. A headless recreation check preserves an editor
+  draft through view replacement and backend refresh, then verifies Escape does
+  not save it. The full combined 980×640 seeded interaction pass and separate empty
+  captures pass; keyboard fallback after focus loss was fixed during verification.
+  All 166 tests and clean x64 Android Release packaging pass. Android activity-owned
+  workspace session wiring, compact/expanded layouts and physical acceptance are
+  still pending; this is a foundation, not mobile feature parity.
+
+- Fixed the Android-discovered PID-reuse ownership defect with exclusive OS file
+  locking instead of PID-based stale-marker deletion. Filesystem locking is checked
+  before opening the owner marker; disabled locking fails closed. New tests cover
+  concurrent contenders, live legacy-owner exclusion, symlinks, cancellation,
+  disabled locking and recovery after killing a real daemon. All 166 host tests
+  pass. Clean x64/ARM64 Android Release publishes pass; the x64 emulator recovered
+  the untouched failed workspace, retained both identity fingerprints through
+  force-stop/rotation and a verified reboot. Saved-profile CLI and daemon-backed
+  GUI checks also passed without a client-side database. Physical acceptance and
+  the remaining Android implementation remain pending.
+
+- Android SAF feasibility: native save/open pickers now export a 32 KiB synthetic
+  fixture and verify its exact hash through bounded private staging without using
+  content URIs as paths or requesting broad storage permission. API 36 x64 Release
+  checks cover picker cancellation, round trip and oversized-input rejection.
+  Eight host tests cover the shared non-seekable stream-copy primitive; the full
+  157-test suite and x64/ARM64 Release publishing pass. This is not verified workspace
+  backup/restore integration. Physical-device acceptance stays pending by user
+  direction; no tablet is available. See [native evidence](android-native-spike.md).
+
+- Android notification Phase 0: an explicitly triggered synthetic notification
+  probe now requests permission contextually, avoids repeat prompts after denial,
+  and posts an ordinary low-importance ongoing notification with a system
+  chronometer. API 36 x64 Release checks verify denial leaves local probes usable,
+  recovery through Android settings, visible advancing elapsed time, return to the
+  probe and removal. ARM64 Release publishing and all 149 repository tests pass.
+  Live Update promotion/fallback and durable production timer integration remain
+  unimplemented; see [native spike evidence](android-native-spike.md).
+
+- Android native Phase 0: Keystore AES-GCM interop now has a bounded encryption
+  primitive and a private synthetic-secret probe. Release emulator checks verify
+  tamper/purpose rejection, removed-key failure without read-time regeneration,
+  and the same secret through process restart, package update and an observed
+  reboot. A non-exported receiver is activated by Android in trimmed Release;
+  immutable sender-substitution, nonce replay and one-shot replay checks pass,
+  and Android's broadcast records confirm external delivery denial. ARM64 Release
+  publishing and the full 149-test repository suite pass. This is native feasibility,
+  not production credential storage, app lock, notifications or attached-mode
+  acceptance; see [native spike evidence](android-native-spike.md).
+
+- Android Phase 0: added a separate Avalonia 12 Android probe with activity-view
+  factory startup, private no-backup storage, explicit local SQLite/JSON/time-zone
+  checks, and Release trimming enabled. Android workload installation and package
+  restore succeeded. Debug APK and partial-trim Release APK/AAB packaging succeeded
+  with a development signer; manifest inspection confirms API 26/36 and disabled
+  backup/cleartext. The API 36 x64 emulator now runs both Debug and partial-trim
+  Release: SQLite native loading, competing-owner rejection, mutation/exact receipt
+  replay after edit/reopen, bootstrap JSON and DST probes pass. A repeatable ADB/UI
+  harness passes Release cold start, force-stop/relaunch and rotation, retaining
+  XML/PNG/JSON evidence; probe screenshots were inspected in portrait and landscape.
+  The strengthened probe retains its live store lease: force-stop/relaunch and an
+  actual emulator reboot both recover with the same persisted workspace/receipt
+  identity fingerprint. Final rotation checks assert actual orientation and restore
+  the original device preference. The updated arm64 Release publish also passes;
+  runtime coverage is still API 36 x64 only.
+  Debug APKs embed assemblies for installation without IDE fast-deployment files.
+  Full desktop build and all 149 tests passed again. Physical-device and wider
+  lifecycle/native-feature verification remain pending. The
+  [spike evidence ledger](android-spike.md) records outstanding gates and the
+  [security draft](android-security.md) records the unresolved Funnel/route and
+  trusted-proxy identity boundaries. Android product functionality and release
+  acceptance remain unimplemented.
 
 - Saved version-1 client profiles now let both the GUI and CLI select embedded or
   authenticated daemon mode without repeating connection flags. Profiles retain
@@ -123,7 +577,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   reconnected at the same endpoint and retained the typed draft; both 980×640 frames
   were inspected. Live credential/endpoint switching and broader update/lifecycle
   retry coverage remain open. No RPM was rebuilt;
-  the then-existing release-3 RPM predated this connection-profile and later restore work. See the current
+  release 3 predates this connection-profile and later restore work. See the current
   [production-readiness summary](production-readiness.md) and the detailed
   [daemon plan](daemon-plan.md).
 
@@ -145,7 +599,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   pointer-driven recovery checks persisted all three decisions with provenance.
   See [daemon-plan.md](daemon-plan.md#restored-timer-reconciliation-pass) for
   evidence paths and remaining acceptance. No package was rebuilt or installed;
-  the then-existing release-3 RPM still predated these restore changes.
+  release 3 still predates these restore changes.
 
 - Restore now requires and verifies the matching format-1 manifest, staged byte
   count and SHA-256 before SQLite validation/upgrade. Inputs reject links and
@@ -161,7 +615,7 @@ Snook is a working desktop vertical slice for local work organization and time t
   tests and cancellation/observer cases passed with disposable profiles.
   Crash-consistent activation/recovery, active-timer reconciliation and broader
   daemon/GUI acceptance remain tracked in [daemon-plan.md](daemon-plan.md).
-  The then-existing release-3 RPM predated these new restore changes. No UI layout changed.
+  The release-3 RPM predates these new restore changes. No UI layout changed.
 
 - JSON export schema 5 adds persisted settings, a snapshot cursor, task links and
   dependency edges. Dedicated export reads preserve links under deleted tasks,
@@ -535,7 +989,9 @@ Snook is a working desktop vertical slice for local work organization and time t
 
 ## Known remaining release scope
 
-- Android packaging and mobile UI are not implemented.
+- Android has a development independent host and partial adaptive UI, not a completed
+  Android product. Full mobile parity, utility-editor process-death recovery, native
+  integrations, Tailscale attachment and production distribution remain incomplete.
 - Peer/cloud synchronization is not implemented; the daemon is a local authenticated transport, not a sync service.
 - Windows service packaging is not implemented.
 - The accessibility, packaging, and release-readiness matrix still needs a dedicated pass.

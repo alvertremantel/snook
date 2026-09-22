@@ -1,7 +1,9 @@
 using System.Windows.Input;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using Snook.Application;
 using Snook.Contracts;
+using Snook.Domain;
 
 namespace Snook.UI;
 
@@ -65,6 +67,62 @@ public sealed partial class MainWindowViewModel
         {
             StatusMessage = "The change was saved, but task details could not refresh. Refresh to load the saved details; do not repeat the saved action.";
         }
+    }
+
+    public TaskEditorRecoveryDraft? CaptureTaskEditorDraft(Guid workspaceId)
+    {
+        if (TaskEditor is not { } row) return null;
+        return new TaskEditorRecoveryDraft(2, workspaceId, _clock.GetUtcNow(), row.Task.Id,
+            row.Task.Revision, row.DraftTitle, row.DraftDescription, row.DraftPriority,
+            row.DueDateText, row.DraftActivityId, row.DraftStarred, row.TargetProjectId,
+            row.TagText, row.PrerequisiteTaskId, row.LinkLabelText, row.LinkUriText,
+            row.ReminderTimeText, row.ReminderTimeZone, row.ReminderFoldChoice);
+    }
+
+    public async Task<bool> RestoreTaskEditorDraftAsync(TaskEditorRecoveryDraft draft,
+        Guid workspaceId)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        if (_disposed || !draft.IsValid(workspaceId, _clock.GetUtcNow())
+            || IsTaskEditorOpen || IsUtilityEditorOpen) return false;
+        try
+        {
+            var item = (await _backend.SearchTasksAsync(includeCompleted: true, includeArchived: true))
+                .FirstOrDefault(candidate => candidate.Task.Id == draft.TaskId);
+            if (item is null) return false;
+            var details = await _backend.GetTaskDetailsAsync(draft.TaskId);
+            await SelectSectionAsync("Tasks");
+            var expectedTask = details.Task with { Revision = draft.ExpectedRevision };
+            SelectedTaskDetails = new TaskDetailsPanelViewModel(details);
+            var row = new TaskRowViewModel(item with { Task = expectedTask }, Projects, Activities,
+                (await _backend.SearchTasksAsync()).Select(TaskPickerOption),
+                StartTaskAsync, CompleteTaskAsync, SaveTaskAsync, MoveTaskAsync, ArchiveTaskAsync,
+                DeleteTaskAsync, AddTaskTagAsync, AddTaskDependencyAsync, AddTaskLinkAsync,
+                ShowTaskDetailsAsync)
+            {
+                DraftTitle = draft.DraftTitle,
+                DraftDescription = draft.DraftDescription,
+                DraftPriority = draft.DraftPriority,
+                DueDateText = draft.DueDateText,
+                DraftActivityId = draft.DraftActivityId,
+                DraftStarred = draft.DraftStarred,
+                TargetProjectId = draft.TargetProjectId,
+                TagText = draft.TagText,
+                PrerequisiteTaskId = draft.PrerequisiteTaskId,
+                LinkLabelText = draft.LinkLabelText,
+                LinkUriText = draft.LinkUriText,
+                ReminderTimeText = draft.ReminderTimeText,
+                ReminderTimeZone = draft.Version == 1 || string.IsNullOrWhiteSpace(draft.ReminderTimeZone)
+                    ? TimeZoneInfo.Local.Id : draft.ReminderTimeZone,
+                ReminderFoldChoice = draft.ReminderFoldChoice
+            };
+            TaskEditor = row;
+            StatusMessage = details.Task.Revision == draft.ExpectedRevision
+                ? "Unsaved task edit recovered. Review before saving."
+                : "Unsaved task edit recovered, but the saved task changed. Your draft is preserved; saving will require conflict recovery.";
+            return true;
+        }
+        catch (SnookException) { return false; }
     }
 }
 

@@ -47,4 +47,21 @@ public sealed class TimeMathTests
 
         Assert.Equal(TimeSpan.FromMinutes(40).TotalMilliseconds, duration);
     }
+
+    [Fact]
+    public void LocalCivilReminderRejectsGapAndMakesFoldChoiceExplicit()
+    {
+        Assert.Throws<SnookException>(() => LocalCivilTime.Resolve(
+            new DateOnly(2026, 3, 8), new TimeOnly(2, 30), "America/Chicago",
+            AmbiguousTimeChoice.Earlier));
+
+        var earlier = LocalCivilTime.Resolve(new DateOnly(2026, 11, 1),
+            new TimeOnly(1, 30), "America/Chicago", AmbiguousTimeChoice.Earlier);
+        var later = LocalCivilTime.Resolve(new DateOnly(2026, 11, 1),
+            new TimeOnly(1, 30), "America/Chicago", AmbiguousTimeChoice.Later);
+
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 6, 30, 0, TimeSpan.Zero), earlier);
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 7, 30, 0, TimeSpan.Zero), later);
+        Assert.Equal(TimeSpan.FromHours(1), later - earlier);
+    }
 }

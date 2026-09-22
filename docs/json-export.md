@@ -1,16 +1,16 @@
 # JSON workspace export
 
-The current JSON export format is **schema 5**. `ExportJsonAsync` and the CLI
+The current JSON export format is **schema 6**. `ExportJsonAsync` and the CLI
 `call export-json` write the same UTF-8 JSON document in embedded and daemon
 modes. The result contains its host-local path, byte count, SHA-256 and
-`schemaVersion: 5`. Check the version before interpreting the file. Export is a
+`schemaVersion: 6`. Check the version before interpreting the file. Export is a
 portable data report, not a SQLite backup or an import package; there is no JSON
 restore/import command. Use verified database backups for lossless workspace
 recovery, migration and preservation of retry receipts.
 
 ## Encoding and snapshot rules
 
-- Top-level keys and the `habitTracking`/`journaling` section keys are camelCase.
+- Top-level keys and the `habitTracking`/`journaling`/`rss` section keys are camelCase.
   Domain and relationship record properties are PascalCase, as in earlier exports.
   This is distinct from the CLI/RPC's camelCase response encoding.
 - UUIDs are strings; ID-to-tag maps use UUID property names and arrays of tag UUIDs.
@@ -50,10 +50,11 @@ recovery, migration and preservation of retry receipts.
 | `sessions` | All stored tracking sessions, including intervals, attribution, notes, recovery state, revisions and `DeletedAtUtc`. |
 | `corrections` | Stored correction reason, before/after session snapshots, operation ID and application instant, including corrections for deleted sessions. |
 | `habitTracking` | `habits` and `checkIns`, including archived/deleted habits and retained check-in history. |
+| `rss` | `feeds` and `articles`, including deleted subscriptions and cached read/star state. |
 | `journaling` | `journals` and `entries`, including deletion state, content, occurrence time, mood and independent journal-entry tags. |
 
 The current command surface does not delete tags, links or tracking sessions,
-but schema 5 preserves their stored deletion markers when present. Ordinary
+but schema 6 preserves their stored deletion markers when present. Ordinary
 active-screen queries must not be used as an export filter. Removed relationships
 that were physically deleted from SQLite cannot be reconstructed by an export.
 
@@ -68,7 +69,19 @@ export must not open links or execute their contents automatically.
 PrerequisiteTaskId,” not the reverse. Neither array is filtered by current task
 visibility or completion state.
 
+### RSS
+
+`rss.feeds` includes active and deleted subscriptions, original URLs, titles, last
+refresh instants and revisions. `rss.articles` contains every cached article, its
+feed and external identity, plain-text content, original link, publication/receipt
+time, read/star state and revision. Neither section initiates a network request.
+URLs and cached content can reveal reading interests; treat them as private data.
+
 ## Compatibility, privacy and operation
+
+Schema 6 retains schema 5's sections and adds `rss` with `feeds` and `articles`.
+Schema 5 consumers must explicitly accept the new version.
+
 
 Schema 5 retains schema 4's sections and adds `settings`, `committedCursor`,
 `taskLinks` and `taskDependencies`. It also includes stored deleted tags/sessions

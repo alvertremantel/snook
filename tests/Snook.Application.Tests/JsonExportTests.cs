@@ -279,9 +279,9 @@ public sealed class JsonExportTests
     internal static async Task<JsonObject> ExportAsync(IBackendClient backend, string path)
     {
         var result = await backend.ExportJsonAsync(path);
-        Assert.Equal(5, result.SchemaVersion);
+        Assert.Equal(6, result.SchemaVersion);
         var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
-        Assert.Equal(5, json["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(6, json["schemaVersion"]!.GetValue<int>());
         Assert.Equal(TimeSpan.Zero, json["exportedAtUtc"]!.GetValue<DateTimeOffset>().Offset);
         json.Remove("exportedAtUtc");
         return json;

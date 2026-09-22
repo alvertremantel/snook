@@ -68,6 +68,8 @@ public sealed partial class MainWindowViewModel
 
     private async Task LoadJournalsAsync()
     {
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
         // A catalog refresh can change the selected journal and deleted-item scope.
         // Invalidate entry requests and their scope-bound continuation token before
         // yielding so Load earlier cannot race the refresh with a stale token.
@@ -76,7 +78,7 @@ public sealed partial class MainWindowViewModel
         var version = ++_journalCatalogLoadVersion;
         try
         {
-            var journals = await _backend.GetJournalsAsync(ShowDeletedJournalItems);
+            var journals = await _backend.GetJournalsAsync(ShowDeletedJournalItems, cancellationToken: cancellationToken);
             if (version != _journalCatalogLoadVersion) return;
             _journals = journals;
             var selected = journals.Any(journal => journal.Id == SelectedJournalId) ? SelectedJournalId : Guid.Empty;
@@ -100,13 +102,15 @@ public sealed partial class MainWindowViewModel
 
     private async Task LoadJournalEntriesAsync(bool append = false)
     {
+        if (!IsPresentationActive) return;
+        var cancellationToken = _presentationReads.Token;
         if (append && _journalNextPage is null) return;
         if (!append) ResetJournalPagination();
         var version = ++_journalEntryLoadVersion;
         try
         {
             var page = await _backend.GetJournalEntriesAsync(new JournalEntryQuery(SelectedJournalId == Guid.Empty ? null : SelectedJournalId,
-                _appliedJournalSearch, _appliedJournalTag, ShowDeletedJournalItems, 30, append ? _journalNextPage : null));
+                _appliedJournalSearch, _appliedJournalTag, ShowDeletedJournalItems, 30, append ? _journalNextPage : null), cancellationToken: cancellationToken);
             if (version != _journalEntryLoadVersion) return;
             if (!append)
             {
@@ -174,14 +178,28 @@ public sealed partial class MainWindowViewModel
         NotifyUtilityEditor();
     }
 
+    /// <summary>Opens the journal-entry destination for a validated platform entry.</summary>
+    public async Task OpenJournalEntryComposerAsync()
+    {
+        CloseTaskEditorCommand.Execute(null);
+        CloseUtilityEditor();
+        await SelectSectionAsync("Journals");
+        if (CanWriteJournalEntry)
+            OpenJournalEntryEditor(null);
+        else
+            StatusMessage = "Create a journal before writing an entry.";
+    }
+
     private async Task SaveJournalAsync(JournalEditorViewModel draft)
     {
         try
         {
             var definition = new JournalDefinition(draft.Name, draft.Description);
+            var request = draft.Operation.For(definition, draft.Journal?.Revision);
+            await CheckpointUtilityEditorAsync();
             var saved = draft.Journal is { } journal
-                ? await _backend.UpdateJournalAsync(journal.Id, definition, draft.Operation.For(definition, journal.Revision))
-                : await _backend.CreateJournalAsync(definition, draft.Operation.For(definition, null));
+                ? await _backend.UpdateJournalAsync(journal.Id, definition, request)
+                : await _backend.CreateJournalAsync(definition, request);
             FinishUtilityEdit(draft);
             _selectedJournalId = saved.Id;
             await LoadJournalsAsync();
@@ -209,9 +227,11 @@ public sealed partial class MainWindowViewModel
         try
         {
             var definition = draft.Definition();
+            var request = draft.Operation.For(definition, draft.Entry?.Revision);
+            await CheckpointUtilityEditorAsync();
             if (draft.Entry is { } entry)
-                await _backend.UpdateJournalEntryAsync(entry.Id, definition, draft.Operation.For(definition, entry.Revision));
-            else await _backend.CreateJournalEntryAsync(definition, draft.Operation.For(definition, null));
+                await _backend.UpdateJournalEntryAsync(entry.Id, definition, request);
+            else await _backend.CreateJournalEntryAsync(definition, request);
             FinishUtilityEdit(draft);
             await LoadJournalsAsync();
             StatusMessage = "Entry saved.";
@@ -329,8 +349,8 @@ public sealed class JournalEditorViewModel : INotifyPropertyChanged
 
 public sealed class JournalEntryEditorViewModel : INotifyPropertyChanged
 {
-    private readonly string _originalDateText;
-    private readonly DateTimeOffset? _originalInstant;
+    private string _originalDateText;
+    private DateTimeOffset? _originalInstant;
     public JournalEntryEditorViewModel(JournalEntry? entry, IReadOnlyList<Journal> journals, Guid selectedJournal, bool readOnly,
         Func<JournalEntryEditorViewModel, Task> save, Func<JournalEntryEditorViewModel, Task> review)
     {
@@ -377,6 +397,12 @@ public sealed class JournalEntryEditorViewModel : INotifyPropertyChanged
         return new JournalEntryDefinition(JournalId, Title, Content, occurred, MoodRating == 0 ? null : MoodRating,
             TagsText.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
     }
+    internal void RestoreDate(string text, DateTimeOffset? exactInstant)
+    {
+        DateText = text;
+        _originalDateText = text;
+        _originalInstant = exactInstant;
+    }
     public void Review(JournalEntry entry, string journalName)
     {
         Entry = entry;
@@ -399,5 +425,22 @@ internal sealed class JournalOperation
             _request = new OperationRequest(Guid.NewGuid(), _deviceId, revision);
         }
         return _request;
+    }
+
+    public OperationRequest? RequestFor(object value, long? revision)
+        => _request is not null
+            && _fingerprint == JsonSerializer.Serialize(new { value, revision })
+                ? _request
+                : null;
+
+    public void Restore(object value, long? revision, OperationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.OperationId == Guid.Empty || request.ClientDeviceId == Guid.Empty
+            || request.ExpectedRevision != revision)
+            throw new ArgumentException("Invalid journal recovery request.", nameof(request));
+        _fingerprint = JsonSerializer.Serialize(new { value, revision });
+        _request = request;
     }
 }

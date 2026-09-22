@@ -95,7 +95,12 @@ public sealed record TaskItem(
     DateTimeOffset? CompletedAtUtc,
     DateTimeOffset? ArchivedAtUtc,
     DateTimeOffset? DeletedAtUtc,
-    long Revision);
+    long Revision,
+    Guid? ReminderId = null,
+    DateOnly? ReminderLocalDate = null,
+    TimeOnly? ReminderLocalTime = null,
+    AmbiguousTimeChoice? ReminderFoldChoice = null,
+    ReminderDeliveryPolicy? ReminderDeliveryPolicy = null);
 
 public sealed record Activity(
     Guid Id,
@@ -189,7 +194,14 @@ public sealed record TaskUpdate(
     Priority Priority,
     DateOnly? DueDate,
     Guid? DefaultActivityId,
-    bool Starred);
+    bool Starred,
+    DateTimeOffset? DueAtUtc = null,
+    string? DueTimeZone = null,
+    bool ChangeTimedDue = false,
+    DateOnly? ReminderLocalDate = null,
+    TimeOnly? ReminderLocalTime = null,
+    AmbiguousTimeChoice? ReminderFoldChoice = null,
+    ReminderDeliveryPolicy? ReminderDeliveryPolicy = null);
 
 public sealed record TaskRevision(Guid TaskId, long ExpectedRevision);
 

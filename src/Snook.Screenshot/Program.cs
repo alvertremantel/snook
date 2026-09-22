@@ -23,7 +23,13 @@ internal static class Program
         Directory.CreateDirectory(Path.Combine(dataRoot, "Snook"));
         Directory.CreateDirectory(screenshotDirectory);
 
-        var profile = ClientProfileStore.Resolve(null, dataRoot, dataDirectory: dataRoot);
+        var savedProfile = new ClientProfileStore(dataRoot).ReadAsync().GetAwaiter().GetResult();
+        var profile = ClientProfileStore.Resolve(savedProfile.Profile, dataRoot, dataDirectory: dataRoot);
+        // Local fixture seeding uses the same transactional import path, without network dependencies.
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_SEED_RSS") == "1" && profile.Host == "embedded")
+        {
+            SeedRssAsync(dataRoot).GetAwaiter().GetResult();
+        }
         var backend = ClientProfileStore.OpenAsync(profile).GetAwaiter().GetResult();
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_SEED") == "1")
             SeedAsync(backend).GetAwaiter().GetResult();
@@ -67,6 +73,21 @@ internal static class Program
                 ShouldRenderOnUIThread = true
             })
             .WithInterFont();
+
+    private static async Task SeedRssAsync(string dataRoot)
+    {
+        await using var store = new SqliteStore(Path.Combine(dataRoot, "Snook", "workspace.db"));
+        await store.InitializeAsync();
+        if ((await store.GetRssFeedsAsync(true)).Count > 0) return;
+        var now = DateTimeOffset.UtcNow;
+        var feed = await store.SubscribeRssAsync("https://example.com/reading.xml", Guid.NewGuid(), now);
+        await store.ApplyRssRefreshAsync(feed.Id, new RssDocument("The quiet reader", [
+            new RssItem("one", "Making room for a slower morning", "https://example.com/morning",
+                "A few pages, a warm cup, and a little space before the day begins.\n\nThis cached article stays available even when you are offline. Follow a feed, choose what matters, and read at your own pace.", now),
+            new RssItem("two", "Notes from the studio: the value of unfinished work", "https://example.com/studio",
+                "Ideas become clearer when we share them. Leave enough room to discover something unexpected.", now.AddDays(-1))]),
+            feed.Revision, Guid.NewGuid(), now);
+    }
 
     private static async Task SeedRestoredTimersAsync(IBackendClient backend, string dataRoot)
     {
@@ -167,6 +188,8 @@ internal static class Program
             ?? throw new InvalidOperationException("Avalonia headless renderer did not produce a frame.");
         bitmap.Save(path, PngBitmapEncoderOptions.Default);
         bitmap.Dispose();
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_HOST") == "1")
+            await InteractionChecks.CheckWorkspaceHostAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_WORKSPACE") == "1")
             await InteractionChecks.CheckWorkspaceAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_PALETTE") == "1")
@@ -182,6 +205,8 @@ internal static class Program
             await InteractionChecks.CheckTaskBatchAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_HABITS") == "1")
             await InteractionChecks.CheckHabitsAsync(window, path);
+        if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_RSS") == "1")
+            await InteractionChecks.CheckRssAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_JOURNALS") == "1")
             await InteractionChecks.CheckJournalsAsync(window, path);
         if (Environment.GetEnvironmentVariable("SNOOK_SCREENSHOT_VERIFY_RECOVERY") == "1")

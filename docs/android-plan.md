@@ -478,6 +478,28 @@ database unintentionally.
 
 ## Delivery phases and gates
 
+### Current implementation boundary (2026-09-20)
+
+The active implementation goal covers Phases 0 through 4. Phase 5 hardening and
+distribution—including production signing custody, store publication, track
+promotion, SBOM/provenance delivery and store-policy administration—is deferred and
+does not block completion of this implementation goal. Ordinary clean build, test,
+security and disposable-device regression gates still apply to Phases 0–4.
+
+Physical-device acceptance remains recorded but pending by explicit project
+direction: a phone is available, but no tablet/foldable is available. Emulator
+evidence must not be relabeled as physical acceptance. Completion of the active goal
+therefore means implemented and otherwise verified Phases 0–4, with those unavailable
+physical-device rows still stated as pending; it does not mean the Phase 5 product
+release definition below has been met.
+
+Implementation status: Phases 0–4 reached the available local completion gate on
+2026-09-20. The solution passes all 293 shared tests (274 application and 19 domain),
+and Android x64 Debug and trimmed Release builds complete with zero warnings. Live
+Tailscale Serve/ACL/roaming/DERP adversarial acceptance, independent security review,
+and physical tablet/foldable acceptance remain explicitly pending. Phase 5 remains
+outside this implementation goal.
+
 ### Phase 0 — Architecture, threat model, and platform spike
 
 Approve lifecycle ownership, native adapter boundaries, target/minimum SDK and ABIs,

@@ -121,7 +121,7 @@ public sealed class HabitTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=8;";
+                command.CommandText = "DROP TABLE rss_articles; DROP TABLE rss_feeds; DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=8;";
                 await command.ExecuteNonQueryAsync();
             }
             await using (var backend = new SnookBackend(new SqliteStore(path)))
@@ -141,7 +141,7 @@ public sealed class HabitTests
                 await backend.SetHabitDeletedAsync(initial.Id, true, Request(archived.Revision));
                 var backup = await backend.CreateBackupAsync(Path.Combine(directory.FullName, "habits.db"));
                 var export = await backend.ExportJsonAsync(Path.Combine(directory.FullName, "habits.json"));
-                Assert.Equal(5, export.SchemaVersion);
+                Assert.Equal(6, export.SchemaVersion);
                 using var json = JsonDocument.Parse(await File.ReadAllTextAsync(export.Path));
                 Assert.Single(json.RootElement.GetProperty("habitTracking").GetProperty("habits").EnumerateArray());
                 Assert.Single(json.RootElement.GetProperty("habitTracking").GetProperty("checkIns").EnumerateArray());
@@ -177,12 +177,16 @@ public sealed class HabitTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=8;";
+                command.CommandText = "DROP TABLE rss_articles; DROP TABLE rss_feeds; DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=8;";
                 await command.ExecuteNonQueryAsync();
             }
             var sourceBytes = await File.ReadAllBytesAsync(backupPath);
             await BackupFixture.WriteManifestAsync(backupPath);
             await backend.CreateHabitAsync(new HabitDefinition("After v7", "", DateOnly.FromDateTime(DateTime.UtcNow), "UTC"), Request());
+            var inspection = await backend.InspectBackupAsync(backupPath);
+            Assert.Equal((await backend.GetBootstrapAsync()).Workspace, inspection.Workspace);
+            Assert.Equal(sourceBytes, await File.ReadAllBytesAsync(backupPath));
+            Assert.Single(await backend.GetHabitsAsync(new HabitQuery()));
             await backend.RestoreBackupAsync(backupPath);
             Assert.Empty(await backend.GetHabitsAsync(new HabitQuery()));
             Assert.Equal(sourceBytes, await File.ReadAllBytesAsync(backupPath));
@@ -195,6 +199,7 @@ public sealed class HabitTests
                 await command.ExecuteNonQueryAsync();
             }
             await BackupFixture.WriteManifestAsync(backupPath);
+            Assert.Equal(SnookErrorCode.SchemaIncompatible, (await Assert.ThrowsAsync<SnookException>(() => backend.InspectBackupAsync(backupPath))).Code);
             Assert.Equal(SnookErrorCode.SchemaIncompatible, (await Assert.ThrowsAsync<SnookException>(() => backend.RestoreBackupAsync(backupPath))).Code);
             Assert.Equal(habit, Assert.Single(await backend.GetHabitsAsync(new HabitQuery())).Habit);
         }

@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Snook.UI" xmlns:domain="clr-namespace:Snook.Domain;assembly=Snook.Domain"
+             x:Class="Snook.UI.RssView" x:DataType="local:MainWindowViewModel" x:CompileBindings="True">
+  <StackPanel Spacing="12">
+    <Expander Header="Add subscription" HorizontalAlignment="Stretch" AutomationProperties.Name="Add RSS subscription">
+    <Border Classes="card">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Paste an RSS or Atom URL. Refresh downloads articles for offline reading." Classes="muted" TextWrapping="Wrap" />
+        <TextBox Text="{Binding RssUrl}" PlaceholderText="https://example.com/feed.xml" AutomationProperties.Name="RSS feed URL" />
+        <WrapPanel>
+          <Button Content="Subscribe" Classes="primary" Command="{Binding SubscribeRssCommand}" MinHeight="48" Margin="0,0,8,0" />
+          <Button Content="Clear" Classes="ghost" Command="{Binding ClearRssUrlCommand}" MinHeight="48" AutomationProperties.Name="Clear feed URL" />
+        </WrapPanel>
+      </StackPanel>
+    </Border>
+    </Expander>
+    <ComboBox ItemsSource="{Binding RssFeeds}" SelectedItem="{Binding SelectedRssFeed}" PlaceholderText="Choose a subscription" HorizontalAlignment="Stretch" MinHeight="48" AutomationProperties.Name="RSS subscriptions">
+      <ComboBox.ItemTemplate><DataTemplate x:DataType="domain:RssFeed"><TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" /></DataTemplate></ComboBox.ItemTemplate>
+    </ComboBox>
+    <TextBlock Text="{Binding RssFeedStatus}" Classes="muted" TextWrapping="Wrap" />
+    <WrapPanel>
+      <Button Content="All feeds" Classes="secondary" Command="{Binding AllRssFeedsCommand}" MinHeight="48" Margin="0,0,6,6" />
+      <Button Content="Refresh feed" Classes="secondary" Command="{Binding RefreshRssCommand}" MinHeight="48" Margin="0,0,6,6" />
+      <Button Content="Delete / restore feed" Classes="ghost" Command="{Binding DeleteRssCommand}" MinHeight="48" Margin="0,0,6,6" />
+      <CheckBox Content="Show deleted" IsChecked="{Binding RssShowDeleted}" MinHeight="48" />
+    </WrapPanel>
+    <TextBox Text="{Binding RssSearch}" PlaceholderText="Search article titles" AutomationProperties.Name="Search RSS articles" />
+    <WrapPanel>
+      <CheckBox Content="Unread only" IsChecked="{Binding RssUnreadOnly}" MinHeight="48" Margin="0,0,16,0" />
+      <CheckBox Content="Starred only" IsChecked="{Binding RssStarredOnly}" MinHeight="48" Margin="0,0,16,0" />
+      <Button Content="Apply filters" Classes="secondary" Command="{Binding ApplyRssFilterCommand}" MinHeight="48" />
+    </WrapPanel>
+    <TextBlock Text="No articles match this view. Subscribe and refresh a feed, or change your filters." IsVisible="{Binding HasNoRssArticles}" TextWrapping="Wrap" Classes="muted" />
+    <ItemsControl ItemsSource="{Binding RssArticles}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="local:RssArticleRow">
+          <Border Classes="card" Margin="0,0,0,12">
+            <StackPanel Spacing="8">
+              <TextBlock Text="{Binding Article.Title}" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding StateLabel}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding DateLabel}" Classes="muted" />
+              <WrapPanel>
+                <Button Content="{Binding ReadLabel}" Command="{Binding ToggleReadCommand}" Classes="secondary" MinHeight="48" Margin="0,0,6,6" />
+                <Button Content="{Binding StarLabel}" Command="{Binding ToggleStarCommand}" Classes="secondary" MinHeight="48" Margin="0,0,6,6" />
+                <Button Content="Open original" Click="OnOpenOriginal" IsVisible="{Binding HasUrl}" Classes="ghost" MinHeight="48" Margin="0,0,6,6" />
+              </WrapPanel>
+              <Expander Header="Read cached article" HorizontalAlignment="Stretch">
+                <SelectableTextBlock Text="{Binding Article.Content}" TextWrapping="Wrap" Margin="0,8" />
+              </Expander>
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+    <WrapPanel>
+      <Button Content="Previous articles" Command="{Binding PreviousRssPageCommand}" IsEnabled="{Binding RssHasPrevious}" MinHeight="48" Margin="0,0,8,0" />
+      <Button Content="Next articles" Command="{Binding NextRssPageCommand}" IsEnabled="{Binding RssHasMore}" MinHeight="48" />
+    </WrapPanel>
+  </StackPanel>
+</UserControl>

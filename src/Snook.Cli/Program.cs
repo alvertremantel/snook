@@ -76,6 +76,12 @@ public static class Program
             }
 
             await using var backend = await CreateBackendAsync(invocation.Options, cancellationToken);
+            if (invocation.Command == "pairing")
+            {
+                var pairingResult = await RunPairingAsync(backend, invocation.Arguments, cancellationToken);
+                WriteJson(pairingResult, stdout);
+                return 0;
+            }
             if (invocation.Command == "watch")
             {
                 await RunWatchAsync(backend, invocation.Arguments, stdout, cancellationToken);
@@ -86,6 +92,8 @@ public static class Program
             {
                 "bootstrap" => await backend.GetBootstrapAsync(cancellationToken),
                 "tasks" => await RunTasksAsync(backend, invocation.Arguments, cancellationToken),
+                "rss-feeds" => await RunRssFeedsAsync(backend, invocation.Arguments, cancellationToken),
+                "rss-articles" => await RunRssArticlesAsync(backend, invocation.Arguments, cancellationToken),
                 "habits" => await RunHabitsAsync(backend, invocation.Arguments, cancellationToken),
                 "journals" => await RunJournalsAsync(backend, invocation.Arguments, cancellationToken),
                 "journal-entries" => await RunJournalEntriesAsync(backend, invocation.Arguments, cancellationToken),
@@ -146,6 +154,42 @@ public static class Program
         }
 
         return await backend.SearchTasksAsync(args.Count == 0 ? null : args[0], includeCompleted: true, cancellationToken: cancellationToken);
+    }
+
+    private static async Task<object> RunPairingAsync(IBackendClient backend,
+        IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (backend is not DaemonBackendClient { EndpointKind: DaemonEndpointKind.LocalLoopback } daemon)
+            throw new CliUsageException("pairing administration requires --host daemon and an authenticated HTTP loopback endpoint.");
+        if (args.Count == 1 && args[0] == "list")
+            return new { devices = await daemon.ListAndroidPairedDevicesAsync(cancellationToken) };
+        if (args.Count == 2 && args[0] == "create")
+        {
+            if (!Uri.TryCreate(args[1], UriKind.Absolute, out var origin))
+                throw new CliUsageException("pairing create requires an HTTPS *.ts.net Serve origin.");
+            return await daemon.CreatePairingChallengeAsync(origin, cancellationToken);
+        }
+        if (args.Count == 2 && args[0] == "revoke"
+            && Guid.TryParse(args[1], out var credentialId) && credentialId != Guid.Empty)
+            return await daemon.RevokeAndroidPairedDeviceAsync(credentialId, cancellationToken);
+        if (args.Count == 3 && args[0] == "rename"
+            && Guid.TryParse(args[1], out credentialId) && credentialId != Guid.Empty)
+            return await daemon.RenameAndroidPairedDeviceAsync(credentialId, args[2], cancellationToken);
+        throw new CliUsageException("pairing requires create HTTPS_ORIGIN, list, rename CREDENTIAL_ID NAME, or revoke CREDENTIAL_ID.");
+    }
+
+    private static async Task<object> RunRssFeedsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1 || args.Count == 1 && args[0] != "--include-deleted")
+            throw new CliUsageException("rss-feeds accepts only --include-deleted.");
+        return await backend.GetRssFeedsAsync(args.Count == 1, cancellationToken);
+    }
+
+    private static async Task<object> RunRssArticlesAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1) throw new CliUsageException("rss-articles accepts an optional RssArticleQuery JSON object.");
+        return await backend.GetRssArticlesAsync(args.Count == 0 ? new RssArticleQuery()
+            : DeserializeArgument<RssArticleQuery>(args[0], "RSS article query"), cancellationToken);
     }
 
     private static async Task<object> RunHabitsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -1007,6 +1051,7 @@ public static class Program
         },
         cliCommands = new
         {
+            rss = new { read = "rss-feeds [--include-deleted] | rss-articles [RssArticleQuery JSON]", write = "call subscribe-rss | refresh-rss | set-rss-feed-deleted | set-rss-article-state" },
             journals = new
             {
                 read = "snook-cli journals [--include-deleted] | snook-cli journal-entries [JournalEntryQuery JSON]",
@@ -1150,6 +1195,7 @@ public static class Program
         writer.WriteLine("Tailnet options: --transport tailscale-serve --credential-ref REF --expect-server GUID --expect-workspace GUID");
         writer.WriteLine("Clients read <launch-data-dir>/Snook/client-profile.json. Flags override environment, then saved settings. --no-profile ignores that file explicitly.");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
+        writer.WriteLine("          rss-feeds [--include-deleted] | rss-articles [RssArticleQuery JSON]");
         writer.WriteLine("          habits [HabitQuery JSON] (read-only daily progress and check-ins)");
         writer.WriteLine("          journals [--include-deleted] | journal-entries [JournalEntryQuery JSON]");
         writer.WriteLine("          call create-journal|update-journal|set-journal-deleted JSON");
@@ -1160,6 +1206,7 @@ public static class Program
         writer.WriteLine("          pair cancel PRIVATE_CODE_FILE");
         writer.WriteLine("          pair redeem SERVE_URL PRIVATE_CODE_FILE DEVICE [native|owner-file]");
         writer.WriteLine("          devices list|revoke CREDENTIAL_ID");
+        writer.WriteLine("          pairing create HTTPS_ORIGIN | pairing list | pairing rename CREDENTIAL_ID NAME | pairing revoke CREDENTIAL_ID");
         writer.WriteLine("          call METHOD [JSON OBJECT]");
         writer.WriteLine();
         writer.WriteLine("Example: snook-cli call create-task '{\"projectId\":\"...\",\"title\":\"Write brief\",\"priority\":\"High\"}'");

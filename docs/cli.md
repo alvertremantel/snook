@@ -429,7 +429,7 @@ date in a recurrence rule/end field as documented by the API.
 ## Backup, export, and restore
 
 These use the same ownership and integrity paths as the desktop settings UI.
-JSON export currently returns schema 5; its file encoding differs from CLI
+JSON export currently returns schema 6; its file encoding differs from CLI
 response encoding. See the [export format reference](json-export.md) for sections,
 numeric enums, deleted records, snapshot cursor and schema-4 compatibility.
 Use absolute, agent-controlled paths and keep backups with their manifests.
@@ -474,3 +474,10 @@ for retries. Last known adds no time; Stop now explicitly credits the gap; Conti
 starts a new interval now without the gap. `call get-session-corrections` exposes
 the before/after provenance for preparation and resolution. Full semantics and
 clock rollback handling are in [restore operations](operations.md).
+
+## RSS reader
+
+`rss-feeds [--include-deleted]` and `rss-articles [RssArticleQuery JSON]` read cached
+data. Use the generated `subscribe-rss`, `refresh-rss`, `set-rss-feed-deleted`, and
+`set-rss-article-state` calls for writes. [RSS reader](rss-reader.md#cli) documents
+requests, revision/retry semantics, filtering and manual refresh.

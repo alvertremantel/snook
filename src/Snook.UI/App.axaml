@@ -1,5 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Snook.UI"
              x:Class="Snook.UI.App"
              RequestedThemeVariant="Light">
   <!-- One explicit light palette prevents OS dark controls leaking into the workspace. -->
@@ -152,6 +153,11 @@
       </FluentTheme.Palettes>
     </FluentTheme>
     <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource CanvasBrush}" />
+      <Setter Property="FontFamily" Value="Inter" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+    </Style>
+    <Style Selector="local|WorkspaceView">
       <Setter Property="Background" Value="{DynamicResource CanvasBrush}" />
       <Setter Property="FontFamily" Value="Inter" />
       <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />

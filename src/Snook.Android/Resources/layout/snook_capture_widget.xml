@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/capture_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="12dp"
+    android:background="#2E5B4F">
+  <TextView
+      android:id="@+id/capture_widget_label"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="＋  Quick capture"
+      android:textColor="#FFFFFF"
+      android:textSize="16sp"
+      android:textStyle="bold" />
+</LinearLayout>

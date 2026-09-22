@@ -142,7 +142,7 @@ public sealed class TaskBatchTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=7; DROP INDEX tasks_open_due_date; DROP INDEX tasks_starred; DROP INDEX projects_starred;";
+                command.CommandText = "DROP TABLE rss_articles; DROP TABLE rss_feeds; DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=7; DROP INDEX tasks_open_due_date; DROP INDEX tasks_starred; DROP INDEX projects_starred;";
                 await command.ExecuteNonQueryAsync();
                 command.CommandText = "UPDATE tasks SET due_at_utc_ms=1793538000000,due_time_zone='America/Chicago' WHERE id=$id;";
                 command.Parameters.AddWithValue("$id", timed.Id.ToString("D"));
@@ -161,6 +161,41 @@ public sealed class TaskBatchTests
                 Assert.Equal(original.DueDate, dateOnly.DueDate);
                 Assert.Null(dateOnly.DueAtUtc);
                 Assert.Null(dateOnly.DueTimeZone);
+                var reminderAt = LocalCivilTime.Resolve(new DateOnly(2026, 11, 1),
+                    new TimeOnly(1, 30), "America/Chicago", AmbiguousTimeChoice.Later);
+                var reminderRequest = Request(dateOnly.Revision);
+                var reminderUpdate =
+                    new TaskUpdate(dateOnly.Title, "", Priority.None, null, null, false,
+                        reminderAt, "America/Chicago", ChangeTimedDue: true,
+                        ReminderLocalDate: new DateOnly(2026, 11, 1),
+                        ReminderLocalTime: new TimeOnly(1, 30),
+                        ReminderFoldChoice: AmbiguousTimeChoice.Later,
+                        ReminderDeliveryPolicy: ReminderDeliveryPolicy.Inexact);
+                var reminded = await backend.UpdateTaskAsync(timed.Id, reminderUpdate,
+                    reminderRequest);
+                Assert.Equal(reminded, await backend.UpdateTaskAsync(timed.Id, reminderUpdate,
+                    reminderRequest));
+                Assert.Null(reminded.DueDate);
+                Assert.Equal(reminderAt, reminded.DueAtUtc);
+                Assert.Equal("America/Chicago", reminded.DueTimeZone);
+                Assert.NotEqual(Guid.Empty, reminded.ReminderId);
+                Assert.Equal(new DateOnly(2026, 11, 1), reminded.ReminderLocalDate);
+                Assert.Equal(new TimeOnly(1, 30), reminded.ReminderLocalTime);
+                Assert.Equal(AmbiguousTimeChoice.Later, reminded.ReminderFoldChoice);
+                Assert.Equal(ReminderDeliveryPolicy.Inexact, reminded.ReminderDeliveryPolicy);
+                var preserved = await backend.UpdateTaskAsync(timed.Id,
+                    new TaskUpdate("Reminder retained", "", Priority.None, null, null, false),
+                    Request(reminded.Revision));
+                Assert.Equal(reminded.ReminderId, preserved.ReminderId);
+                Assert.Equal(reminded.DueAtUtc, preserved.DueAtUtc);
+                var cleared = await backend.UpdateTaskAsync(timed.Id,
+                    new TaskUpdate(preserved.Title, "", Priority.None, null, null, false,
+                        ChangeTimedDue: true), Request(preserved.Revision));
+                Assert.Null(cleared.DueAtUtc);
+                Assert.Null(cleared.DueTimeZone);
+                await Assert.ThrowsAsync<SnookException>(() => backend.UpdateTaskAsync(timed.Id,
+                    new TaskUpdate(cleared.Title, "", Priority.None, null, null, false,
+                        reminderAt, null, ChangeTimedDue: true), Request(cleared.Revision)));
                 Assert.Contains(await backend.GetCalendarRangeAsync(new CalendarRangeQuery(schedule.StartAtUtc, schedule.EndAtUtc)), block => block.Id == schedule.Id);
                 updated = Assert.Single(await backend.BulkUpdateTasksAsync([new(original.Id, original.Revision)], new BulkTaskUpdate(Starred: true), request));
             }
@@ -173,9 +208,63 @@ public sealed class TaskBatchTests
             await verification.OpenAsync();
             await using var query = verification.CreateCommand();
             query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-            Assert.Equal(10L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+            Assert.Equal(12L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
             query.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='tasks_open_due_date';";
             Assert.Equal(1L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+            query.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='tasks_open_due_at';";
+            Assert.Equal(1L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
+    public async Task SequenceTenWorkspaceWithoutTimedColumnsUpgradesThroughMigrationEleven()
+    {
+        var directory = Directory.CreateTempSubdirectory("snook-reminder-migration-");
+        var path = Path.Combine(directory.FullName, "workspace.db");
+        try
+        {
+            Guid taskId;
+            await using (var backend = new SnookBackend(new SqliteStore(path)))
+            {
+                await backend.InitializeAsync();
+                var initial = await backend.GetBootstrapAsync();
+                taskId = (await backend.CreateTaskAsync(initial.Projects[0].Id, "Legacy task",
+                    dueDate: new DateOnly(2027, 1, 2))).Id;
+            }
+            await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    PRAGMA foreign_keys=OFF;
+                    CREATE TABLE tasks_legacy(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 300), description TEXT NOT NULL DEFAULT '', priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 4), status TEXT NOT NULL CHECK(status IN ('open','completed')), due_date TEXT, default_activity_id TEXT REFERENCES activities(id), starred INTEGER NOT NULL DEFAULT 0 CHECK(starred IN (0,1)), completed_at_utc_ms INTEGER, archived_at_utc_ms INTEGER, deleted_at_utc_ms INTEGER, revision INTEGER NOT NULL CHECK(revision > 0), created_at_utc_ms INTEGER NOT NULL, updated_at_utc_ms INTEGER NOT NULL);
+                    INSERT INTO tasks_legacy(id,project_id,title,description,priority,status,due_date,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision,created_at_utc_ms,updated_at_utc_ms)
+                        SELECT id,project_id,title,description,priority,status,due_date,default_activity_id,starred,completed_at_utc_ms,archived_at_utc_ms,deleted_at_utc_ms,revision,created_at_utc_ms,updated_at_utc_ms FROM tasks;
+                    DROP TABLE tasks;
+                    ALTER TABLE tasks_legacy RENAME TO tasks;
+                    CREATE INDEX ix_tasks_project_status ON tasks(project_id,status,updated_at_utc_ms);
+                    CREATE INDEX tasks_open_due_date ON tasks(due_date,project_id) WHERE due_date IS NOT NULL AND status='open' AND archived_at_utc_ms IS NULL AND deleted_at_utc_ms IS NULL;
+                    CREATE INDEX tasks_starred ON tasks(project_id) WHERE starred=1;
+                    DROP TABLE rss_articles; DROP TABLE rss_feeds; DELETE FROM schema_migrations WHERE sequence>=11;
+                    PRAGMA foreign_keys=ON;
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+            await using (var backend = new SnookBackend(new SqliteStore(path)))
+            {
+                await backend.InitializeAsync();
+                var task = (await backend.GetTaskDetailsAsync(taskId)).Task;
+                Assert.Equal(new DateOnly(2027, 1, 2), task.DueDate);
+                Assert.Null(task.DueAtUtc);
+            }
+            await using var verify = new SqliteConnection($"Data Source={path};Pooling=False");
+            await verify.OpenAsync();
+            await using var query = verify.CreateCommand();
+            query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
+            Assert.Equal(12L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+            query.CommandText = "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('due_at_utc_ms','due_time_zone','reminder_id','reminder_local_date','reminder_local_time','reminder_fold','reminder_delivery');";
+            Assert.Equal(7L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
         }
         finally { directory.Delete(true); }
     }

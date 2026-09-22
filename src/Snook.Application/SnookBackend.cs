@@ -9,6 +9,7 @@ namespace Snook.Application;
 public sealed partial class SnookBackend : IBackendClient
 {
     private readonly SqliteStore _store;
+    private readonly RssFeedReader _rssReader;
     private readonly TimeProvider _clock;
     private readonly Guid _deviceId;
     private readonly bool? _allowConcurrentForegroundOverride;
@@ -18,9 +19,11 @@ public sealed partial class SnookBackend : IBackendClient
         SqliteStore store,
         TimeProvider? clock = null,
         Guid? deviceId = null,
-        bool? allowConcurrentForeground = null)
+        bool? allowConcurrentForeground = null,
+        RssFeedReader? rssReader = null)
     {
         _store = store;
+        _rssReader = rssReader ?? new RssFeedReader();
         _clock = clock ?? TimeProvider.System;
         _deviceId = deviceId ?? Guid.NewGuid();
         _allowConcurrentForegroundOverride = allowConcurrentForeground;
@@ -654,6 +657,12 @@ public sealed partial class SnookBackend : IBackendClient
     {
         var result = await _store.ExportCsvAsync(destinationPath, rangeStartUtc, rangeEndUtc, cancellationToken);
         return new ExportResult(result.Path, result.Bytes, result.Sha256, result.SchemaVersion);
+    }
+
+    public async Task<BackupInspection> InspectBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        var result = await _store.InspectBackupAsync(sourcePath, cancellationToken);
+        return new BackupInspection(result.Workspace, result.Bytes, result.Sha256, result.CreatedAtUtc);
     }
 
     public async Task<RestoreResult> RestoreBackupAsync(string sourcePath, CancellationToken cancellationToken = default)

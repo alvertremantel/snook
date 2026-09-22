@@ -5,7 +5,7 @@ namespace Snook.Contracts;
 public static class ContractInfo
 {
     public const int Major = 1;
-    public const int Minor = 6;
+    public const int Minor = 10;
 }
 
 public sealed record OperationRequest(
@@ -112,6 +112,13 @@ public interface IBackendClient : IAsyncDisposable
     Task<JournalEntry> CreateJournalEntryAsync(JournalEntryDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
     Task<JournalEntry> UpdateJournalEntryAsync(Guid entryId, JournalEntryDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
     Task<JournalEntry> SetJournalEntryDeletedAsync(Guid entryId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<RssFeed>> GetRssFeedsAsync(bool includeDeleted = false, CancellationToken cancellationToken = default);
+    Task<RssFeed> SubscribeRssAsync(string url, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<RssFeed> RefreshRssAsync(Guid feedId, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<RssFeed> SetRssFeedDeletedAsync(Guid feedId, bool deleted, OperationRequest request, CancellationToken cancellationToken = default);
+    Task<RssArticlePage> GetRssArticlesAsync(RssArticleQuery query, CancellationToken cancellationToken = default);
+    Task<RssArticle> SetRssArticleStateAsync(Guid articleId, bool isRead, bool isStarred, OperationRequest request, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<HabitProgress>> GetHabitsAsync(HabitQuery query, CancellationToken cancellationToken = default);
     Task<Habit> CreateHabitAsync(HabitDefinition definition, OperationRequest request, CancellationToken cancellationToken = default);
@@ -442,6 +449,12 @@ public interface IBackendClient : IAsyncDisposable
 
     // Requires a standalone backup and matching format-1 .manifest.json.
     // The original manifest path is informational; moved valid pairs are supported.
+    // Inspection validates a private copy without changing the active workspace or
+    // the source pair. Restore must revalidate; inspection is not an activation token.
+    Task<BackupInspection> InspectBackupAsync(
+        string sourcePath,
+        CancellationToken cancellationToken = default);
+
     Task<RestoreResult> RestoreBackupAsync(
         string sourcePath,
         CancellationToken cancellationToken = default);
@@ -452,3 +465,5 @@ public sealed record BackupResult(string Path, long Bytes, string Sha256, string
 public sealed record ExportResult(string Path, long Bytes, string Sha256, int SchemaVersion);
 
 public sealed record RestoreResult(string SourcePath, long Bytes, string Sha256);
+
+public sealed record BackupInspection(Workspace Workspace, long Bytes, string Sha256, DateTimeOffset CreatedAtUtc);

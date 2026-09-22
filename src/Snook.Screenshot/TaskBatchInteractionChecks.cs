@@ -81,7 +81,7 @@ internal static partial class InteractionChecks
         await UntilAsync(() => Task.FromResult(vm.StatusMessage.Contains("No tasks were changed", StringComparison.Ordinal)));
         if ((await backend.GetTaskDetailsAsync(a.Id)).Task.Priority != Priority.Low || !vm.IsUtilityEditorOpen)
             throw new InvalidOperationException("A stale batch partially saved or discarded its draft.");
-        window.FindControl<Border>("UtilityDrawer")!.GetVisualDescendants().OfType<ScrollViewer>().First().Offset = default;
+        window.Workspace.FindControl<Border>("UtilityDrawer")!.GetVisualDescendants().OfType<ScrollViewer>().First().Offset = default;
         Save(window, Path.Combine(output, "tasks-bulk-conflict.png"));
         var review = Visible<Expander>(window).Single(expander => Equals(expander.Header, "Review selected tasks"));
         review.IsExpanded = true;
@@ -109,7 +109,7 @@ internal static partial class InteractionChecks
         await PressAsync(Named<Button>("Edit selected tasks"));
         if (((BulkTaskEditorViewModel)vm.UtilityDraft!).Title != "") throw new InvalidOperationException("Cancel retained the abandoned bulk draft.");
         Save(window, Path.Combine(output, "tasks-bulk-editor.png"));
-        var bulkScroll = window.FindControl<Border>("UtilityDrawer")!.GetVisualDescendants().OfType<ScrollViewer>().First();
+        var bulkScroll = window.Workspace.FindControl<Border>("UtilityDrawer")!.GetVisualDescendants().OfType<ScrollViewer>().First();
         bulkScroll.ScrollToEnd();
         await Task.Delay(50);
         Save(window, Path.Combine(output, "tasks-bulk-bottom.png"));

@@ -82,7 +82,7 @@ internal static partial class InteractionChecks
         for (var index = 0; index < 8; index++) await backend.CreateBoardAsync($"Navigation fixture {index + 1}");
         await UntilAsync(() => Task.FromResult(vm.Boards.Count >= 9));
         await Task.Delay(120);
-        var strip = window.FindControl<ScrollViewer>("BoardTabsScroll")!;
+        var strip = window.Workspace.FindControl<ScrollViewer>("BoardTabsScroll")!;
         strip.Offset = default;
         Click(window, Named("Next boards"));
         await UntilAsync(() => Task.FromResult(strip.Offset.X > 0));

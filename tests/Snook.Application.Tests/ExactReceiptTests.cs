@@ -68,8 +68,17 @@ public sealed class ExactReceiptTests
         var task = await backend.CreateTaskAsync(projectId, "Receipt task");
         var taskId = task.Id;
         var taskRequest = Request(task.Revision);
-        var taskUpdate = new TaskUpdate("First task result", "Original", Priority.High, new DateOnly(2026, 9, 18), activityId, true);
+        var reminderDate = new DateOnly(2026, 11, 1);
+        var reminderTime = new TimeOnly(1, 30);
+        var reminderZone = "America/Chicago";
+        var reminderAt = LocalCivilTime.Resolve(reminderDate, reminderTime, reminderZone,
+            AmbiguousTimeChoice.Later);
+        var taskUpdate = new TaskUpdate("First task result", "Original", Priority.High,
+            null, activityId, true, reminderAt, reminderZone, ChangeTimedDue: true,
+            reminderDate, reminderTime, AmbiguousTimeChoice.Later,
+            ReminderDeliveryPolicy.Inexact);
         task = await scenario.RememberAsync(client => client.UpdateTaskAsync(taskId, taskUpdate, taskRequest), backend);
+        Assert.NotNull(task.ReminderId);
 
         var start = Request();
         await RejectAsync(() => backend.StartSessionAsync(taskId, null, SessionLane.Foreground, start with { ExpectedRevision = 1 }));
@@ -216,7 +225,7 @@ public sealed class ExactReceiptTests
                 board = await backend.CreateBoardAsync("Legacy board");
                 await backend.UpdateBoardAsync(board.Id, new BoardUpdate("Legacy result"), request);
             }
-            await SqlAsync(source, "DROP TABLE exact_operation_receipts; DELETE FROM schema_migrations WHERE sequence=10;");
+            await SqlAsync(source, "DROP TABLE rss_articles; DROP TABLE rss_feeds; DROP TABLE exact_operation_receipts; DELETE FROM schema_migrations WHERE sequence>=10;");
             await BackupFixture.WriteManifestAsync(source);
             var sourceBytes = await File.ReadAllBytesAsync(source);
             var target = Path.Combine(directory.FullName, "target.db");
@@ -233,7 +242,7 @@ public sealed class ExactReceiptTests
             await verify.OpenAsync();
             await using var command = verify.CreateCommand();
             command.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-            Assert.Equal(10L, Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+            Assert.Equal(12L, Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
             await SqlAsync(target, "UPDATE schema_migrations SET checksum='bad' WHERE sequence=9;");
             await using var invalid = new SnookBackend(new SqliteStore(target));
             Assert.Equal(SnookErrorCode.SchemaIncompatible, (await Assert.ThrowsAsync<SnookException>(() => invalid.InitializeAsync())).Code);

@@ -1,6 +1,253 @@
 # Workspace redesign
 
+Android Settings currently offers **Review backup to restore**, distinct from the
+desktop **Restore latest backup** action. The native file picker selects a bundle;
+only backend-verified identity is displayed in the subsequent native review. Show
+current and incoming workspace names/IDs, backup time and size. **Replace workspace**
+explicitly warns about replacing all data and discarding drafts; **Keep current
+workspace** cancels. Back,
+backgrounding and rotation dismiss the activity-bound review; selection or
+verification that outlives the activity must not reopen it automatically. The handoff
+requires a resumed, unlocked activity and free-space checks, disables workspace
+interaction during replacement, then rebuilds Today against the new session borrower.
+Optional app lock now hides the activity before device-credential authentication,
+publishes the workspace session's `Locked` state, and clears private notification
+and widget projections until unlock. Restore success rebuilds timer, reminder and
+widget projections only against the reopened workspace.
+
+Compact board lanes size from the actual board viewport, capped at 360 dp, rather
+than assuming the entire window is usable. Narrow project headers give names a
+full row and move counts/star/More below. The existing project picker stretches;
+previous/next controls follow its selected project and disable at the ends. Project
+jumps change horizontal offset only. Desktop drag/drop, edge scrolling and task
+move/editor behavior remain intact. Native touch/assistive acceptance is pending.
+
+Android editor Back now uses a native discard confirmation. A keyboard-consumed
+Back does not close the editor; Android Back keys are intercepted before the
+Avalonia keyboard path can treat them as Escape. The activity's lifecycle-scoped
+AndroidX callback handles system navigation, delegating unchanged when no editor
+is open. Keyboard Escape and explicit Cancel retain their existing semantics.
+Confirmation cancellation/rotation keeps the draft, and a stale confirmation
+cannot discard a subsequently opened task or utility editor. This is not complete
+predictive-gesture, popup-ordering or assistive-technology acceptance.
+
+Calendar controls now adapt below 840 dp: range navigation sits below range/zone
+labels, view choices and creation actions wrap, and selected-item actions sit below
+inspection details. Narrow agenda rows separate task names, timing and actions;
+event text wraps. Time-grid panes below 600 dp use 160 dp minimum day columns.
+Overflowing multi-day ranges expose a 48 dp day picker and previous/next-day actions
+with disabled end states. Hour labels remain pinned while columns pan; day selection
+survives data rebuilds within the same range.
+
+The event Month view preserves the complete seven-column overview at 600 dp and
+above. Below 600 dp it presents one week at a time: a labeled week picker and 48 dp
+previous/next actions sit above seven full-width day cards in the page scroll. Each
+card keeps its complete date, due-task popup and inspectable scheduled items; empty
+days say that they have no scheduled items. The current/selected week survives
+collection rebuilds and crossing the compact threshold. This avoids unreadable
+seven-column phone cells without hiding any week. Native assistive-technology and
+physical-device acceptance remain pending.
+
+Habits adapts below 640 dp of pane width. New habit moves below the introduction;
+the history date input spans the pane with View date/Today beneath. Habit names and
+state use a full row, followed by labeled Edit/More actions. Existing seven-day
+controls wrap without shrinking their touch targets, and archive/delete filters
+gain 48 dp minimum height. Width changes preserve the unapplied history-date input.
+Recurrence, check/undo and earlier-day correction semantics are unchanged.
+
+Journals adapts to its available pane width below 640 dp: the journal selector
+stretches above wrappable creation actions; journal settings moves below context;
+entry search occupies a full row, with tag filtering and Apply beneath. Dates and
+empty-state headings wrap, and entry read/delete actions can wrap. Wider panes
+restore the original toolbar/filter columns. The same controls and unapplied filter
+text remain in place throughout resizing. Journal definitions and journal-entry
+drafts use the encrypted utility-editor recovery described below; complete native
+assistive-technology acceptance remains external.
+
+History and Summary adapt below 840 dp. History gives work/context/state a full
+row, then shows date, labeled duration and a 48 dp Edit action beneath it; manual
+time moves below the section heading. Summary gives group names and bars the full
+row, followed by explicitly labeled attributed-time and clock-coverage values.
+Desktop column headings return at expanded widths. Empty text wraps, and existing
+pagination, correction commands and aggregation semantics are unchanged. Report
+column definitions remain stable during resize to avoid invalidating a Grid measure
+pass while cells still refer to the previous columns.
+
+The timer workspace stacks below 840 dp: in-progress focus/background sessions
+come before the activity library, using the page's main scroll rather than two
+height-limited nested columns. Manual time and new activity share a second toolbar
+row, and timer state moves below its title. At expanded width, the independent
+activity/session columns return. Existing controls and manual-time drafts survive
+width changes; timer commands and persisted elapsed-time behavior are unchanged.
+
+Android Settings contains a dedicated **Timer notifications** card. Its explanation
+precedes the runtime permission request, says that denial does not affect in-app
+timers, and discloses that task/activity details are hidden from the public lock-
+screen surface. The ordinary low-importance notification shows committed timer
+state, a system chronometer for running sessions, and labeled Pause/Resume and Stop
+actions. Tapping its body opens Time tracker. A paused timer uses static duration
+text; Stop removes its native surface after the shared backend commit. Denial or a
+disabled channel produces status text rather than repeated prompts or a timer error.
+On Android 16 and newer, **Review Live Update access** checks current promotion
+access and otherwise hands off to the app-specific Android settings screen when the
+device supplies it. If the destination is absent, the inline status explains that
+ordinary notifications remain available. One running timer may request promotion;
+paused timers and summaries do not. Promotion never changes the content, actions or
+chronometer fallback. Custom artwork, actual promoted/demoted presentation,
+notification-shade accessibility and physical-device acceptance remain open.
+
+Android clean install now starts on a single host-choice page without opening a
+backend. The choices explain that independent and attached workspaces do not sync
+or merge. **Independent workspace** requires a native foreground confirmation that
+states the offline/backup consequences; cancellation returns to the choice without
+creating a database. **Connect to a Snook daemon** accepts only a canonical HTTPS
+`*.ts.net` Serve origin and a short-lived pairing code, then requires review of the
+observed identity before storing a Keystore-protected per-install credential. It
+never creates a local fallback. After either confirmed choice, a compact bar
+identifies the active host, with development probes behind Tools. Existing
+development databases are adopted during upgrade, and the confirmed choice survives
+process restart. Returning from probes preserves the process-owned workspace and
+drafts. A normal explicit component launch with no action/data is treated as a
+launch, not an invalid share. Actual Serve/ACL/roaming/DERP and independent
+security-review acceptance remain external gates.
+
+The shared quick-capture model has an explicit recovery boundary: a bounded,
+versioned snapshot binds the project/title and pending creation request to one
+workspace, with a seven-day expiry. Restoring does not submit a mutation and cannot
+replace another capture or editor. If the previous create committed but its response
+was lost, an unchanged retry reuses the original receipt identity.
+
+Android now wires this quick-capture boundary to a private Keystore-encrypted file
+under no-backup storage. Edits checkpoint after 400 ms and on backgrounding; a
+creation's exact request is checkpointed before dispatch. Writes are serialized and
+replace the file through a flushed staging file. Only capture is restored, after
+loading the workspace's current projects, with a visible recovery notice. An
+unavailable key/corrupt file or a missing project does not silently overwrite the
+recovery copy: the host offers explicit discard. Dismissing a successful recovery
+notice leaves the current capture intact; clearing its title deletes its saved
+copy.
+
+An open task editor has a separate bounded, workspace-bound encrypted recovery
+copy. It contains its unsaved title, description, priority, deadline, activity,
+star, move target and currently entered tag/dependency/link fields, plus the task ID
+and expected revision. Restoration first reloads the authoritative task, opens the
+normal editor, overlays those inputs and asks for review; it never invokes Save. The
+saved expected revision is retained, so an intervening task update reaches the
+normal actionable conflict path instead of being overwritten. Cancel or a completed
+Save deletes the recovery copy. The active utility editor has its own bounded 64 KiB,
+workspace-bound Keystore envelope covering manual time, activity/planning/event
+creation, organization/calendar/history editing, journals, habits and batch tasks.
+Sensitive journal text remains private; uncertain creates/saves retain their exact
+request, and batch recovery retains each task revision. Utility inputs are sampled
+once per second while open and flushed on backgrounding; unchanged samples do not
+rewrite ciphertext. The newest uncheckpointed keystrokes can still be lost.
+
+Android process recreation also restores bounded navigation context independently
+of drafts. A workspace-bound private no-backup snapshot records the current
+destination, task list/board and sort selection, optional board, calendar mode/view/
+date, summary grouping, Settings category and optional journal. It deliberately
+excludes search/filter text, task capture, editor content and mutation identity.
+Navigation checkpoints after 250 ms and on backgrounding. Missing workspace records
+fall back to the normal all-board/all-journal state; wrong-workspace or malformed
+state is ignored. If a task editor is recovered, its Tasks destination takes
+precedence over the earlier page.
+
 ## Current direction: September 2026 modernization
+
+The workspace content now lives in `WorkspaceView`, a shared `UserControl`, while
+`MainWindow` supplies the desktop lifetime, connection dialog and screenshot host.
+The host/session owns `MainWindowViewModel` and its backend; detaching or replacing
+a view does not initialize/dispose the session or discard its drafts. View-local
+subscriptions, resize timers, pointer capture and host-key routing detach with the
+view. Escape remains available when a removed control leaves focus on the host.
+Task/project template ancestor bindings target `WorkspaceView`, not `Window`.
+The mixed binding policy is unchanged: the workspace root disables compiled
+bindings and typed templates opt in individually. The Android host borrows one
+process-owned model and backend across activity views. Subsequent adaptive passes
+replaced the permanent compact sidebar, converted dense feature layouts, and retain
+explicit automation names; native assistive-technology acceptance remains open.
+
+The first adaptive pass now uses current view width: below 600 dp the sidebar is
+hidden, Today/Tasks/Timer/More stay at the bottom, and More exposes all remaining
+destinations. Today panes stack, search sits below the heading, and open drawers
+fill the compact width without replacing their draft controls. Subtitle space is
+suppressed at compact width or below 480 dp height. Above the compact breakpoint,
+the medium rail and expanded navigation described below take over. Feature-specific
+compact layouts cover Today, Tasks/boards, Timer, Calendar, History, Summary,
+Journals, Habits and Settings. Safe-area padding and IME resize are owned by the
+Android top level. Physical-device, large-font and native assistive-technology
+acceptance remain outstanding rather than unimplemented UI.
+
+Compact Today now follows capture → timers → next tasks → agenda, with the same
+control tree retained across width changes. The wide layout uses two aligned card
+rows. Compact next-task Start/Done actions sit below the task text instead of
+competing with its width, and Stop is a visible text action on Today timers.
+Compact buttons have a 48 dp minimum width and height; this is not a blanket
+touch-target or accessibility acceptance claim for other controls or pages.
+
+Compact Tasks now places board creation on a separate toolbar row and gives quick
+capture a full-width title above its project picker and Add action. The same capture
+controls survive width changes. Task list text occupies the primary row, with
+priority/star/start/edit below it; project/time metadata wraps. Board tabs retain
+their explicit previous/next controls. The creation form width is bounded by the
+available view width. Board lane sizing, short-height/IME popup reachability and
+remaining editor fields still need mobile acceptance work.
+
+At 600–839 dp, navigation now becomes an 88 dp rail with visible icon/label pairs
+and 64 dp buttons. It reuses all nine destinations and scrolls vertically rather
+than hiding lower items. Selected text is dark on its light selected background.
+The workspace host footer remains visible; the full sidebar timer card is hidden
+on the rail. Today and Tasks retain stacked content in this width class. At 840 dp
+the expanded sidebar returns. Width changes retain capture/editor ownership.
+This is window-width behavior, not a tablet device flag or physical-tablet signoff.
+
+Android visibility is separate from view ownership. Started activities contribute
+to foreground visibility; selecting the platform-probe page also suspends workspace
+presentation. Hiding stops the display timer and skips new backend-driven refreshes;
+return requests a fresh snapshot while preserving editor/capture state. A visibility
+generation rejects late bootstrap results from an earlier visibility period.
+The session/SQLite owner is not closed, and persisted timer truth is not paused.
+Already-running page requests or mutations are not cancelled by this first pass;
+broader cancellation/coalescing and native battery/process-eviction checks remain.
+
+Page-load generations now invalidate Tasks, Today, History, Summary, Calendar,
+Habits and journal catalog/entries when visibility changes or the model is disposed.
+Obsolete reads stop before publishing or issuing the next request in a read chain.
+History/journal pagination tokens are reset at that boundary. Today stages its
+agenda/recent rows until its reads complete; History retains old rows until a valid
+replacement is ready. This does not cancel a transport request already in progress
+and does not interfere with mutation receipts or editor-owned drafts.
+
+Primary presentation reads now share a visibility-scoped cancellation token.
+Hiding or disposal cancels that scope; resume creates a fresh one. Navigation
+loaders consume expected cancellation rather than letting it escape an async
+command, and calendar startup/reload uses the same read path. Generation checks
+remain necessary for backends that ignore cancellation. Writes never receive this
+presentation token: hiding neither cancels nor replays a creation/save response.
+The refresh-time manual task picker also uses the token and checks its presentation
+generation before publishing options or continuing the refresh after its read.
+Full refresh requests now coalesce per visibility generation: one running refresh
+and one pending trailing refresh, using current filters when it runs. Callers wait
+for the batch to settle. Hiding/disposal drops pending old-generation work; a fresh
+resume never waits for an obsolete non-cooperative read. Individual page navigation
+reads and editor-specific reads are not included in this coalescing boundary.
+
+The Android development header now offers review/discard for one incoming plain-text
+task share. Receiving it does not save a task. Review selects the independent
+workspace and fills quick capture only if no capture or
+task/utility editor draft is present. A blocked review keeps the incoming share;
+discard affects only that incoming text. Inputs are bounded to 300 characters,
+expire after ten minutes, and remain in process memory only. URI payloads and
+attachments are rejected; a URL inside plain text is inert title text. Cold and warm
+activity entry now share one bounded classifier for normal launch, exactly shaped
+plain-text share and authenticated timer-content open. Unknown actions, launcher
+payloads, extra keys, ClipData, stream/URI substitution and mismatched timer routes
+show rejection status without navigating, saving or replacing the current draft.
+The timer coordinator still resolves its opaque record and validates current
+workspace/session state as a second gate. Long-text and direct journal Sharesheet
+input remain out of scope. Four manifest shortcuts and four responsive widget
+surfaces route through the same validated session boundary; locked, stale and
+unavailable state renders privacy-safe placeholders.
 
 Connection setup is a separate startup window, also available before opening any
 workspace with `--configure`. It has explicit **Embedded workspace**, **Local
@@ -334,3 +581,14 @@ exposes deleted entries and journals with explicit state text; entries remain
 readable with a disabled Save until restored. Deleting a journal preserves its
 contents and their individual deleted states. Journal tags are edited with the
 entry draft and never appear in task or time-tracking tag controls.
+
+## RSS reader
+
+RSS is a stable desktop navigation item and an Android More destination. Keep the
+subscription form in an Add subscription disclosure so reading gets the available
+space. Filters, feed actions, and article actions wrap with 48 dp buttons; content
+uses the shared page scroll. Articles expose explicit read and starred text, cached
+plain-text expansion, and a separate system-browser action. Refresh preserves the
+URL draft and existing article row identity. Delete is reversible through Show
+deleted. Android navigation restoration recognizes RSS; URL entry remains an
+in-process draft and does not claim encrypted editor recovery.

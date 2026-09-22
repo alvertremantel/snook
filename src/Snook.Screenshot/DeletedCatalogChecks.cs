@@ -20,7 +20,7 @@ internal static partial class InteractionChecks
         foreach (var isBoard in new[] { true, false })
         {
             vm.SelectSettingsPageCommand.Execute(isBoard ? "Organization" : "Activities");
-            window.FindControl<ScrollViewer>("PageScroll")!.Offset = default;
+            window.Workspace.FindControl<ScrollViewer>("PageScroll")!.Offset = default;
             var delete = isBoard ? vm.BoardAdminRows.Single(row => row.Board.Id == board.Id).DeleteCommand
                 : vm.ActivityAdminRows.Single(row => row.Activity.Id == activity.Id).DeleteCommand;
             delete.Execute(null);

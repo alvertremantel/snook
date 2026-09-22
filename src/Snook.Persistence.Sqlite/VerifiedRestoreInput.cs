@@ -1,12 +1,69 @@
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Snook.Domain;
 
 namespace Snook.Persistence.Sqlite;
+
+public sealed record StoreBackupInspection(Workspace Workspace, long Bytes, string Sha256, DateTimeOffset CreatedAtUtc);
 
 public sealed partial class SqliteStore
 {
     private const long MaximumBackupBytes = 16L * 1024 * 1024 * 1024;
     private const int MaximumManifestBytes = 16 * 1024;
+
+    public async Task<StoreBackupInspection> InspectBackupAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        EnsureInitialized();
+        var fullSource = ValidateOutputPath(sourcePath);
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposing, this);
+            using var staged = await StageVerifiedBackupAsync(fullSource, cancellationToken);
+            // Capture the verified original identity before upgrading the private copy.
+            var bytes = new FileInfo(staged.Path).Length;
+            var hash = await HashFileAsync(staged.Path, cancellationToken);
+            await using var validation = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = staged.Path,
+                Mode = SqliteOpenMode.ReadWrite,
+                Cache = SqliteCacheMode.Private,
+                Pooling = false
+            }.ToString());
+            await validation.OpenAsync(cancellationToken);
+            var workspace = await ValidateAndUpgradeBackupAsync(validation, cancellationToken);
+            return new StoreBackupInspection(workspace, bytes, hash, staged.BackupCreatedAtUtc);
+        }
+        catch (SqliteException exception)
+        {
+            throw new SnookException(SnookErrorCode.SchemaIncompatible,
+                "The verified backup failed SQLite schema or integrity checks. The current workspace was not changed.", exception);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new SnookException(SnookErrorCode.StoreUnavailable,
+                "Backup inspection could not read or stage the backup. Check access and free space before retrying. The current workspace was not changed.", exception);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    private static async Task<Workspace> ValidateAndUpgradeBackupAsync(SqliteConnection validation, CancellationToken cancellationToken)
+    {
+        await using var pragma = validation.CreateCommand();
+        pragma.CommandText = "PRAGMA trusted_schema = OFF; PRAGMA foreign_keys = ON;";
+        await pragma.ExecuteNonQueryAsync(cancellationToken);
+        await ValidateIntegrityAsync(validation, cancellationToken);
+        _ = await ReadWorkspaceAsync(validation, cancellationToken);
+        await EnsureSchemaVersionAsync(validation, cancellationToken);
+        await EnsureTaskWorkspaceMigrationAsync(validation, cancellationToken);
+        await EnsureHabitsMigrationAsync(validation, cancellationToken);
+        await EnsureJournalsMigrationAsync(validation, cancellationToken);
+        await EnsureExactReceiptsMigrationAsync(validation, cancellationToken);
+        await EnsureTaskRemindersMigrationAsync(validation, cancellationToken);
+        await EnsureRssMigrationAsync(validation, cancellationToken);
+        await ValidateIntegrityAsync(validation, cancellationToken);
+        return await ReadWorkspaceAsync(validation, cancellationToken);
+    }
 
     private async Task<VerifiedRestoreInput> StageVerifiedBackupAsync(string sourcePath, CancellationToken cancellationToken)
     {

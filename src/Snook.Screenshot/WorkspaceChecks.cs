@@ -68,8 +68,8 @@ internal static partial class InteractionChecks
             return;
         }
         if (Path.GetFileName(path) != "tasks-board.png") return;
-        var trigger = window.FindControl<Button>("BoardCreationButton")!;
-        var board = window.FindControl<ScrollViewer>("BoardScroll")!;
+        var trigger = window.Workspace.FindControl<Button>("BoardCreationButton")!;
+        var board = window.Workspace.FindControl<ScrollViewer>("BoardScroll")!;
         var boardTop = board.TranslatePoint(default, window)!.Value.Y;
         if (trigger.TranslatePoint(default, window)!.Value.Y >= boardTop)
             throw new InvalidOperationException("Board creation is not above the lanes.");

@@ -10,6 +10,25 @@ public sealed partial class MainWindowViewModel
     private object? _utilityDraft;
     private string _utilityTitle = string.Empty;
     private ICommand? _utilitySaveCommand;
+    private long _utilityEditorGeneration;
+
+    /// <summary>Captures exactly the editor being confirmed, never a subsequently opened draft.</summary>
+    public Action? CreateEditorDiscardRequest()
+    {
+        if (IsUtilityEditorOpen)
+        {
+            var generation = _utilityEditorGeneration;
+            return () =>
+            {
+                if (!_disposed && IsUtilityEditorOpen && generation == _utilityEditorGeneration) CloseUtilityEditor();
+            };
+        }
+        if (TaskEditor is not { } task) return null;
+        return () =>
+        {
+            if (!_disposed && ReferenceEquals(TaskEditor, task)) CloseTaskEditorCommand.Execute(null);
+        };
+    }
 
     public string SettingsPage
     {
@@ -157,6 +176,9 @@ public sealed partial class MainWindowViewModel
         _createEventOperation.Reset();
         _planOperation.Reset();
         _manualOperation.Reset();
+        _manualRecoveryArguments = null;
+        _planRecoveryArguments = null;
+        _eventRecoveryArguments = null;
         ManualTaskId = null;
         ManualActivityId = null;
         ManualStartText = FormatLocalDateTime(DateTimeOffset.Now.AddMinutes(-30));
@@ -181,6 +203,7 @@ public sealed partial class MainWindowViewModel
 
     private void NotifyUtilityEditor()
     {
+        _utilityEditorGeneration++;
         foreach (var property in new[] { nameof(IsUtilityEditorOpen), nameof(IsManualEditor), nameof(IsNewActivityEditor), nameof(IsPlanEditor), nameof(IsNewEventEditor) })
             RaisePropertyChanged(property);
         RaisePropertyChanged(nameof(UtilitySaveLabel));
