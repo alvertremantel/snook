@@ -419,6 +419,7 @@ public sealed class DaemonTransportTests
                 await TaskBatchTests.AssertBatchContractAsync(tailnetClient);
                 await HabitTests.AssertHabitContractAsync(tailnetClient);
                 await JournalTests.AssertJournalContractAsync(tailnetClient);
+                await RssTests.AssertSubscriptionContractAsync(tailnetClient);
                 var transfer = Assert.IsAssignableFrom<IBackendDocumentTransfer>(tailnetClient);
                 Assert.True(transfer.CanDownloadDocuments);
                 await using var backup = new MemoryStream();

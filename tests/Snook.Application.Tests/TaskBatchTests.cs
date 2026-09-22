@@ -142,7 +142,7 @@ public sealed class TaskBatchTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=7; DROP INDEX tasks_open_due_date; DROP INDEX tasks_starred; DROP INDEX projects_starred;";
+                command.CommandText = "DROP TABLE rss_articles; DROP TABLE rss_feeds; DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DROP TABLE habit_check_ins; DROP TABLE habits; DELETE FROM schema_migrations WHERE sequence>=7; DROP INDEX tasks_open_due_date; DROP INDEX tasks_starred; DROP INDEX projects_starred;";
                 await command.ExecuteNonQueryAsync();
                 command.CommandText = "UPDATE tasks SET due_at_utc_ms=1793538000000,due_time_zone='America/Chicago' WHERE id=$id;";
                 command.Parameters.AddWithValue("$id", timed.Id.ToString("D"));
@@ -208,7 +208,7 @@ public sealed class TaskBatchTests
             await verification.OpenAsync();
             await using var query = verification.CreateCommand();
             query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-            Assert.Equal(11L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+            Assert.Equal(12L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
             query.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='tasks_open_due_date';";
             Assert.Equal(1L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
             query.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='tasks_open_due_at';";
@@ -246,7 +246,7 @@ public sealed class TaskBatchTests
                     CREATE INDEX ix_tasks_project_status ON tasks(project_id,status,updated_at_utc_ms);
                     CREATE INDEX tasks_open_due_date ON tasks(due_date,project_id) WHERE due_date IS NOT NULL AND status='open' AND archived_at_utc_ms IS NULL AND deleted_at_utc_ms IS NULL;
                     CREATE INDEX tasks_starred ON tasks(project_id) WHERE starred=1;
-                    DELETE FROM schema_migrations WHERE sequence=11;
+                    DROP TABLE rss_articles; DROP TABLE rss_feeds; DELETE FROM schema_migrations WHERE sequence>=11;
                     PRAGMA foreign_keys=ON;
                     """;
                 await command.ExecuteNonQueryAsync();
@@ -262,7 +262,7 @@ public sealed class TaskBatchTests
             await verify.OpenAsync();
             await using var query = verify.CreateCommand();
             query.CommandText = "SELECT MAX(sequence) FROM schema_migrations;";
-            Assert.Equal(11L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
+            Assert.Equal(12L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
             query.CommandText = "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('due_at_utc_ms','due_time_zone','reminder_id','reminder_local_date','reminder_local_time','reminder_fold','reminder_delivery');";
             Assert.Equal(7L, Convert.ToInt64(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture));
         }

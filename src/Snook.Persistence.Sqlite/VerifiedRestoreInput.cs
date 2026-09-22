@@ -60,6 +60,7 @@ public sealed partial class SqliteStore
         await EnsureJournalsMigrationAsync(validation, cancellationToken);
         await EnsureExactReceiptsMigrationAsync(validation, cancellationToken);
         await EnsureTaskRemindersMigrationAsync(validation, cancellationToken);
+        await EnsureRssMigrationAsync(validation, cancellationToken);
         await ValidateIntegrityAsync(validation, cancellationToken);
         return await ReadWorkspaceAsync(validation, cancellationToken);
     }

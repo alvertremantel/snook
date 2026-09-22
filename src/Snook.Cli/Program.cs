@@ -76,6 +76,8 @@ public static class Program
             {
                 "bootstrap" => await backend.GetBootstrapAsync(cancellationToken),
                 "tasks" => await RunTasksAsync(backend, invocation.Arguments, cancellationToken),
+                "rss-feeds" => await RunRssFeedsAsync(backend, invocation.Arguments, cancellationToken),
+                "rss-articles" => await RunRssArticlesAsync(backend, invocation.Arguments, cancellationToken),
                 "habits" => await RunHabitsAsync(backend, invocation.Arguments, cancellationToken),
                 "journals" => await RunJournalsAsync(backend, invocation.Arguments, cancellationToken),
                 "journal-entries" => await RunJournalEntriesAsync(backend, invocation.Arguments, cancellationToken),
@@ -158,6 +160,20 @@ public static class Program
             && Guid.TryParse(args[1], out credentialId) && credentialId != Guid.Empty)
             return await daemon.RenamePairedDeviceAsync(credentialId, args[2], cancellationToken);
         throw new CliUsageException("pairing requires create HTTPS_ORIGIN, list, rename CREDENTIAL_ID NAME, or revoke CREDENTIAL_ID.");
+    }
+
+    private static async Task<object> RunRssFeedsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1 || args.Count == 1 && args[0] != "--include-deleted")
+            throw new CliUsageException("rss-feeds accepts only --include-deleted.");
+        return await backend.GetRssFeedsAsync(args.Count == 1, cancellationToken);
+    }
+
+    private static async Task<object> RunRssArticlesAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        if (args.Count > 1) throw new CliUsageException("rss-articles accepts an optional RssArticleQuery JSON object.");
+        return await backend.GetRssArticlesAsync(args.Count == 0 ? new RssArticleQuery()
+            : DeserializeArgument<RssArticleQuery>(args[0], "RSS article query"), cancellationToken);
     }
 
     private static async Task<object> RunHabitsAsync(IBackendClient backend, IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -583,6 +599,7 @@ public static class Program
         },
         cliCommands = new
         {
+            rss = new { read = "rss-feeds [--include-deleted] | rss-articles [RssArticleQuery JSON]", write = "call subscribe-rss | refresh-rss | set-rss-feed-deleted | set-rss-article-state" },
             journals = new
             {
                 read = "snook-cli journals [--include-deleted] | snook-cli journal-entries [JournalEntryQuery JSON]",
@@ -706,6 +723,7 @@ public static class Program
         writer.WriteLine("Global options: --data-dir PATH --host embedded|daemon --endpoint URL --token TOKEN --token-file PATH --no-profile");
         writer.WriteLine("Clients read <launch-data-dir>/Snook/client-profile.json. Flags override environment, then saved settings. --no-profile ignores that file explicitly.");
         writer.WriteLine("Commands: bootstrap | tasks [search] | summary GROUP [days] | history [HistoryQuery JSON]");
+        writer.WriteLine("          rss-feeds [--include-deleted] | rss-articles [RssArticleQuery JSON]");
         writer.WriteLine("          habits [HabitQuery JSON] (read-only daily progress and check-ins)");
         writer.WriteLine("          journals [--include-deleted] | journal-entries [JournalEntryQuery JSON]");
         writer.WriteLine("          call create-journal|update-journal|set-journal-deleted JSON");

@@ -4,7 +4,7 @@ namespace Snook.Persistence.Sqlite;
 
 public sealed partial class SqliteStore
 {
-    private const int JsonExportSchemaVersion = 5;
+    private const int JsonExportSchemaVersion = 6;
 
     private async Task<IReadOnlyList<ExportTag>> ReadExportTagsAsync(CancellationToken cancellationToken)
     {

@@ -564,3 +564,14 @@ exposes deleted entries and journals with explicit state text; entries remain
 readable with a disabled Save until restored. Deleting a journal preserves its
 contents and their individual deleted states. Journal tags are edited with the
 entry draft and never appear in task or time-tracking tag controls.
+
+## RSS reader
+
+RSS is a stable desktop navigation item and an Android More destination. Keep the
+subscription form in an Add subscription disclosure so reading gets the available
+space. Filters, feed actions, and article actions wrap with 48 dp buttons; content
+uses the shared page scroll. Articles expose explicit read and starred text, cached
+plain-text expansion, and a separate system-browser action. Refresh preserves the
+URL draft and existing article row identity. Delete is reversible through Show
+deleted. Android navigation restoration recognizes RSS; URL entry remains an
+in-process draft and does not claim encrypted editor recovery.

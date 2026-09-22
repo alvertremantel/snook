@@ -358,6 +358,8 @@ public sealed class CliIntegrationTests
             Assert.Equal("[]", habits.StandardOutput.Trim());
             await JournalCliTests.AssertJournalCliAsync(["--data-dir", directory.FullName, "--host", "daemon",
                 "--endpoint", $"http://127.0.0.1:{port}/", "--token", token]);
+            await RssCliTests.AssertRssCliAsync(["--data-dir", directory.FullName, "--host", "daemon",
+                "--endpoint", $"http://127.0.0.1:{port}/", "--token", token]);
             await AssertDaemonWatchAsync(directory.FullName, port, token);
             await AssertCallerCreateRetryAsync(["--data-dir", directory.FullName, "--host", "daemon",
                 "--endpoint", $"http://127.0.0.1:{port}/", "--token", token]);
@@ -390,9 +392,9 @@ public sealed class CliIntegrationTests
             if (method == "export-json")
             {
                 using var result = JsonDocument.Parse(first.StandardOutput);
-                Assert.Equal(5, result.RootElement.GetProperty("schemaVersion").GetInt32());
+                Assert.Equal(6, result.RootElement.GetProperty("schemaVersion").GetInt32());
                 using var export = JsonDocument.Parse(bytes);
-                Assert.Equal(5, export.RootElement.GetProperty("schemaVersion").GetInt32());
+                Assert.Equal(6, export.RootElement.GetProperty("schemaVersion").GetInt32());
                 Assert.True(export.RootElement.TryGetProperty("settings", out _));
                 Assert.True(export.RootElement.TryGetProperty("committedCursor", out _));
                 Assert.True(export.RootElement.TryGetProperty("taskLinks", out _));

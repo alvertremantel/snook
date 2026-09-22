@@ -84,6 +84,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 "today" => "Today",
                 "tasks" => "Tasks",
                 "habits" => "Habits",
+                "rss" => "RSS",
                 "journals" => "Journals",
                 "tracker" => "Time Tracker",
                 "calendar" => "Calendar",

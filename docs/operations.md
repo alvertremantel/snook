@@ -199,7 +199,7 @@ private staging; process-kill cleanup and low-storage/provider-failure matrices 
 not yet accepted.
 
 JSON and CSV use the same private staging, system picker, bounded transfer and
-read-back verification. JSON remains schema 5; CSV retains the desktop reporting
+read-back verification. JSON uses schema 6; CSV retains the desktop reporting
 window (30 days before invocation through the following day). That range is captured
 before the picker opens, not recomputed after the user chooses a destination.
 Plain JSON/CSV documents are limited to 16 GiB. They are unencrypted reports, not
@@ -855,3 +855,13 @@ Stop/disable the service before uninstalling as well. Uninstallation does not
 delete personal workspace data. SIGTERM drains the daemon and releases the lease;
 the unit permits 45 seconds before forced termination. A forced stop retains
 SQLite recovery semantics and requires inspection on next startup.
+
+## RSS storage and fetching
+
+Schema 12 adds workspace RSS subscriptions and cached articles; JSON export schema 6
+includes them and their read/star state. Backup/restore includes exact RSS receipts
+and upgrades older backups only in staging. Feed refresh runs in the owning backend,
+so attached clients use the daemon’s internet connection. Public HTTP(S) destinations
+only, bounded downloads and redirects, no cookies or workspace credentials, and no
+XML entities. Cached content renders as plain text. See [RSS reader](rss-reader.md)
+for limits and operational behavior. No background polling is enabled.

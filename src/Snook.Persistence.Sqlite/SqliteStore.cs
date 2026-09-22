@@ -107,6 +107,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
             await EnsureJournalsMigrationAsync(connection, cancellationToken);
             await EnsureExactReceiptsMigrationAsync(connection, cancellationToken);
             await EnsureTaskRemindersMigrationAsync(connection, cancellationToken);
+            await EnsureRssMigrationAsync(connection, cancellationToken);
             await SeedAsync(connection, cancellationToken);
             await EnsureDefaultSettingsAsync(connection, cancellationToken);
             await EnsureDefaultCalendarAsync(connection, cancellationToken);
@@ -2191,7 +2192,8 @@ public sealed partial class SqliteStore : IAsyncDisposable
             sessions,
             corrections,
             habitTracking = await ExportHabitsAsync(cancellationToken),
-            journaling = await ExportJournalsAsync(cancellationToken)
+            journaling = await ExportJournalsAsync(cancellationToken),
+            rss = await ExportRssAsync(cancellationToken)
         };
         await using (var stream = new FileStream(output.StagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
             bufferSize: 64 * 1024, useAsync: true))
@@ -2484,7 +2486,7 @@ public sealed partial class SqliteStore : IAsyncDisposable
         var sequence = reader.GetInt32(0);
         var current = reader.GetString(1);
         await reader.DisposeAsync();
-        if (sequence > 11)
+        if (sequence > 12)
             throw new SnookException(SnookErrorCode.SchemaIncompatible, "The workspace schema is newer or incompatible with this Snook build.");
         if (sequence >= 7)
         {

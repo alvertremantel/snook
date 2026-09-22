@@ -425,7 +425,7 @@ Backup and export destinations must be absolute, unused file paths on the host.
 Existing files and backup companions are never overwritten; workspace/credential
 names and symbolic-link paths are rejected. Choose a fresh name for each run.
 See [safe artifact destinations](docs/operations.md#backup-and-restore).
-The [JSON export format](docs/json-export.md) is schema 5, including persisted
+The [JSON export format](docs/json-export.md) is schema 6, including persisted
 settings, task links/dependencies and stored deletion history alongside the
 existing task, timer, calendar, habit and journal data.
 Restore requires the matching format-1 `.manifest.json` and verifies the staged
@@ -712,3 +712,8 @@ The legacy archive is AGPL-3.0. Snook is proprietary, closed-source software. Al
 licensor. The legacy archive remains AGPL-3.0 and is used only as a reference;
 legacy implementation code must not be copied into Snook without an explicit
 license review.
+
+RSS reading is available in the desktop sidebar, Android More menu, and CLI.
+Subscribe to RSS 2.0 or Atom feeds, refresh manually, read cached plain-text articles,
+and manage unread/starred state. See [RSS reader](docs/rss-reader.md) for CLI examples,
+network limits, backup/export behavior, and screenshot verification.

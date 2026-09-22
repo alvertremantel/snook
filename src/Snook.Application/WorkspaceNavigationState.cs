@@ -26,7 +26,7 @@ public sealed record WorkspaceNavigationState(
     public const int MaximumEncodedBytes = 2048;
 
     private static readonly string[] Sections =
-        ["Today", "Tasks", "Habits", "Journals", "Time Tracker", "Calendar", "History", "Summary", "Settings"];
+        ["Today", "Tasks", "Habits", "Journals", "RSS", "Time Tracker", "Calendar", "History", "Summary", "Settings"];
     private static readonly string[] TaskViews = ["List", "Board"];
     private static readonly string[] TaskSorts = ["Priority", "DueDate", "Tracked", "Title"];
     private static readonly string[] CalendarModes = ["Event", "History"];

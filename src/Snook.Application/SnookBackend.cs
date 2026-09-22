@@ -9,6 +9,7 @@ namespace Snook.Application;
 public sealed partial class SnookBackend : IBackendClient
 {
     private readonly SqliteStore _store;
+    private readonly RssFeedReader _rssReader;
     private readonly TimeProvider _clock;
     private readonly Guid _deviceId;
     private readonly bool? _allowConcurrentForegroundOverride;
@@ -18,9 +19,11 @@ public sealed partial class SnookBackend : IBackendClient
         SqliteStore store,
         TimeProvider? clock = null,
         Guid? deviceId = null,
-        bool? allowConcurrentForeground = null)
+        bool? allowConcurrentForeground = null,
+        RssFeedReader? rssReader = null)
     {
         _store = store;
+        _rssReader = rssReader ?? new RssFeedReader();
         _clock = clock ?? TimeProvider.System;
         _deviceId = deviceId ?? Guid.NewGuid();
         _allowConcurrentForegroundOverride = allowConcurrentForeground;

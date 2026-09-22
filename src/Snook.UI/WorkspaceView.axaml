@@ -217,6 +217,12 @@
               <TextBlock Text="Journals" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
+          <Button x:DataType="local:MainWindowViewModel" x:CompileBindings="True" Classes="nav" Classes.selected="{Binding IsRssVisible}" AutomationProperties.Name="RSS" Command="{Binding SelectSectionCommand}" CommandParameter="RSS">
+            <StackPanel Classes="rail-item">
+              <ContentControl Theme="{StaticResource RssNavigationIcon}" />
+              <TextBlock Text="RSS" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
           <Button Classes="nav" Classes.selected="{Binding IsTimeTrackerVisible}" AutomationProperties.Name="Time Tracker" Command="{Binding SelectSectionCommand}" CommandParameter="Time Tracker">
             <StackPanel Classes="rail-item">
               <ContentControl Theme="{StaticResource TrackerNavigationIcon}" />
@@ -943,6 +949,7 @@
         </StackPanel>
 
         <local:HabitsView x:DataType="local:MainWindowViewModel" x:CompileBindings="True" IsVisible="{Binding IsHabitsVisible}" />
+        <local:RssView x:DataType="local:MainWindowViewModel" x:CompileBindings="True" IsVisible="{Binding IsRssVisible}" />
         <local:JournalsView x:DataType="local:MainWindowViewModel" x:CompileBindings="True" IsVisible="{Binding IsJournalsVisible}" />
         <local:SettingsView IsVisible="{Binding IsSettingsVisible}" />
         </StackPanel>
@@ -974,6 +981,7 @@
               <StackPanel Spacing="4">
                 <Button Content="Habits" Click="OnCompactDestination" Command="{Binding SelectSectionCommand}" CommandParameter="Habits" MinHeight="48" />
                 <Button Content="Journals" Click="OnCompactDestination" Command="{Binding SelectSectionCommand}" CommandParameter="Journals" MinHeight="48" />
+                <Button Content="RSS" Click="OnCompactDestination" Command="{Binding SelectSectionCommand}" CommandParameter="RSS" MinHeight="48" />
                 <Button Content="Calendar" Click="OnCompactDestination" Command="{Binding SelectSectionCommand}" CommandParameter="Calendar" MinHeight="48" />
                 <Button Content="History" Click="OnCompactDestination" Command="{Binding SelectSectionCommand}" CommandParameter="History" MinHeight="48" />
                 <Button Content="Summary" Click="OnCompactDestination" Command="{Binding SelectSectionCommand}" CommandParameter="Summary" MinHeight="48" />

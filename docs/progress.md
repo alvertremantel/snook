@@ -1,5 +1,31 @@
 # Snook implementation progress
 
+
+## RSS reader (2026-09-22)
+
+- Shared RSS 2.0/Atom subscriptions, bounded manual refresh, offline plain-text
+  articles, read/star state, title search, pagination and reversible subscription
+  deletion are implemented across desktop, CLI, and Android independent/attached
+  backend paths. Contract 1.10 adds six methods; SQLite migration 12 and JSON
+  export schema 6 preserve RSS data through backup/restore/export.
+- Parser, network bounds/address policy, exact offline receipt replay, deduplication,
+  revision conflicts, migration checksums, backup/restart, CLI and shared-view-model
+  coverage pass. Full solution verification: 291 application tests and 19 domain
+  tests, zero build warnings/errors. Daemon and tailnet contract tests cover the
+  RSS method surface; live saved-profile CLI and GUI acceptance fetched a public
+  sample feed and verified no client SQLite creation.
+- Seeded/empty desktop and minimum-size captures were inspected, including persisted
+  read/star/filter/draft and cached-content checks. Screenshot profile loading now
+  honors saved connection settings, matching the actual client startup behavior.
+- Android Debug x64 and ARM64 APKs built with zero warnings/errors. API 36 x64 adb
+  acceptance subscribed/refreshed a real feed, changed read/star state, filtered,
+  and expanded cached content. A network-disabled force-stop/restart restored RSS
+  navigation and preserved all five cached articles and read/star state. Evidence:
+  `artifacts/rss/`; reproducible offline check: `scripts/verify-android-rss.py`.
+  No physical-device test or production-signing/release-readiness claim is made.
+- Scope and use: [RSS reader](rss-reader.md). Refresh is manual; no background
+  polling, OPML, enclosure downloads, or full-page scraping are implemented.
+
 Updated: 2026-09-20
 
 ## Current state

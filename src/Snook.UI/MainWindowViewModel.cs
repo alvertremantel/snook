@@ -122,6 +122,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         InitializeTaskWorkspaceCommands();
         InitializeWorkspaceEditors();
         InitializeHabitCommands();
+        InitializeRssCommands();
         InitializeJournalCommands();
         _backend.Changed += OnBackendChanged;
         if (_backend is IBackendConnectionState connection) connection.ConnectionStateChanged += OnConnectionStateChanged;
@@ -619,6 +620,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
                     ? "Workspace refreshed from the paired daemon."
                     : "All changes are saved locally.";
             if (IsHabitsVisible) await LoadHabitsAsync();
+            if (IsRssVisible) await LoadRssAsync();
             if (IsJournalsVisible) await LoadJournalsAsync();
             if (IsHistoryVisible)
             {
@@ -1157,6 +1159,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Calendar" => "Calendar",
             "Tasks" => "Tasks",
             "Habits" => "Habits",
+            "RSS" => "RSS",
             "Journals" => "Journals",
             "Time Tracker" => "Time Tracker",
             "Settings" => "Settings",
@@ -1169,6 +1172,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Summary" => "Time summary",
             "Tasks" => "Your tasks",
             "Habits" => "Your daily habits",
+            "RSS" => "Your reading room",
             "Journals" => "A little space to reflect",
             "Time Tracker" => "Time tracker",
             "Calendar" => "Make room for the work",
@@ -1181,6 +1185,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
             "Summary" => "A clearer picture of the last 30 days.",
             "Tasks" => "A clear place for everything you want to do.",
             "Habits" => "Build a routine and keep a record of the days you show up.",
+            "RSS" => "Follow the writing you care about. Read at your own pace.",
             "Journals" => "Capture a thought. Notice how you feel. Keep the moments that matter.",
             "Time Tracker" => "Start tasks or standalone activities, then switch without losing your place.",
             "Calendar" => "Plan your work or see how your days were spent.",
@@ -1190,6 +1195,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         RaisePropertyChanged(nameof(IsTodayVisible));
         RaisePropertyChanged(nameof(IsTasksVisible));
         RaisePropertyChanged(nameof(IsHabitsVisible));
+        RaisePropertyChanged(nameof(IsRssVisible));
         RaisePropertyChanged(nameof(IsJournalsVisible));
         RaisePropertyChanged(nameof(IsTimeTrackerVisible));
         RaisePropertyChanged(nameof(HasPageSearch));
@@ -1200,7 +1206,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IAsync
         RaisePropertyChanged(nameof(IsSummaryVisible));
         RaisePropertyChanged(nameof(IsCalendarVisible));
         RaisePropertyChanged(nameof(IsSettingsVisible));
-        if (normalized == "Journals")
+        if (normalized == "RSS")
+        {
+            await LoadRssAsync();
+        }
+        else if (normalized == "Journals")
         {
             await LoadJournalsAsync();
         }

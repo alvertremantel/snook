@@ -154,7 +154,7 @@ public sealed class JournalTests
                 await backend.InitializeAsync();
                 await backend.CreateHabitAsync(new HabitDefinition("Existing habit", "", DateOnly.FromDateTime(DateTime.UtcNow), "UTC"), Request());
             }
-            await SqlAsync(path, "DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DELETE FROM schema_migrations WHERE sequence>=9;");
+            await SqlAsync(path, "DROP TABLE rss_articles; DROP TABLE rss_feeds; DROP TABLE exact_operation_receipts; DROP TABLE journal_entry_tags; DROP TABLE journal_entries; DROP TABLE journals; DELETE FROM schema_migrations WHERE sequence>=9;");
             var oldBackup = Path.Combine(directory.FullName, "v8.db");
             File.Copy(path, oldBackup);
             await BackupFixture.WriteManifestAsync(oldBackup);
@@ -175,7 +175,7 @@ public sealed class JournalTests
                 Assert.Equal(2, changes.Count);
                 var backup = await backend.CreateBackupAsync(Path.Combine(directory.FullName, "journals.db"));
                 var export = await backend.ExportJsonAsync(Path.Combine(directory.FullName, "journals.json"));
-                Assert.Equal(5, export.SchemaVersion);
+                Assert.Equal(6, export.SchemaVersion);
                 using var json = JsonDocument.Parse(await File.ReadAllTextAsync(export.Path));
                 var exported = json.RootElement.GetProperty("journaling");
                 Assert.Single(exported.GetProperty("journals").EnumerateArray());

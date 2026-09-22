@@ -127,4 +127,14 @@
             </ControlTemplate>
         </Setter>
     </ControlTheme>
+    <ControlTheme x:Key="RssNavigationIcon" TargetType="ContentControl" BasedOn="{StaticResource NavigationIcon}">
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Canvas Width="24" Height="24">
+                    <Path Classes="outline" Data="M4 4 A16 16 0 0 1 20 20 M4 10 A10 10 0 0 1 14 20" Stroke="{TemplateBinding Foreground}" />
+                    <Ellipse Width="4" Height="4" Canvas.Left="3" Canvas.Top="17" Fill="{TemplateBinding Foreground}" />
+                </Canvas>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
 </ResourceDictionary>
