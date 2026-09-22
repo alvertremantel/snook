@@ -55,12 +55,29 @@ public sealed class RssTests
     [InlineData("172.16.0.2")]
     [InlineData("192.168.1.1")]
     [InlineData("100.100.100.100")]
+    [InlineData("192.0.0.1")]
+    [InlineData("192.0.2.1")]
+    [InlineData("192.31.196.1")]
+    [InlineData("192.52.193.1")]
+    [InlineData("192.88.99.1")]
+    [InlineData("192.175.48.1")]
+    [InlineData("198.51.100.1")]
+    [InlineData("203.0.113.1")]
     [InlineData("::1")]
     [InlineData("::ffff:127.0.0.1")]
     [InlineData("fe80::1")]
     [InlineData("fd00::1")]
+    [InlineData("2001:db8::1")]
     [InlineData("2002:7f00:1::")]
+    [InlineData("3ffe::1")]
+    [InlineData("3fff::1")]
     public void RejectsNonPublicAddresses(string address) => Assert.False(RssFeedReader.IsPublicAddress(IPAddress.Parse(address)));
+
+    [Theory]
+    [InlineData("1.1.1.1")]
+    [InlineData("8.8.8.8")]
+    [InlineData("2606:4700:4700::1111")]
+    public void AcceptsPublicAddresses(string address) => Assert.True(RssFeedReader.IsPublicAddress(IPAddress.Parse(address)));
 
     [Fact]
     public async Task RefreshIsBoundedAndFailedDownloadsLeaveCacheUnchanged()
@@ -176,6 +193,11 @@ public sealed class RssTests
             Assert.Empty(vm.RssUrl);
             await ((AsyncCommand)vm.RefreshRssCommand).ExecuteAsync(null);
             Assert.Equal(2, vm.RssArticles.Count);
+            var firstRow = vm.RssArticles[0];
+            handler.Text = Fixture.Replace("Reading room", "Renamed reading room", StringComparison.Ordinal);
+            await ((AsyncCommand)vm.RefreshRssCommand).ExecuteAsync(null);
+            Assert.Same(firstRow, vm.RssArticles[0]);
+            Assert.Contains("Renamed reading room", firstRow.StateLabel, StringComparison.Ordinal);
             vm.RssUrl = "https://unsaved.example.com/feed";
             await ((AsyncCommand)vm.RssArticles[0].ToggleStarCommand).ExecuteAsync(null);
             Assert.Equal("https://unsaved.example.com/feed", vm.RssUrl);

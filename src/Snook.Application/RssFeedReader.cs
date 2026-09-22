@@ -134,17 +134,37 @@ public sealed partial class RssFeedReader
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
             ConnectCallback = async (context, token) =>
             {
-                var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, token);
+                var addresses = (await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, token))
+                    .Select(address => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)
+                    .Distinct()
+                    .ToArray();
                 if (addresses.Length == 0 || addresses.Any(address => !IsPublicAddress(address)))
                     throw new HttpRequestException("RSS destinations must use public addresses.");
-                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-                try
+                Exception? lastFailure = null;
+                foreach (var address in addresses)
                 {
-                    // Connect to the validated address, rather than resolving the hostname again.
-                    await socket.ConnectAsync(new IPEndPoint(addresses[0], context.DnsEndPoint.Port), token);
-                    return new NetworkStream(socket, ownsSocket: true);
+                    var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    attempt.CancelAfter(TimeSpan.FromSeconds(5));
+                    try
+                    {
+                        // Connect to a validated address, rather than resolving the hostname again.
+                        await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), attempt.Token);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch (Exception exception) when (!token.IsCancellationRequested
+                        && exception is SocketException or OperationCanceledException)
+                    {
+                        lastFailure = exception;
+                        socket.Dispose();
+                    }
+                    catch
+                    {
+                        socket.Dispose();
+                        throw;
+                    }
                 }
-                catch { socket.Dispose(); throw; }
+                throw new HttpRequestException("No validated RSS destination address accepted the connection.", lastFailure);
             }
         };
         return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
@@ -158,9 +178,20 @@ public sealed partial class RssFeedReader
             return bytes[0] is not (0 or 10 or 127) && bytes[0] < 224
                 && !(bytes[0] == 169 && bytes[1] == 254) && !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
                 && !(bytes[0] == 192 && bytes[1] == 168) && !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127)
-                && !(bytes[0] == 198 && bytes[1] is 18 or 19);
-        // Only global unicast IPv6; exclude transition mechanisms that can embed private IPv4.
-        return bytes[0] is >= 0x20 and <= 0x3f && !(bytes[0] == 0x20 && bytes[1] == 0x02)
-            && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0 && bytes[3] == 0);
+                && !(bytes[0] == 192 && bytes[1] == 0 && bytes[2] is 0 or 2)
+                && !(bytes[0] == 192 && bytes[1] == 31 && bytes[2] == 196)
+                && !(bytes[0] == 192 && bytes[1] == 52 && bytes[2] == 193)
+                && !(bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99)
+                && !(bytes[0] == 192 && bytes[1] == 175 && bytes[2] == 48)
+                && !(bytes[0] == 198 && bytes[1] is 18 or 19)
+                && !(bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100)
+                && !(bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113);
+        // Only global unicast IPv6; exclude special-use, documentation and transition ranges.
+        return bytes[0] is >= 0x20 and <= 0x3f
+            && !(bytes[0] == 0x20 && bytes[1] == 0x01 && (bytes[2] & 0xfe) == 0)
+            && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8)
+            && !(bytes[0] == 0x20 && bytes[1] == 0x02)
+            && !(bytes[0] == 0x3f && bytes[1] == 0xfe)
+            && !(bytes[0] == 0x3f && bytes[1] == 0xff && (bytes[2] & 0xf0) == 0);
     }
 }

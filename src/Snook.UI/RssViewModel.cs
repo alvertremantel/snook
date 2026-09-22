@@ -135,15 +135,16 @@ public sealed partial class MainWindowViewModel
             for (var index = 0; index < page.Items.Count; index++)
             {
                 var article = page.Items[index];
+                var feedTitle = feeds.FirstOrDefault(feed => feed.Id == article.FeedId)?.Title ?? "Feed";
                 var row = RssArticles.FirstOrDefault(row => row.Article.Id == article.Id);
                 if (row is null)
                 {
-                    row = new RssArticleRow(article, feeds.FirstOrDefault(feed => feed.Id == article.FeedId)?.Title ?? "Feed", ChangeRssArticleAsync);
+                    row = new RssArticleRow(article, feedTitle, ChangeRssArticleAsync);
                     RssArticles.Insert(index, row);
                 }
                 else
                 {
-                    row.Refresh(article);
+                    row.Refresh(article, feedTitle);
                     var oldIndex = RssArticles.IndexOf(row);
                     if (oldIndex != index) RssArticles.Move(oldIndex, index);
                 }
@@ -178,14 +179,18 @@ public sealed class RssArticleRow : INotifyPropertyChanged
     }
     public event PropertyChangedEventHandler? PropertyChanged;
     public RssArticle Article { get; private set; }
-    public void Refresh(RssArticle article)
+    public void Refresh(RssArticle article, string feedTitle)
     {
-        if (article == Article) return;
+        var articleChanged = article != Article;
+        var feedTitleChanged = !string.Equals(feedTitle, FeedTitle, StringComparison.Ordinal);
+        if (!articleChanged && !feedTitleChanged) return;
         Article = article;
-        foreach (var name in new[] { nameof(Article), nameof(StateLabel), nameof(ReadLabel), nameof(StarLabel) })
+        FeedTitle = feedTitle;
+        foreach (var name in new[] { nameof(Article), nameof(FeedTitle), nameof(StateLabel), nameof(DateLabel),
+                     nameof(ReadLabel), nameof(StarLabel), nameof(HasUrl) })
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
-    public string FeedTitle { get; }
+    public string FeedTitle { get; private set; }
     public string StateLabel => $"{(Article.IsRead ? "Read" : "Unread")} · {(Article.IsStarred ? "Starred" : "Not starred")} · {FeedTitle}";
     public string DateLabel => Article.PublishedAtUtc?.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture) ?? "Publication date unavailable";
     public string ReadLabel => Article.IsRead ? "Mark unread" : "Mark read";
